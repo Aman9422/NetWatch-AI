@@ -1,0 +1,10 @@
+{
+  "description": "Monitor and analyze network traffic in real-time with a professional dashboard designed for cybersecurity teams, enhancing threat detection and response.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
