@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./netwatch.db"
 
+    # Capture
+    default_capture_interface: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

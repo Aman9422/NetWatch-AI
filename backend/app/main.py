@@ -9,11 +9,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import api_router
 from app.config.settings import settings
 from app.database.init_db import init_db
+from app.services.capture_manager import get_capture_manager
 from app.utils.logging import configure_logging
 
 logger = logging.getLogger(__name__)
 
 configure_logging()
+
+
+def _stop_active_capture() -> None:
+    """Gracefully stop an active packet capture during application shutdown."""
+    manager = get_capture_manager()
+    if not manager.is_running():
+        return
+    try:
+        manager.stop()
+    except Exception:  # noqa: BLE001 - shutdown must never raise
+        logger.exception("Failed to stop packet capture during shutdown")
 
 
 @asynccontextmanager
@@ -23,14 +35,15 @@ async def lifespan(app: FastAPI):
     Runs startup and shutdown tasks.
 
     On startup, the database schema is created automatically during
-    development, then the app is ready to accept requests. On shutdown it
-    just logs the event.
+    development, then the app is ready to accept requests. On shutdown, any
+    active packet capture is stopped cleanly before the app exits.
     """
     logger.info("Starting %s (%s) — environment: %s", settings.app_name, settings.app_version, settings.app_env)
     if settings.app_env == "development":
         init_db()
     yield
     logger.info("Shutting down %s", settings.app_name)
+    _stop_active_capture()
 
 
 app = FastAPI(
