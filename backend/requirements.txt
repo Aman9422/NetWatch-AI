@@ -14,6 +14,12 @@ pydantic-settings>=2.0.0
 # Database
 sqlalchemy>=2.0.0
 
+# System information
+psutil>=5.9.0
+
+# Packet capture (M4)
+scapy>=2.6.0
+
 # Testing
 pytest>=8.0.0
 httpx>=0.27.0
