@@ -1,4 +1,4 @@
-"""Capture manager: controls the packet capture lifecycle (M4).
+"""Capture manager: controls the packet capture lifecycle (M4/M5).
 
 The manager owns the *state* of a capture session and delegates the actual
 sniffing to a :class:`~app.services.capture_sniffer.CaptureSniffer`. It:
@@ -7,15 +7,18 @@ sniffing to a :class:`~app.services.capture_sniffer.CaptureSniffer`. It:
 * prevents two capture sessions from running at once,
 * tracks the number of captured packets,
 * exposes a thread-safe snapshot of the capture state,
-* translates low-level failures into controlled errors.
+* translates low-level failures into controlled errors,
+* (M5) hands each captured packet to a :class:`PacketProcessor` for
+  normalization, without detecting, scoring, or storing anything.
 
-It deliberately does NOT parse, store, or analyse packets — that is M5+.
+It deliberately does NOT detect threats, correlate, or persist packets.
 """
 
 import logging
 import threading
 from collections.abc import Callable
 
+from app.processing.processor import PacketProcessor
 from app.schemas.capture import CaptureStatusData
 from app.services.capture_sniffer import CaptureSniffer, ScapyCaptureSniffer
 from app.services.capture_state import (
@@ -33,6 +36,9 @@ logger = logging.getLogger(__name__)
 # Statuses during which a capture session is considered active.
 _ACTIVE_STATUSES = (CaptureStatus.STARTING, CaptureStatus.RUNNING, CaptureStatus.STOPPING)
 
+# Type of the callable used to build a sniffer for a given interface and sink.
+SnifferFactory = Callable[[str, PacketProcessor], CaptureSniffer]
+
 
 class CaptureManager:
     """Owns the packet capture session lifecycle for a single process."""
@@ -40,10 +46,12 @@ class CaptureManager:
     def __init__(
         self,
         interface_manager: InterfaceManager,
-        sniffer_factory: Callable[[str], CaptureSniffer] = ScapyCaptureSniffer,
+        sniffer_factory: SnifferFactory = ScapyCaptureSniffer,
+        packet_processor: PacketProcessor | None = None,
     ) -> None:
         self._interface_manager = interface_manager
         self._sniffer_factory = sniffer_factory
+        self._processor = packet_processor or PacketProcessor()
 
         self._lock = threading.RLock()
         self._status = CaptureStatus.STOPPED
@@ -65,8 +73,9 @@ class CaptureManager:
             CaptureStartError: If the underlying sniffer fails to start.
         """
         interface = self._begin_start()
+        self._processor.set_interface(interface)
         try:
-            sniffer = self._sniffer_factory(interface)
+            sniffer = self._sniffer_factory(interface, self._processor)
             sniffer.start()
         except Exception as exc:  # noqa: BLE001 - translated to controlled error
             self._fail_start(exc)
@@ -134,6 +143,32 @@ class CaptureManager:
             if self._sniffer is not None:
                 self._packet_count = self._sniffer.get_packet_count()
             return self._packet_count
+
+    def get_processed_packet_count(self) -> int:
+        """Return how many packets were successfully normalized (M5)."""
+        return self._read_sniffer_count("get_processed_count")
+
+    def get_processing_error_count(self) -> int:
+        """Return how many packets failed normalization (M5)."""
+        return self._read_sniffer_count("get_processing_error_count")
+
+    def _read_sniffer_count(self, attribute: str) -> int:
+        """Read an optional integer counter from the current sniffer.
+
+        Returns 0 when there is no sniffer, or when the sniffer does not expose
+        the requested counter (e.g. the M4-only fake).
+        """
+        sniffer = self._sniffer
+        if sniffer is None:
+            return 0
+        getter: Callable[[], int] | None = getattr(sniffer, attribute, None)
+        if getter is None:
+            return 0
+        return int(getter())
+
+    def get_packet_processor(self) -> PacketProcessor:
+        """Return the processor used to normalize captured packets."""
+        return self._processor
 
     # -- internal helpers -------------------------------------------------
 

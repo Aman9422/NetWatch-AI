@@ -4,7 +4,7 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M3 — Network Interface Manager (M0–M2 complete)
+**Current Milestone:** M6 — Packet Persistence (M0–M5 complete)
 
 ---
 
@@ -62,35 +62,41 @@
 
 ---
 
-# M4 — Packet Capture
+# M4 — Packet Capture ✅ COMPLETE
 
-* [ ] Install Scapy
-* [ ] Create capture manager
-* [ ] Start capture
-* [ ] Stop capture
-* [ ] Track capture state
-* [ ] Track packet count
-* [ ] Handle capture errors
-* [ ] Prevent duplicate capture sessions
-* [ ] Test authorized lab traffic
+* [x] Install Scapy — 2.7.0 (pinned `scapy>=2.6.0` in `requirements.txt`)
+* [x] Create capture manager — `app/services/capture_manager.py`
+* [x] Start capture — `POST /api/v1/capture/start`
+* [x] Stop capture — `POST /api/v1/capture/stop`
+* [x] Track capture state — `stopped/starting/running/stopping/error`
+* [x] Track packet count — live counter, preserved on stop
+* [x] Handle capture errors — controlled `CaptureError` family
+* [x] Prevent duplicate capture sessions — HTTP 409
+* [x] Test authorized lab traffic — 1112 packets / 3s on `Wi-Fi`
 
 ---
 
-# M5 — Packet Processing
+# M5 — Packet Processing ✅ COMPLETE
 
-* [ ] Create packet parser
-* [ ] Parse Ethernet
-* [ ] Parse IPv4/IPv6
-* [ ] Parse TCP
-* [ ] Parse UDP
-* [ ] Parse ICMP
-* [ ] Extract ports
-* [ ] Extract TTL
-* [ ] Extract TCP flags
-* [ ] Extract packet length
-* [ ] Add timestamp
-* [ ] Create normalized packet model
-* [ ] Handle malformed packets
+* [x] Create packet parser — `app/processing/processor.py` (`PacketProcessor`)
+* [x] Parse Ethernet — source/destination MAC, normalized
+* [x] Parse IPv4/IPv6 — addresses + IP version + protocol number
+* [x] Parse TCP — ports + flags
+* [x] Parse UDP — ports
+* [x] Parse ICMP — identified
+* [x] Extract ports — TCP/UDP source + destination
+* [ ] Extract TTL — deferred (not required by the M5 spec; to be populated in
+      M6 persistence — the `Packet.ttl` column already exists)
+* [x] Extract TCP flags — compact string form (e.g. `PA`, `S`)
+* [x] Extract packet length — from the captured frame
+* [x] Add timestamp — capture time (epoch seconds)
+* [x] Create normalized packet model — `app/schemas/packet.py`
+* [x] Handle malformed packets — controlled `PacketProcessingError`, isolated
+      so one bad packet never stops capture
+
+**Notes:** DNS identified (over UDP/TCP); ARP and unknown packets classified as
+`ARP`/`OTHER` without crashing. Verification script: `backend/scripts/verify_m5.py`.
+Full suite: 106 passed, pyright 0 errors. Real capture: 2496 normalized / 0 errors.
 
 ---
 
