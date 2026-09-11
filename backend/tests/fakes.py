@@ -1,7 +1,9 @@
 """Test doubles shared by the backend test-suite."""
 
 from collections.abc import Callable
+from typing import Any
 
+from app.processing.processor import PacketProcessor
 from app.services.interface_manager import InterfaceManager
 
 # A minimal set of normalized interfaces used across tests.
@@ -34,6 +36,7 @@ class FakeCaptureSniffer:
 
     Args:
         interface: The interface name the manager asked to capture on.
+        packet_sink: Optional processor-like sink for captured packets (M5).
         fail_on_start: If True, ``start()`` raises a RuntimeError.
         fail_on_stop: If True, ``stop()`` raises a RuntimeError.
     """
@@ -41,21 +44,37 @@ class FakeCaptureSniffer:
     def __init__(
         self,
         interface: str,
+        packet_sink: PacketProcessor | None = None,
         fail_on_start: bool = False,
         fail_on_stop: bool = False,
     ) -> None:
         self.interface = interface
+        self.packet_sink = packet_sink
         self.fail_on_start = fail_on_start
         self.fail_on_stop = fail_on_stop
         self.running = False
         self.stopped = False
         self.packet_count = 0
+        self.processed_count = 0
+        self.processing_error_count = 0
 
     # -- used by tests ----------------------------------------------------
 
     def emit(self, count: int) -> None:
-        """Simulate ``count`` packets arriving."""
+        """Simulate ``count`` packets arriving (counter only, no processing)."""
         self.packet_count += count
+
+    def emit_packet(self, packet: Any) -> None:
+        """Simulate a packet arriving through the full M5 callback path."""
+        self.packet_count += 1
+        if self.packet_sink is None:
+            return
+        try:
+            self.packet_sink.process(packet)
+        except Exception:  # noqa: BLE001 - mirrors the real sniffer's isolation
+            self.processing_error_count += 1
+            return
+        self.processed_count += 1
 
     def die(self) -> None:
         """Simulate the capture worker terminating on its own."""
@@ -80,17 +99,24 @@ class FakeCaptureSniffer:
     def get_packet_count(self) -> int:
         return self.packet_count
 
+    def get_processed_count(self) -> int:
+        return self.processed_count
+
+    def get_processing_error_count(self) -> int:
+        return self.processing_error_count
+
 
 def make_sniffer_factory(
     fail_on_start: bool = False,
     fail_on_stop: bool = False,
     registry: list[FakeCaptureSniffer] | None = None,
-) -> Callable[[str], FakeCaptureSniffer]:
+) -> Callable[[str, PacketProcessor], FakeCaptureSniffer]:
     """Return a sniffer factory producing (and optionally recording) fakes."""
 
-    def factory(interface: str) -> FakeCaptureSniffer:
+    def factory(interface: str, packet_sink: PacketProcessor) -> FakeCaptureSniffer:
         sniffer = FakeCaptureSniffer(
             interface,
+            packet_sink=packet_sink,
             fail_on_start=fail_on_start,
             fail_on_stop=fail_on_stop,
         )
