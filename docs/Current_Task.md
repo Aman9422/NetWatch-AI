@@ -1,267 +1,352 @@
 # NetWatch AI — Current Task
 
 **Current Phase:** Base Application Implementation  
-**Current Milestone:** M5 — Packet Processing & Normalization ✅ COMPLETE  
-**Status:** Complete — next milestone: M6 (Packet Persistence)
+**Current Milestone:** M6 — Traffic Statistics Engine  
+**Status:** ✅ Complete — verified (191 tests pass, pyright clean, baseline recorded)
+
+> Audited after completion; five findings fixed. See `docs/prob.md`.
 
 ---
 
 # Current Objective
 
-Build the Packet Processing and Normalization layer for NetWatch AI.
+Build the Traffic Statistics Engine for NetWatch AI.
 
-M4 successfully captures real packets using Scapy. M5 converts those raw Scapy packets into a clean, consistent internal representation that later components can use without directly depending on Scapy packet-layer details.
+M5 converts raw Scapy packets into normalized packets.
 
-The main flow is:
+M6 will consume those normalized packets and continuously calculate useful traffic statistics.
+
+The main flow becomes:
 
     Network
         ↓
-    Scapy Capture Engine
-        ↓
-    Raw Scapy Packet
+    Scapy Capture
         ↓
     PacketProcessor
         ↓
-    Normalized Packet
+    NormalizedPacket
         ↓
-    Future Statistics / Detection / ML
+    Traffic Statistics Engine
+        ↓
+    Aggregated Statistics
 
-M5 is responsible only for packet processing and normalization.
+These statistics will later support:
+
+- Dashboard metrics
+- Traffic analytics
+- Device behavior analysis
+- Detection rules
+- Behavioral baselines
+- ML anomaly detection
+- Reports
+
+M6 must remain focused on traffic aggregation.
 
 ---
 
-# M5 Development Rule
+# M6 Development Rule
 
 Do NOT implement:
 
 - Detection rules
 - Alerts
 - Behavioral baselines
-- ML anomaly detection
-- AI analysis
+- ML
+- AI
 - Correlation
 - Risk scoring
-- Packet database persistence
-- WebSocket streaming
+- Device profiling
+- Database persistence
+- WebSockets
 - Frontend integration
-- Advanced traffic statistics
 
 Those belong to later milestones.
 
 ---
 
-# M5.1 — Define Normalized Packet Schema
+# M6.1 — Statistics Manager
 
-Before implementing packet extraction logic, define the internal packet model.
+Create a dedicated service responsible for maintaining traffic statistics.
 
-Create a clear schema/model representing a normalized packet.
+Suggested responsibility:
 
-The model should be independent of Scapy.
+    TrafficStatisticsManager
 
-Suggested fields:
+Possible interface:
 
-    packet_id
-    timestamp
-    interface
-    length
-    source_mac
-    destination_mac
-    ip_version
-    source_ip
-    destination_ip
-    protocol
-    source_port
-    destination_port
-    tcp_flags
-    packet_type
+    record_packet(packet)
+    get_statistics()
+    reset()
+    get_protocol_statistics()
 
-Fields that are not available for a packet type should be represented safely as null/None where appropriate.
+The manager should consume `NormalizedPacket`.
 
-Do not invent values.
+It must not directly depend on Scapy.
 
 ---
 
-# M5.2 — PacketProcessor Interface
+# M6.2 — Packet Count
 
-Create a dedicated PacketProcessor responsible for converting:
+Track:
 
-    Scapy Packet
-        ↓
-    Normalized Packet
+- Total packets
+- Packets per protocol
+- Packets per time window
 
-Suggested interface:
+Example:
 
-    PacketProcessor
-        └── process(packet)
+    Total Packets: 125430
 
-The processor should return the normalized internal representation.
+Protocol counts:
 
-Keep the interface simple so future packet-processing components can use it.
-
----
-
-# M5.3 — Ethernet Extraction
-
-Extract Layer-2 information when available:
-
-- Source MAC
-- Destination MAC
-- Ethernet-related packet information
-
-Packets without Ethernet information must still be processed safely.
+    TCP: 82100
+    UDP: 31000
+    ICMP: 1200
+    Other: 11130
 
 ---
 
-# M5.4 — IPv4 Extraction
+# M6.3 — Byte Count
 
-When an IPv4 layer is present, extract:
+Track total traffic volume.
+
+Calculate:
+
+- Total bytes
+- Bytes per protocol
+- Bytes per direction where possible
+
+Example:
+
+    Total Traffic: 842 MB
+
+Do not estimate values.
+
+Use the normalized packet length.
+
+---
+
+# M6.4 — Protocol Statistics
+
+Track basic protocol distribution.
+
+Initial protocols:
+
+- TCP
+- UDP
+- ICMP
+- DNS
+- ARP
+- IPv4
+- IPv6
+- Other
+
+Store:
+
+- Packet count
+- Byte count
+- Percentage of traffic
+
+Percentages should be calculated from actual counters.
+
+---
+
+# M6.5 — Source/Destination Statistics
+
+Track basic traffic distribution by:
 
 - Source IP
 - Destination IP
-- IP version
-- Protocol information
-
-Do not assume every captured packet contains IPv4.
-
----
-
-# M5.5 — IPv6 Extraction
-
-Support basic IPv6 normalization.
-
-Extract:
-
-- Source IPv6 address
-- Destination IPv6 address
-- IP version
-- Next-header/protocol information
-
-Packets that are not IPv6 must remain valid.
-
----
-
-# M5.6 — TCP Extraction
-
-When TCP is present, extract:
-
-- Source port
-- Destination port
-- TCP flags
-
-Handle packets without TCP safely.
-
-Do not perform threat detection from TCP flags yet.
-
----
-
-# M5.7 — UDP Extraction
-
-When UDP is present, extract:
-
 - Source port
 - Destination port
 
-Handle packets without UDP safely.
+The initial implementation should support querying the most active sources and destinations.
+
+Example:
+
+    Top Sources
+    192.168.1.10 → 10,532 packets
+    192.168.1.15 →  8,231 packets
+
+Do not interpret activity as malicious yet.
 
 ---
 
-# M5.8 — ICMP Extraction
+# M6.6 — Port Statistics
 
-Support basic identification of ICMP packets.
-
-At minimum, identify the protocol/type needed by the normalized packet model.
-
-Do not implement ICMP attack detection.
-
----
-
-# M5.9 — Basic DNS Identification
-
-When a DNS layer is present:
-
-- Identify the packet as DNS traffic.
-- Preserve basic protocol information required by the normalized representation.
-
-Do not implement DNS anomaly detection or threat intelligence.
-
----
-
-# M5.10 — Timestamp and Packet Length
-
-Extract:
-
-- Capture timestamp
-- Packet length
-
-Timestamp handling must be consistent.
-
-Packet length should be based on the captured packet rather than an invented value.
-
----
-
-# M5.11 — Packet Type / Protocol Classification
-
-Provide a basic normalized classification.
+Track commonly observed destination ports.
 
 Examples:
 
-    TCP
-    UDP
-    ICMP
-    DNS
-    IPv4
-    IPv6
-    ARP
-    OTHER
+    443
+    53
+    80
+    22
+    3389
 
-The classification should be deterministic.
+Track:
 
-Do not build a detection engine into the classifier.
+- Packet count
+- Byte count
 
----
+Do not classify ports as malicious.
 
-# M5.12 — Unsupported and Unknown Packets
-
-The processor must safely handle:
-
-- ARP
-- Non-IP packets
-- Unknown protocols
-- Packets missing expected layers
-- Empty/unusual Scapy packets
-
-The processor must not crash simply because a protocol layer is unavailable.
+Port-based threat detection belongs to the Detection Engine.
 
 ---
 
-# M5.13 — Malformed Packet Handling
+# M6.7 — Traffic Direction
 
-Handle malformed or partially constructed packets safely.
+Where information allows, classify traffic into:
 
-Requirements:
+- Inbound
+- Outbound
+- Local/unknown
 
-- No application crash
-- Clear error handling
-- Useful logging where appropriate
-- Return a controlled result or error according to the chosen design
+Do not make unreliable assumptions about network direction.
 
-Do not expose internal stack traces through APIs.
+If the local interface/network context is insufficient, use:
+
+    unknown
+
+rather than inventing a direction.
 
 ---
 
-# M5.14 — Integrate With CaptureManager
+# M6.8 — Time Windows
 
-Connect packet processing to the existing capture pipeline.
+Implement time-based aggregation.
 
-Current M4 flow:
+Initial window:
 
-    Scapy
-       ↓
-    CaptureManager
-       ↓
-    Packet Counter
+    1 second
 
-M5 should extend this to:
+Also support:
+
+    10 seconds
+    1 minute
+
+The engine should be capable of answering:
+
+    packets/sec
+    bytes/sec
+
+without needing to inspect every historical packet again.
+
+---
+
+# M6.9 — Throughput Calculation
+
+Calculate basic traffic throughput.
+
+Examples:
+
+    Packets per second
+    Bytes per second
+    Bits per second
+
+Use actual observed data.
+
+Avoid claiming network link speed.
+
+---
+
+# M6.10 — Top Talkers
+
+Calculate basic top talkers.
+
+Support:
+
+- Top source IPs
+- Top destination IPs
+- Top conversations where practical
+
+Ranking should be based on configurable metrics such as:
+
+    packets
+    bytes
+
+This is only traffic analytics.
+
+It is not threat detection.
+
+---
+
+# M6.11 — Protocol Distribution
+
+Provide a structured summary.
+
+Example:
+
+    TCP      65%
+    UDP      25%
+    ICMP      3%
+    ARP       2%
+    Other     5%
+
+Percentages must be calculated dynamically from counters.
+
+---
+
+# M6.12 — Statistics Snapshot
+
+Create a consistent snapshot representation.
+
+Possible structure:
+
+    {
+        timestamp,
+        total_packets,
+        total_bytes,
+        packets_per_second,
+        bytes_per_second,
+        protocol_statistics,
+        top_sources,
+        top_destinations,
+        top_ports
+    }
+
+The exact implementation should use the project's existing schema/model conventions.
+
+---
+
+# M6.13 — Thread Safety
+
+The statistics engine may receive packets from the capture worker while API requests read statistics.
+
+Protect shared state from race conditions.
+
+Potential shared state:
+
+- packet counters
+- byte counters
+- protocol counters
+- source counters
+- destination counters
+- port counters
+- time-window data
+
+Keep reads efficient.
+
+---
+
+# M6.14 — Memory Management
+
+Do not keep every packet indefinitely in memory.
+
+Use bounded/aggregated structures.
+
+The statistics engine should store counters and required aggregation state rather than raw packets.
+
+Avoid unbounded dictionaries for high-cardinality data.
+
+Design a reasonable cleanup/expiration mechanism for time-window statistics.
+
+---
+
+# M6.15 — Integration With Packet Pipeline
+
+Extend the current pipeline:
 
     Scapy
        ↓
@@ -269,270 +354,402 @@ M5 should extend this to:
        ↓
     PacketProcessor
        ↓
-    Normalized Packet
+    NormalizedPacket
        ↓
-    Temporary downstream handoff
+    TrafficStatisticsManager
 
-For now, do not persist packets to the database.
+The processing path should continue even if statistics processing encounters an individual error.
 
-The capture callback should pass packets to the processor without adding detection or analytics.
-
----
-
-# M5.15 — Processing Error Isolation
-
-A single malformed or unsupported packet must not stop packet capture.
-
-Example:
-
-    Packet 1 → processed
-    Packet 2 → processed
-    Packet 3 → processing error
-    Packet 4 → processed
-    Packet 5 → processed
-
-The capture engine should continue operating.
-
-Log processing failures appropriately.
+A statistics failure must not terminate packet capture.
 
 ---
 
-# M5.16 — Tests
+# M6.16 — Statistics API
+
+Add read-only API endpoints.
+
+Suggested endpoints:
+
+    GET /api/v1/statistics/traffic
+    GET /api/v1/statistics/protocols
+    GET /api/v1/statistics/top-talkers
+    GET /api/v1/statistics/ports
+
+These endpoints should return current aggregated statistics.
+
+Do not add WebSockets yet.
+
+---
+
+# M6.17 — Reset Statistics
+
+Provide a controlled reset mechanism for development/testing.
+
+Suggested endpoint:
+
+    POST /api/v1/statistics/reset
+
+Reset should:
+
+- Clear counters
+- Clear time-window data
+- Preserve service availability
+- Not stop packet capture
+
+---
+
+# M6.18 — Tests
 
 Create unit tests for:
 
-### Ethernet
+### Packet counts
 
-- Ethernet packet
-- MAC extraction
+- Single packet
+- Multiple packets
+- Protocol-specific counts
 
-### IPv4
+### Bytes
 
-- Source IP
-- Destination IP
-- IPv4 classification
+- Correct byte aggregation
+- Multiple packets
 
-### IPv6
+### Protocols
 
-- IPv6 source/destination
-- IPv6 classification
+- TCP
+- UDP
+- ICMP
+- DNS
+- ARP
+- Other
 
-### TCP
+### IP statistics
+
+- Source aggregation
+- Destination aggregation
+
+### Ports
 
 - Source port
 - Destination port
-- TCP flags
 
-### UDP
+### Time windows
 
-- Source port
-- Destination port
+- Packets/sec
+- Bytes/sec
+- Window rollover
 
-### ICMP
+### Top talkers
 
-- ICMP identification
+- Correct ordering
+- Equal values
+- Empty state
 
-### DNS
+### Reset
 
-- DNS identification
+- Statistics reset correctly
 
-### General
+### Errors
 
-- Timestamp
-- Packet length
-- Protocol classification
-- Unsupported packets
-- Missing layers
-- Empty packets
-- Malformed packets
-- Processor exception handling
+- Invalid normalized packet
+- Individual processing failure does not crash manager
 
 ---
 
-# M5.17 — Integration Tests
+# M6.19 — API Tests
+
+Test:
+
+    GET /api/v1/statistics/traffic
+    GET /api/v1/statistics/protocols
+    GET /api/v1/statistics/top-talkers
+    GET /api/v1/statistics/ports
+    POST /api/v1/statistics/reset
 
 Verify:
+
+- Correct response structure
+- Empty state
+- Non-empty state
+- Reset behavior
+- Invalid HTTP methods
+- Unknown routes
+- Correct HTTP status codes
+
+---
+
+# M6.20 — Integration Test
+
+Run:
 
     CaptureManager
         ↓
     PacketProcessor
+        ↓
+    TrafficStatisticsManager
 
-Confirm that captured Scapy packets reach the processor and are converted into normalized packet objects.
+Generate harmless local traffic.
 
-Do not test detection or database persistence yet.
+Verify that:
 
----
-
-# M5.18 — Manual Verification
-
-Perform a controlled local test using normal traffic.
-
-Generate harmless traffic such as:
-
-    Web browsing
-    DNS lookup
-    Ping
-    Local connections
-
-Verify that NetWatch can produce normalized records containing appropriate fields.
-
-Example:
-
-    TCP
-    source: 192.168.1.10
-    destination: 142.x.x.x
-    source_port: 52341
-    destination_port: 443
-    length: 1280
-
-Values must come from actual captured packets.
+- Packets are captured.
+- Packets are normalized.
+- Statistics increase.
+- Protocol counters change.
+- Byte counters change.
+- Top talkers update.
 
 ---
 
-# M5.19 — Performance Baseline
+# M6.21 — Manual Verification
 
-Measure basic processing performance.
+Perform a controlled local test.
 
-Record:
+Generate normal traffic such as:
 
-- Number of packets processed
-- Processing time
-- Approximate packets/second
+- Web browsing
+- DNS lookups
+- Ping
+- Local application connections
+
+Observe:
+
+    Total packets
+    Total bytes
+    Packets/sec
+    Bytes/sec
+    Protocol distribution
+    Top sources
+    Top destinations
+    Top ports
+
+Verify that the values correspond to actual traffic.
+
+---
+
+# M6.22 — Performance Baseline
+
+Measure:
+
+- Packets processed per second
+- Statistics update overhead
 - CPU usage
 - Memory usage
+- API response time
 
 Do not optimize prematurely.
 
-Do not claim production throughput.
+Do not claim production-scale performance.
 
 ---
 
-# M5 Completion Criteria
+# M6 Completion Criteria
 
-M5 is complete when:
+M6 is complete when:
 
-- [x] Normalized packet schema exists. (`app/schemas/packet.py`)
-- [x] PacketProcessor exists. (`app/processing/processor.py`)
-- [x] Scapy packets can be converted into normalized packets.
-- [x] Ethernet information is extracted where available. (`app/processing/extract.py`)
-- [x] IPv4 is supported.
-- [x] IPv6 is supported.
-- [x] TCP is supported.
-- [x] UDP is supported.
-- [x] ICMP is identified.
-- [x] DNS is identified.
-- [x] Timestamp and packet length are captured.
-- [x] Unsupported packets are handled safely. (ARP / non-IP / unknown → `OTHER`)
-- [x] Missing layers do not crash processing.
-- [x] Processing errors do not terminate packet capture. (isolated in the sniffer callback)
-- [x] CaptureManager successfully hands captured packets to PacketProcessor.
-- [x] Unit tests pass. (`tests/test_packet_processor.py`, 22 tests)
-- [x] Integration tests pass. (`tests/test_capture_processing.py`)
-- [x] Manual verification succeeds. (see performance baseline below)
-- [x] Performance baseline is recorded. (see below)
-
----
-
-# M5 Performance Baseline
-
-Measured on the development machine, capturing `Wi-Fi` for 3 seconds through
-the full `CaptureManager → PacketProcessor` pipeline:
-
-| Metric                        | Value                          |
-| ----------------------------- | ------------------------------ |
-| Raw packets captured          | 2496                           |
-| Packets normalized            | 2496                           |
-| Processing errors             | 0                              |
-| Approx. rate                  | ~832 packets/second            |
-| Capture + processing overhead | no observable packet loss (1:1)|
-
-Sample normalized record observed during the run:
-
-```text
-TCP  2402:8100:2cd7:9c57:d51a:2df1:60b1:77b8 -> 64:ff9b::14b8:af07
-     ports 58807->443  length=1203  flags=PA  packet_type=TCP
-```
-
-Full test suite: **106 passed**. Static analysis: **pyright 0 errors**.
+- [x] TrafficStatisticsManager exists.
+- [x] It consumes NormalizedPacket objects.
+- [x] Packet counts work.
+- [x] Byte counts work.
+- [x] Protocol statistics work.
+- [x] Source statistics work.
+- [x] Destination statistics work.
+- [x] Port statistics work.
+- [x] Traffic time windows work.
+- [x] Packets/sec and bytes/sec work.
+- [x] Top talkers work.
+- [x] Statistics are thread-safe.
+- [x] Memory growth is controlled.
+- [x] Statistics errors do not terminate packet capture.
+- [x] Statistics API works.
+- [x] Reset functionality works.
+- [x] Unit tests pass.
+- [x] API tests pass.
+- [x] Integration test passes.
+- [x] Manual verification succeeds.
+- [x] Performance baseline is recorded.
 
 ---
 
-# M5 Implementation Map
+# M6 Delivered
 
-```text
-app/
-├── schemas/packet.py        NormalizedPacket, PacketType          (M5.1)
-├── processing/
-│   ├── protocols.py         protocol label / number constants
-│   ├── errors.py            PacketProcessingError
-│   ├── extract.py           Scapy layers → ExtractedFields        (M5.3–M5.10)
-│   ├── classifier.py        deterministic classification          (M5.11–M5.12)
-│   └── processor.py         PacketProcessor.process()             (M5.2, M5.13)
-└── services/
-    ├── capture_sniffer.py   callback → processor, error isolation (M5.14–M5.15)
-    └── capture_manager.py   owns the processor, wires the sink
-```
+**Status: complete and verified.**
+
+## Code
+
+- `backend/app/statistics/manager.py` — `TrafficStatisticsManager`
+  (`record_packet`, `get_statistics`, `get_protocol_statistics`, `get_rates`,
+  `get_top_talkers`, `get_top_ports`, `reset`, direction classification).
+- `backend/app/statistics/bounded_counter.py` — `BoundedCounter`, evicting the
+  least-active key so high-cardinality data stays bounded (M6.14).
+- `backend/app/statistics/rate_window.py` — `RateWindow`, sliding-window rates
+  stored as fixed 100 ms buckets so memory depends on window length, not packet
+  rate (M6.8/M6.9/M6.14).
+- `backend/app/schemas/statistics.py` — `TrafficSnapshot`, `ProtocolStat`,
+  `DirectionStat`, `TopEntry`, `TopTalkers`, `TrafficDirection` (M6.12).
+- `backend/app/services/packet_pipeline.py` — ties M5 normalization to M6
+  statistics, isolating failures so stats can never stop capture (M6.15).
+- `backend/app/api/v1/statistics.py` — read-only endpoints + reset (M6.16/M6.17).
+- `backend/app/services/capture_manager.py` — wiring for the shared manager.
+
+## API
+
+    GET  /api/v1/statistics/traffic        (?window=1s|10s|60s)
+    GET  /api/v1/statistics/protocols
+    GET  /api/v1/statistics/top-talkers    (?limit=&by=)
+    GET  /api/v1/statistics/ports          (?limit=&by=&direction=)
+    POST /api/v1/statistics/reset
+
+## Tests and tooling
+
+- `backend/tests/test_statistics.py` — engine unit tests (M6.18).
+- `backend/tests/test_statistics_windows.py` — windows/rankings/bounded memory.
+- `backend/tests/test_statistics_api.py` — API tests (M6.19).
+- `backend/tests/test_statistics_pipeline.py` — integration test (M6.20).
+- `backend/scripts/verify_m6.py` — manual verification (M6.21).
+- `backend/scripts/benchmark_m6.py` — performance baseline (M6.22).
+
+## Verification
+
+- Full suite: **191 passed** (baseline before M6 was 107; +5 audit regression tests).
+- `pyright`: **0 errors, 0 warnings**.
+
+## Performance baseline (this machine, `--packets 200000`)
+
+    200,000 packets (direction provider wired; high-cardinality eviction exercised)
+    wall 1.43 s  |  cpu 1.44 s  |  ~139,700 packets/sec  |  ~7.16 us/packet
+    heap after 1.86 MiB (bounded; independent of packet count)
+    API 1.9-3.1 ms avg per endpoint (in-process)
+
+Not a production-capacity claim — see `backend/scripts/benchmark_m6.py`.
+
+> The earlier ~12,000 packets/sec figure was measured on a manager with **no
+> direction provider wired** and **low key cardinality**, so it hid the
+> per-packet interface-discovery cost. It was replaced after the audit — see
+> *Post-Completion Audit* below and `docs/prob.md`.
+
+## Design note (memory, M6.14)
+
+A rate window originally stored one tuple per packet and only pruned when its
+own `rates()` was called, so the `10s`/`60s` windows grew without bound. Windows
+now prune on every `record()` and aggregate into 100 ms buckets, capping each
+window at `window_seconds / 0.1` buckets. Measured heap fell from 27.94 MiB to
+0.25 MiB with no measurable throughput cost.
 
 ---
 
-# Current Immediate Task
+# Post-Completion Audit — Problems Found and Fixed
 
-**M5 is complete.** All M5 requirements are implemented, tested, and verified.
+After M6 was marked complete, the engine was audited against its own claims.
+Five findings were found — one high-severity throughput bug that both the tests
+and the original benchmark had missed — and all five were fixed and verified.
+Full detail is in `docs/prob.md`; this section records each problem and its fix.
 
-**Next milestone: M6 — Packet Persistence.** M6 will store the normalized
-packets produced by M5 into SQLite through the existing packet repository —
-metadata only (no payloads by default), with indexing and a retention policy.
-No parsing changes are expected; M6 consumes `NormalizedPacket` as-is.
+## BUG-1 (HIGH) — Direction classification re-ran a full interface discovery for every packet
 
-## M5 deliverables
+**Problem.** `TrafficStatisticsManager._record()` classifies each packet's
+traffic direction by calling `_classify_direction()`, which resolved the local
+address set through `_local_addresses()`. That helper invoked the injected
+provider unconditionally, and the production provider
+(`InterfaceManager.get_local_addresses`) runs `psutil.net_if_addrs()` +
+`psutil.net_if_stats()`, rebuilds a Pydantic model per NIC, and emits an INFO
+log line every call. Measured cost was ~14.5 ms per call, so the wired capture
+path was capped at roughly **69 packets/sec** — about 170x slower than the
+~12,000 packets/sec the M6.22 baseline claimed — while flooding the log with one
+"Discovered N network interface(s)" line per packet.
 
-| Area           | Location                                                       |
-| -------------- | -------------------------------------------------------------- |
-| Schema         | `app/schemas/packet.py` (`NormalizedPacket`, `PacketType`)      |
-| Processor      | `app/processing/processor.py` (`PacketProcessor`)               |
-| Extraction     | `app/processing/extract.py` (Scapy → `ExtractedFields`)        |
-| Classification | `app/processing/classifier.py`                                  |
-| Integration    | `app/services/capture_sniffer.py`, `app/services/capture_manager.py` |
-| Unit tests     | `tests/test_packet_processor.py` (22 tests)                     |
-| Integration    | `tests/test_capture_processing.py` (4 tests)                    |
-| Verification   | `backend/scripts/verify_m5.py` (sample + live modes)            |
+It was missed because `benchmark_m6.py` measured a bare manager with no
+direction provider wired, so `_local_addresses()` returned an empty set
+immediately and the expensive branch never ran.
 
-**Result:** 106 tests passing, pyright 0 errors, real capture
-2496 packets normalized with 0 errors.
+**Fix.** `_local_addresses()` now caches the resolved set for
+`_LOCAL_ADDRESSES_TTL_SECONDS = 5.0`, guarded by its own lock, and
+`set_local_addresses_provider()` invalidates that cache. A failed resolution is
+cached as an empty set for the same TTL, so a provider outage cannot stall
+ingestion. Regression tests: `test_direction_provider_is_not_called_per_packet`
+and `test_setting_a_new_provider_invalidates_the_cache`.
+
+## BUG-2 (LOW) — `BoundedCounter` eviction was O(n) per new key
+
+**Problem.** When the counter was at capacity and a new key arrived,
+`_evict_smallest()` ran `min()` over every tracked key — O(`max_keys`) per
+insertion, ~1024 comparisons per packet under a new-key flood (port scans,
+spoofed sources), compounding BUG-1 on the same hot path.
+
+**Fix.** Eviction now uses a lazily-invalidated min-heap of
+`(packet_count, key)`. Stale entries are discarded on pop and the heap is
+rebuilt when it outgrows `4 * max_keys + 16`, keeping it bounded. Admitting a
+new key is O(log n) amortized, and `top()`/`items()`/`reset()` semantics are
+unchanged. Regression tests: `test_bounded_counter_keeps_the_most_active_keys`
+and `test_bounded_counter_heap_does_not_grow_without_bound`.
+
+## BUG-3 (LOW) — The M6.22 benchmark did not reflect production wiring
+
+**Problem.** The recorded baseline measured a manager with (a) no direction
+provider wired, which hid BUG-1, and (b) only 64 distinct source IPs, which
+never triggered BUG-2 eviction. It therefore reported a happy-path-only number
+that did not represent the running system.
+
+**Fix.** `benchmark_m6.py` now wires a `set_local_addresses_provider(...)` so
+direction classification runs through the same TTL cache as production, and
+sweeps `_IP_HOSTS = 4096` distinct source hosts (above the default 1024 cap) so
+eviction is exercised. Re-measured baseline: **139,671 packets/sec**, 7.16
+us/packet (see the performance baseline above).
+
+## NIT-4 (LOW) — Snapshot was not a single atomic read
+
+**Problem.** `get_statistics()` read the aggregate totals under the main lock
+but read the ranked counters after releasing it, so `top_*` could be *ahead* of
+`total_packets` — a live snapshot could report more per-IP activity than its own
+total packet count.
+
+**Fix.** The ranked counters are now snapshotted first, then the totals are read
+under the lock. Counters only grow, so the totals are always at least as large
+as the ranked lists. Regression test:
+`test_snapshot_totals_cover_ranked_entries_under_concurrency`.
+
+## NIT-5 (LOW) — Local addresses were only set once the capture manager was built
+
+**Problem.** `get_statistics_manager()` created the singleton without a
+provider; only `get_capture_manager()` set one. Statistics served before any
+capture endpoint was touched therefore reported every direction as `unknown`.
+
+**Fix.** The singleton now attaches a default provider on creation (lazily
+importing the interface manager to avoid an import cycle), so direction
+classification works regardless of capture-manager construction.
+
+## Audit summary
+
+| ID | Severity | Problem | Fix |
+|----|----------|---------|-----|
+| BUG-1 | High | Interface discovery ran once per packet | 5 s TTL cache for local addresses |
+| BUG-2 | Low | O(n) eviction in `BoundedCounter` | Lazy min-heap eviction, O(log n) |
+| BUG-3 | Low | Benchmark missed the real path | Wire provider, sweep 4096 hosts |
+| NIT-4 | Low | Snapshot `top_*` could exceed totals | Snapshot ranked lists before totals |
+| NIT-5 | Low | Direction `unknown` before capture built | Default provider on the singleton |
+
+Result: **191 tests pass** (+5 regression tests), `pyright` clean.
 
 ---
 
 # Architecture Boundary
 
-M5 should produce:
+M6 should produce:
 
-    Scapy Packet
-          ↓
-    PacketProcessor
-          ↓
     NormalizedPacket
+          ↓
+    TrafficStatisticsManager
+          ↓
+    Traffic Statistics Snapshot
 
-The rest of NetWatch should eventually depend on `NormalizedPacket`, not directly on Scapy internals.
+Future milestones will consume these statistics for:
+
+    Detection
+    Device Discovery
+    Behavioral Analysis
+    ML
+    Dashboard
+    Reports
+
+M6 itself must not implement those systems.
 
 ---
-# M5 — Packet Processing ✅ COMPLETE
-
-* [x] Create packet parser — `app/processing/processor.py` (`PacketProcessor`)
-* [x] Parse Ethernet — source/destination MAC, normalized
-* [x] Parse IPv4/IPv6 — addresses + IP version + protocol number
-* [x] Parse TCP — ports + flags
-* [x] Parse UDP — ports
-* [x] Parse ICMP — identified
-* [x] Extract ports — TCP/UDP source + destination
-* [ ] Extract TTL — deferred (not required by the M5 spec; to be populated in
-      M6 persistence — the `Packet.ttl` column already exists)
-* [x] Extract TCP flags — compact string form (e.g. `PA`, `S`)
-* [x] Extract packet length — from the captured frame
-* [x] Add timestamp — capture time (epoch seconds)
-* [x] Create normalized packet model — `app/schemas/packet.py`
-* [x] Handle malformed packets — controlled `PacketProcessingError`, isolated
-      so one bad packet never stops capture
-
-**Notes:** DNS identified (over UDP/TCP); ARP and unknown packets classified as
-`ARP`/`OTHER` without crashing. Verification script: `backend/scripts/verify_m5.py`.
-Full suite: 106 passed, pyright 0 errors. Real capture: 2496 normalized / 0 errors.

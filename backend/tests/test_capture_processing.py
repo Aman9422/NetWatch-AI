@@ -1,4 +1,4 @@
-"""Integration tests: CaptureManager -> sniffer -> PacketProcessor (M5.17)."""
+"""Integration tests: CaptureManager -> sniffer -> PacketPipeline (M5.17/M6.15)."""
 
 from scapy.layers.inet import IP, TCP
 from scapy.layers.l2 import Ether
@@ -6,6 +6,8 @@ from scapy.layers.l2 import Ether
 from app.processing.processor import PacketProcessor
 from app.schemas.packet import NormalizedPacket, PacketType
 from app.services.capture_manager import CaptureManager
+from app.services.packet_pipeline import PacketPipeline
+from app.statistics.manager import TrafficStatisticsManager
 from tests.fakes import (
     FakeCaptureSniffer,
     make_interface_manager,
@@ -16,14 +18,19 @@ from tests.fakes import (
 def _make_manager(
     registry: list[FakeCaptureSniffer],
     processor: PacketProcessor | None = None,
+    statistics: TrafficStatisticsManager | None = None,
 ) -> CaptureManager:
-    """Return a CaptureManager wired to fake sniffers and a real processor."""
+    """Return a CaptureManager wired to fake sniffers and a real pipeline."""
     interface_manager = make_interface_manager()
     interface_manager.select_interface("Wi-Fi")
+    pipeline = PacketPipeline(
+        processor=processor or PacketProcessor(),
+        statistics=statistics or TrafficStatisticsManager(),
+    )
     return CaptureManager(
         interface_manager=interface_manager,
         sniffer_factory=make_sniffer_factory(registry=registry),
-        packet_processor=processor or PacketProcessor(),
+        pipeline=pipeline,
     )
 
 
@@ -47,7 +54,7 @@ def test_processor_receives_selected_interface() -> None:
     manager = _make_manager(registry)
     manager.start()
 
-    packet = manager.get_packet_processor().process(Ether() / IP() / TCP())
+    packet = manager.get_pipeline().processor.process(Ether() / IP() / TCP())
 
     assert packet.interface == "Wi-Fi"
 
@@ -99,3 +106,19 @@ def test_processed_packets_are_normalized_objects() -> None:
     assert packet.destination_port == 443
     assert packet.packet_type == PacketType.TCP
     assert packet.source_mac == "AA:BB:CC:DD:EE:FF"
+
+
+def test_captured_packets_reach_the_statistics_manager() -> None:
+    """Captured packets are aggregated by the shared statistics manager (M6.15)."""
+    registry: list[FakeCaptureSniffer] = []
+    statistics = TrafficStatisticsManager()
+    manager = _make_manager(registry, statistics=statistics)
+    manager.start()
+
+    sniffer = registry[0]
+    sniffer.emit_packet(Ether() / IP(src="192.168.1.10", dst="8.8.8.8") / TCP(dport=443))
+    sniffer.emit_packet(Ether() / IP(src="192.168.1.10", dst="1.1.1.1") / TCP(dport=80))
+
+    snapshot = statistics.get_statistics()
+    assert snapshot.total_packets == 2
+    assert all(source.packets >= 1 for source in snapshot.top_sources)

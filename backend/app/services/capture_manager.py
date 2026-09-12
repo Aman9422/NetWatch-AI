@@ -1,26 +1,21 @@
-"""Capture manager: controls the packet capture lifecycle (M4/M5).
+"""Capture manager: controls the packet capture lifecycle (M4/M5/M6).
 
-The manager owns the *state* of a capture session and delegates the actual
-sniffing to a :class:`~app.services.capture_sniffer.CaptureSniffer`. It:
+The manager owns the state of a capture session and delegates the actual
+sniffing to a CaptureSniffer. It uses the interface selected by the M3
+InterfaceManager, prevents two sessions at once, tracks the packet count,
+exposes a thread-safe status snapshot, translates failures into controlled
+errors, and feeds each captured packet through a PacketPipeline that normalizes
+it (M5) and records traffic statistics (M6).
 
-* uses the interface selected by the M3 :class:`InterfaceManager`,
-* prevents two capture sessions from running at once,
-* tracks the number of captured packets,
-* exposes a thread-safe snapshot of the capture state,
-* translates low-level failures into controlled errors,
-* (M5) hands each captured packet to a :class:`PacketProcessor` for
-  normalization, without detecting, scoring, or storing anything.
-
-It deliberately does NOT detect threats, correlate, or persist packets.
+It deliberately does NOT detect threats, correlate, score risk, or persist data.
 """
 
 import logging
 import threading
 from collections.abc import Callable
 
-from app.processing.processor import PacketProcessor
 from app.schemas.capture import CaptureStatusData
-from app.services.capture_sniffer import CaptureSniffer, ScapyCaptureSniffer
+from app.services.capture_sniffer import CaptureSniffer, PacketSink, ScapyCaptureSniffer
 from app.services.capture_state import (
     CaptureAlreadyRunningError,
     CaptureInterfaceError,
@@ -30,14 +25,17 @@ from app.services.capture_state import (
     CaptureStopError,
 )
 from app.services.interface_manager import InterfaceManager, InterfaceValidationError
+from app.services.packet_pipeline import PacketPipeline
 
 logger = logging.getLogger(__name__)
 
 # Statuses during which a capture session is considered active.
 _ACTIVE_STATUSES = (CaptureStatus.STARTING, CaptureStatus.RUNNING, CaptureStatus.STOPPING)
 
-# Type of the callable used to build a sniffer for a given interface and sink.
-SnifferFactory = Callable[[str, PacketProcessor], CaptureSniffer]
+# Callable that builds a sniffer for a given interface and packet sink. The
+# factory returns the CaptureSniffer protocol so both the real Scapy sniffer and
+# test doubles satisfy it structurally.
+SnifferFactory = Callable[[str, PacketSink], CaptureSniffer]
 
 
 class CaptureManager:
@@ -47,11 +45,11 @@ class CaptureManager:
         self,
         interface_manager: InterfaceManager,
         sniffer_factory: SnifferFactory = ScapyCaptureSniffer,
-        packet_processor: PacketProcessor | None = None,
+        pipeline: PacketPipeline | None = None,
     ) -> None:
         self._interface_manager = interface_manager
         self._sniffer_factory = sniffer_factory
-        self._processor = packet_processor or PacketProcessor()
+        self._pipeline = pipeline or PacketPipeline()
 
         self._lock = threading.RLock()
         self._status = CaptureStatus.STOPPED
@@ -62,20 +60,11 @@ class CaptureManager:
     # -- public API -------------------------------------------------------
 
     def start(self) -> CaptureStatusData:
-        """Start a capture session on the selected interface.
-
-        Returns:
-            A snapshot of the capture state after starting.
-
-        Raises:
-            CaptureAlreadyRunningError: If a session is already active.
-            CaptureInterfaceError: If no valid interface is selected.
-            CaptureStartError: If the underlying sniffer fails to start.
-        """
+        """Start a capture session on the selected interface."""
         interface = self._begin_start()
-        self._processor.set_interface(interface)
+        self._pipeline.set_interface(interface)
         try:
-            sniffer = self._sniffer_factory(interface, self._processor)
+            sniffer = self._sniffer_factory(interface, self._pipeline)
             sniffer.start()
         except Exception as exc:  # noqa: BLE001 - translated to controlled error
             self._fail_start(exc)
@@ -90,15 +79,7 @@ class CaptureManager:
         return self._snapshot()
 
     def stop(self) -> CaptureStatusData:
-        """Stop the active capture session.
-
-        Returns:
-            A snapshot of the capture state after stopping.
-
-        Raises:
-            CaptureNotRunningError: If no session is active.
-            CaptureStopError: If the sniffer fails to stop cleanly.
-        """
+        """Stop the active capture session."""
         with self._lock:
             if self._status not in _ACTIVE_STATUSES:
                 raise CaptureNotRunningError()
@@ -146,38 +127,24 @@ class CaptureManager:
 
     def get_processed_packet_count(self) -> int:
         """Return how many packets were successfully normalized (M5)."""
-        return self._read_sniffer_count("get_processed_count")
+        return self._pipeline.get_processed_count()
 
     def get_processing_error_count(self) -> int:
         """Return how many packets failed normalization (M5)."""
-        return self._read_sniffer_count("get_processing_error_count")
+        return self._pipeline.get_processing_error_count()
 
-    def _read_sniffer_count(self, attribute: str) -> int:
-        """Read an optional integer counter from the current sniffer.
+    def get_statistics_error_count(self) -> int:
+        """Return how many statistics updates failed (M6)."""
+        return self._pipeline.get_statistics_error_count()
 
-        Returns 0 when there is no sniffer, or when the sniffer does not expose
-        the requested counter (e.g. the M4-only fake).
-        """
-        sniffer = self._sniffer
-        if sniffer is None:
-            return 0
-        getter: Callable[[], int] | None = getattr(sniffer, attribute, None)
-        if getter is None:
-            return 0
-        return int(getter())
-
-    def get_packet_processor(self) -> PacketProcessor:
-        """Return the processor used to normalize captured packets."""
-        return self._processor
+    def get_pipeline(self) -> PacketPipeline:
+        """Return the pipeline that normalizes packets and records statistics."""
+        return self._pipeline
 
     # -- internal helpers -------------------------------------------------
 
     def _begin_start(self) -> str:
-        """Validate preconditions and move to the STARTING state.
-
-        Returns:
-            The selected interface name to capture on.
-        """
+        """Validate preconditions and move to the STARTING state."""
         with self._lock:
             if self._status in _ACTIVE_STATUSES:
                 raise CaptureAlreadyRunningError()
@@ -208,11 +175,7 @@ class CaptureManager:
         logger.error("Packet capture failed to start: %s", exc)
 
     def _refresh_state(self) -> None:
-        """Detect an unexpected worker termination and flag an error.
-
-        If the sniffer thread died on its own (crash, permission revoked, cable
-        unplugged), the manager would otherwise keep reporting ``running``.
-        """
+        """Detect an unexpected worker termination and flag an error."""
         with self._lock:
             sniffer = self._sniffer
             if sniffer is None or self._status is not CaptureStatus.RUNNING:
@@ -250,6 +213,14 @@ def get_capture_manager() -> CaptureManager:
     global _capture_manager
     if _capture_manager is None:
         from app.services.interface_manager import get_interface_manager
+        from app.statistics.manager import get_statistics_manager
 
-        _capture_manager = CaptureManager(interface_manager=get_interface_manager())
+        interface_manager = get_interface_manager()
+        statistics = get_statistics_manager()
+        # Direction classification (M6.7) uses the real local IP addresses.
+        statistics.set_local_addresses_provider(interface_manager.get_local_addresses)
+        _capture_manager = CaptureManager(
+            interface_manager=interface_manager,
+            pipeline=PacketPipeline(statistics=statistics),
+        )
     return _capture_manager

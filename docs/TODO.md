@@ -4,7 +4,11 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M6 — Packet Persistence (M0–M5 complete)
+**Current Milestone:** M6 — Traffic Statistics Engine ✅ COMPLETE (M0–M5 complete; next: M7)
+
+> Note: the Statistics Engine was implemented as **M6**, before packet
+> persistence, so Packet Persistence moves to **M7**. `docs/11_Base_App_Roadmap.md`
+> lists the original ordering (M6 Persistence / M7 Statistics).
 
 ---
 
@@ -100,7 +104,37 @@ Full suite: 106 passed, pyright 0 errors. Real capture: 2496 normalized / 0 erro
 
 ---
 
-# M6 — Packet Persistence
+# M6 — Traffic Statistics Engine ✅ COMPLETE
+
+* [x] Statistics manager — `app/statistics/manager.py` (`TrafficStatisticsManager`)
+* [x] Packet count — total and per protocol
+* [x] Byte count — total, per protocol and per direction
+* [x] Protocol statistics — TCP/UDP/ICMP/DNS/ARP/IPv4/IPv6/Other + percentage
+* [x] Source statistics — top source IPs
+* [x] Destination statistics — top destination IPs
+* [x] Port statistics — source and destination ports
+* [x] Traffic direction — inbound / outbound / local / unknown
+* [x] Time windows — 1s, 10s, 60s
+* [x] Throughput — packets/sec, bytes/sec, bits/sec
+* [x] Top talkers — sources, destinations, conversations (by packets or bytes)
+* [x] Thread safety — per-structure locking, lock-free reads where possible
+* [x] Memory management — bounded counters + bucketed rate windows
+* [x] Pipeline integration — a statistics failure never stops capture
+* [x] Statistics API — `GET /api/v1/statistics/{traffic,protocols,top-talkers,ports}`
+* [x] Reset — `POST /api/v1/statistics/reset`
+* [x] Unit tests — `test_statistics.py`, `test_statistics_windows.py` (M6.18)
+* [x] API tests — `test_statistics_api.py` (M6.19)
+* [x] Integration test — `test_statistics_pipeline.py` (M6.20)
+* [x] Manual verification — `backend/scripts/verify_m6.py` (M6.21)
+* [x] Performance baseline — `backend/scripts/benchmark_m6.py` (M6.22)
+
+**Verification:** full suite 186 passed; pyright 0 errors.
+**Baseline (this machine):** ~12,000 packets/sec, ~84 us/packet, 0.25 MiB heap
+(bounded), API 1-3 ms. Not a production-capacity claim.
+
+---
+
+# M7 — Packet Persistence
 
 * [ ] Create packet repository
 * [ ] Store normalized packet metadata
@@ -109,23 +143,6 @@ Full suite: 106 passed, pyright 0 errors. Real capture: 2496 normalized / 0 erro
 * [ ] Implement retention
 * [ ] Avoid payload storage by default
 * [ ] Test packet queries
-
----
-
-# M7 — Statistics Engine
-
-* [ ] Packet rate
-* [ ] Byte rate
-* [ ] Bandwidth
-* [ ] Active devices
-* [ ] Active connections
-* [ ] Protocol statistics
-* [ ] Top talkers
-* [ ] Top ports
-* [ ] Average packet size
-* [ ] Time-window aggregation
-* [ ] Historical statistics
-* [ ] Dashboard statistics service
 
 ---
 

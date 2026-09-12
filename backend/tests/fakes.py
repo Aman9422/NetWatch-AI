@@ -3,8 +3,35 @@
 from collections.abc import Callable
 from typing import Any
 
-from app.processing.processor import PacketProcessor
+from app.schemas.packet import NormalizedPacket, PacketType
+from app.services.capture_sniffer import PacketSink
 from app.services.interface_manager import InterfaceManager
+
+# Fixed capture timestamp used by packet fixtures so time-window tests are
+# deterministic.
+PACKET_BASE_TIME = 1_700_000_000.0
+
+
+def make_normalized_packet(**overrides: Any) -> NormalizedPacket:
+    """Build a :class:`NormalizedPacket` with defaults suited to statistics tests.
+
+    Any field can be overridden through keyword arguments, e.g.
+    ``make_normalized_packet(source_ip="10.0.0.1", length=64)``.
+    """
+    values: dict[str, Any] = {
+        "packet_id": 1,
+        "timestamp": PACKET_BASE_TIME,
+        "length": 100,
+        "source_ip": "192.168.1.10",
+        "destination_ip": "8.8.8.8",
+        "protocol": "TCP",
+        "packet_type": PacketType.TCP,
+        "source_port": 12345,
+        "destination_port": 443,
+    }
+    values.update(overrides)
+    return NormalizedPacket(**values)
+
 
 # A minimal set of normalized interfaces used across tests.
 SAMPLE_INTERFACES: list[dict] = [
@@ -44,7 +71,7 @@ class FakeCaptureSniffer:
     def __init__(
         self,
         interface: str,
-        packet_sink: PacketProcessor | None = None,
+        packet_sink: PacketSink | None = None,
         fail_on_start: bool = False,
         fail_on_stop: bool = False,
     ) -> None:
@@ -110,10 +137,10 @@ def make_sniffer_factory(
     fail_on_start: bool = False,
     fail_on_stop: bool = False,
     registry: list[FakeCaptureSniffer] | None = None,
-) -> Callable[[str, PacketProcessor], FakeCaptureSniffer]:
+) -> Callable[[str, PacketSink], FakeCaptureSniffer]:
     """Return a sniffer factory producing (and optionally recording) fakes."""
 
-    def factory(interface: str, packet_sink: PacketProcessor) -> FakeCaptureSniffer:
+    def factory(interface: str, packet_sink: PacketSink) -> FakeCaptureSniffer:
         sniffer = FakeCaptureSniffer(
             interface,
             packet_sink=packet_sink,
