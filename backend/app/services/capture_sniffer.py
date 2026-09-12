@@ -5,8 +5,8 @@ the small :class:`CaptureSniffer` interface so it can be unit-tested with a fake
 implementation and never has to know about Scapy internals.
 
 Each captured packet is counted and, when a packet sink is configured, handed to
-the :class:`PacketSink` for normalization (M5). Processing failures are logged
-and isolated: one bad packet never stops the capture session.
+the :class:`PacketSink` (the M5/M6 packet pipeline). Processing failures are
+logged and isolated: one bad packet never stops the capture session.
 """
 
 import logging
@@ -14,8 +14,6 @@ import time
 from typing import Any, Optional, Protocol, runtime_checkable
 
 from scapy.all import AsyncSniffer
-
-from app.processing.processor import PacketProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +25,15 @@ _START_POLL_INTERVAL_SECONDS = 0.02
 
 @runtime_checkable
 class PacketSink(Protocol):
-    """Receives raw packets for normalization.
+    """Receives raw packets for normalization and aggregation.
 
-    Implemented by :class:`~app.processing.processor.PacketProcessor`.
+    Implemented by :class:`~app.services.packet_pipeline.PacketPipeline`.
     """
 
     def process(
         self, packet: Any, captured_at: Optional[float] = None
     ) -> Any:  # pragma: no cover - protocol definition
-        """Normalize a raw packet, raising ``PacketProcessingError`` on failure."""
+        """Handle a raw packet, raising on failure."""
         ...
 
 
@@ -66,7 +64,7 @@ class ScapyCaptureSniffer:
     def __init__(
         self,
         interface: str,
-        packet_sink: PacketProcessor | None = None,
+        packet_sink: PacketSink | None = None,
     ) -> None:
         self._interface = interface
         self._packet_sink = packet_sink
@@ -117,7 +115,7 @@ class ScapyCaptureSniffer:
         return self._packet_count
 
     def get_processed_count(self) -> int:
-        """Return the number of packets successfully normalized."""
+        """Return the number of packets successfully handled by the sink."""
         return self._processed_count
 
     def get_processing_error_count(self) -> int:
@@ -141,7 +139,7 @@ class ScapyCaptureSniffer:
         logger.debug("Scapy capture started on interface '%s'", self._interface)
 
     def _handle_packet(self, packet: Any) -> None:
-        """Count a captured packet and hand it to the packet sink (M5).
+        """Count a captured packet and hand it to the sink (M5/M6).
 
         Processing errors are isolated: a single unprocessable packet is logged
         and counted, then capture continues with the next packet.

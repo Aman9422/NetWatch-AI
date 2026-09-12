@@ -107,6 +107,23 @@ class InterfaceManager:
         """Return the currently selected interface, or ``None`` if none."""
         return self._selected
 
+    def get_local_addresses(self) -> set[str]:
+        """Return every IP address assigned to any known interface.
+
+        Used to classify traffic direction (M6.7). A discovery failure simply
+        yields an empty set so callers fall back to ``unknown`` rather than
+        guessing a direction.
+        """
+        try:
+            interfaces = self.list_interfaces()
+        except Exception:  # noqa: BLE001 - never let discovery break a caller
+            logger.exception("Interface discovery failed while reading local addresses")
+            return set()
+        addresses: set[str] = set()
+        for interface in interfaces:
+            addresses.update(interface.ip_addresses)
+        return addresses
+
 
 # Shared singleton used by the application at runtime.
 _interface_manager = InterfaceManager(default_interface=settings.default_capture_interface)
