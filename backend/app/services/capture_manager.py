@@ -1,11 +1,11 @@
-"""Capture manager: controls the packet capture lifecycle (M4/M5/M6).
+"""Capture manager: controls the packet capture lifecycle (M4/M5/M6/M8).
 
 The manager owns the state of a capture session and delegates the actual
 sniffing to a CaptureSniffer. It uses the interface selected by the M3
 InterfaceManager, prevents two sessions at once, tracks the packet count,
 exposes a thread-safe status snapshot, translates failures into controlled
 errors, and feeds each captured packet through a PacketPipeline that normalizes
-it (M5) and records traffic statistics (M6).
+it (M5), records traffic statistics (M6) and tracks observed devices (M8).
 
 It deliberately does NOT detect threats, correlate, score risk, or persist data.
 """
@@ -99,6 +99,12 @@ class CaptureManager:
             logger.error("Packet capture failed to stop: %s", exc)
             raise CaptureStopError() from exc
 
+        # Capture has stopped, so no new packets can arrive: flush whatever the
+        # persistence layer still holds (M7.18). A persistence failure is
+        # isolated — the session stopped successfully and must still report
+        # STOPPED, because a database problem is not a capture problem.
+        self._flush_persistence()
+
         with self._lock:
             self._sniffer = None
             self._status = CaptureStatus.STOPPED
@@ -137,6 +143,10 @@ class CaptureManager:
         """Return how many statistics updates failed (M6)."""
         return self._pipeline.get_statistics_error_count()
 
+    def get_device_error_count(self) -> int:
+        """Return how many device-discovery updates failed (M8.17)."""
+        return self._pipeline.get_device_error_count()
+
     def get_pipeline(self) -> PacketPipeline:
         """Return the pipeline that normalizes packets and records statistics."""
         return self._pipeline
@@ -173,6 +183,23 @@ class CaptureManager:
             self._sniffer = None
             self._status = CaptureStatus.ERROR
         logger.error("Packet capture failed to start: %s", exc)
+
+    def _flush_persistence(self) -> None:
+        """Write pending packets after capture stops (M7.18).
+
+        This runs after ``sniffer.stop()`` has returned, so the capture thread
+        is no longer producing packets and a final flush cannot race with new
+        arrivals. The pipeline swallows any persistence failure, but the call is
+        guarded anyway: a persistence problem must never turn a successful stop
+        into a ``CaptureStopError``.
+        """
+        try:
+            written = self._pipeline.flush_persistence()
+        except Exception:  # noqa: BLE001 - persistence must not fail a stop
+            logger.exception("Failed to flush persisted packets during stop")
+            return
+        if written:
+            logger.info("Flushed %d buffered packet(s) on capture stop", written)
 
     def _refresh_state(self) -> None:
         """Detect an unexpected worker termination and flag an error."""
@@ -212,15 +239,23 @@ def get_capture_manager() -> CaptureManager:
     """FastAPI dependency returning the shared capture manager instance."""
     global _capture_manager
     if _capture_manager is None:
+        from app.devices.manager import get_device_manager
         from app.services.interface_manager import get_interface_manager
         from app.statistics.manager import get_statistics_manager
 
         interface_manager = get_interface_manager()
         statistics = get_statistics_manager()
+        devices = get_device_manager()
         # Direction classification (M6.7) uses the real local IP addresses.
         statistics.set_local_addresses_provider(interface_manager.get_local_addresses)
+        from app.persistence.manager import get_packet_persistence
+
         _capture_manager = CaptureManager(
             interface_manager=interface_manager,
-            pipeline=PacketPipeline(statistics=statistics),
+            pipeline=PacketPipeline(
+                statistics=statistics,
+                devices=devices,
+                persistence=get_packet_persistence(),
+            ),
         )
     return _capture_manager

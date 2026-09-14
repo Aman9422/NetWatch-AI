@@ -4,11 +4,14 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M6 — Traffic Statistics Engine ✅ COMPLETE (M0–M5 complete; next: M7)
+**Current Milestone:** M7 — Packet Persistence ✅ COMPLETE (next: M9 — Connection Tracking)
 
-> Note: the Statistics Engine was implemented as **M6**, before packet
-> persistence, so Packet Persistence moves to **M7**. `docs/11_Base_App_Roadmap.md`
-> lists the original ordering (M6 Persistence / M7 Statistics).
+> Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
+> M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
+> as **M6** and **M7 (Packet Persistence) was deferred**, so Device Discovery
+> shipped first as **M8** and Packet Persistence shipped afterwards as **M7**.
+> With M5-M8 all complete, the next milestone is M9; M9 and later keep their
+> roadmap numbers.
 
 ---
 
@@ -134,30 +137,91 @@ Full suite: 106 passed, pyright 0 errors. Real capture: 2496 normalized / 0 erro
 
 ---
 
-# M7 — Packet Persistence
+# M7 — Packet Persistence ✅ COMPLETE
 
-* [ ] Create packet repository
-* [ ] Store normalized packet metadata
-* [ ] Add batch write strategy
-* [ ] Add packet indexes
-* [ ] Implement retention
-* [ ] Avoid payload storage by default
-* [ ] Test packet queries
+> Deferred: the Statistics Engine shipped as M6 and Device Discovery shipped as
+> M8, so Packet Persistence kept the M7 number. It shipped after M8 and is the
+> last stage of the shared M5/M6/M7/M8 packet pipeline.
+
+* [x] Review the M2 `packets` model + define the mapping (M7.1/M7.2) —
+      `app/persistence/mapping.py`
+* [x] Create packet repository (M7.3) — `app/repositories/packet.py`
+* [x] Store normalized packet metadata (M7.4)
+* [x] Avoid payload storage by default (M7.5) — `payload_length` stays NULL
+* [x] Add batch write strategy (M7.6) — configurable `batch_size` + `flush_interval`
+* [x] Flush behaviour (M7.7) — size, interval, stop, shutdown, explicit
+* [x] Persistence worker (M7.8) — background thread, off the capture path
+* [x] Bounded queue / buffer (M7.9) — oldest-eviction, counted
+* [x] Database transactions (M7.10) — per-batch commit, rollback on failure
+* [x] Persistence error isolation (M7.11) — a DB failure never stops capture
+* [x] Packet indexes (M7.12) — added `source_port`, `destination_port`
+* [x] Implement retention (M7.13) — `PACKET_RETENTION_DAYS`
+* [x] Retention cleanup (M7.14) — `app/persistence/retention.py`
+* [x] Packet query service (M7.15) — `app/services/packet_query.py`
+* [x] Internal packet API (M7.16) — `GET /api/v1/packets`; dev/testing only
+* [x] Pipeline integration (M7.17) — independent of statistics + device discovery
+* [x] Capture stop / shutdown handling (M7.18) — flush on stop and on shutdown
+* [x] Unit tests (M7.19) — mapping, buffer, worker, facade, retention
+* [x] Database tests (M7.20) — repository + query service
+* [x] Integration test (M7.21) — `tests/test_persistence_pipeline.py`
+* [x] Manual verification (M7.22) — `backend/scripts/verify_m7.py` (sample mode)
+* [x] Retention verification (M7.23) — `verify_m7.py` retention check
+* [x] Performance baseline (M7.24) — `backend/scripts/benchmark_m7.py`
+
+**Verification:** full suite 453 passed; pyright 0 errors. `verify_m7.py` sample
+mode: 4/4 packets persisted with the expected values, no payload stored, and
+retention deleted only the expired row while keeping recent ones.
+**Baseline (this machine, `--packets 100000`, OneDrive-synced disk):** mapping +
+buffering ~220,000-585,000 packets/sec; SQLite write ~4,900-6,650 packets/sec
+(~150-205 us/packet) — the per-commit cost dominates on this disk. Larger batches
+raised throughput and latency together (batch 1000: 6,646/s @ 150 ms; batch 100:
+4,867/s @ 20 ms). Buffer footprint bounded at 50,000 rows ≈ 24.8 MiB. Not a
+production-capacity claim.
+**Design decisions:** field mapping and payload policy are documented in
+`app/persistence/mapping.py`; the persistence architecture is in
+`docs/Current_Task.md` (M7).
+
+> Deliberately out of scope for M7: detection, alerts, behavioural baselines,
+> correlation, risk scoring, ML/AI, WebSockets, frontend integration and
+> external SIEM integrations. M7 only stores and queries packet metadata.
 
 ---
 
-# M8 — Device Discovery
+# M8 — Device Discovery & Device Tracking ✅ COMPLETE
 
-* [ ] Detect devices
-* [ ] Create device records
-* [ ] Match existing devices
-* [ ] Update last seen
-* [ ] Track packet count
-* [ ] Track byte count
-* [ ] Track device status
-* [ ] Calculate initial trust context
-* [ ] Device API
-* [ ] Device tests
+* [x] Device identity rules — `app/devices/identity.py` (M8.2/M8.7/M8.8)
+* [x] MAC normalization — every spelling resolves to one canonical form (M8.7)
+* [x] IP normalization — IPv4 + IPv6, canonicalized (M8.8)
+* [x] Endpoint extraction — `app/devices/endpoints.py` (M8.5)
+* [x] Device record — `app/devices/device.py` (`ObservedDevice`) (M8.3/M8.4)
+* [x] Detect devices from normalized packets (M8.1)
+* [x] MAC-based identity with IP fallback (M8.2)
+* [x] Match existing devices + update last seen (M8.4)
+* [x] Track packet count + byte count, per direction (M8.5)
+* [x] Multiple IP addresses per device (M8.6)
+* [x] Device status — active / inactive / unknown (M8.9)
+* [x] Local device identification from the M3/M4 interfaces (M8.10)
+* [x] Hostname support — off by default, never blocks capture (M8.11)
+* [x] Vendor interface — no OUI database shipped in M8 (M8.12)
+* [x] Device lifecycle + configurable expiration (M8.13/M8.14)
+* [x] Device registry — MAC/IP mappings, conflict + upgrade rules (M8.16)
+* [x] Thread safety — registry lock + bounded capacity (M8.15)
+* [x] Pipeline integration — a discovery failure never stops capture (M8.17)
+* [x] Device API — `GET /api/v1/devices`, `GET /api/v1/devices/{device_id}` (M8.18/M8.19)
+* [x] Unit tests — `tests/test_device_identity.py`, `tests/test_devices.py` (M8.20)
+* [x] API tests — `tests/test_devices_api.py` (M8.21)
+* [x] Integration test — `tests/test_devices_pipeline.py` (M8.22)
+* [x] Manual verification — `backend/scripts/verify_m8.py` (M8.23)
+* [x] Performance baseline — `backend/scripts/benchmark_m8.py` (M8.24)
+
+**Verification:** full suite 316 passed; pyright 0 errors.
+**Baseline (this machine):** ~53,800 packets/sec, ~18.6 us/packet, 2,048 devices
+discovered, registry 1.47 MiB (bounded by the 4,096-device cap), API 3.62 ms
+(list) / 0.89 ms (detail). Not a production-capacity claim.
+**Design:** `docs/12_M8_Device_Discovery_Design.md`.
+
+> Deliberately out of scope for M8: trust/risk scoring (removed from the old
+> "Device Discovery" checklist), detection, alerts, baselines and ML.
 
 ---
 

@@ -64,4 +64,9 @@ class Packet(Base):
         Index("idx_packets_destination_ip", "destination_ip"),
         Index("idx_packets_protocol", "protocol"),
         Index("idx_packets_device_id", "device_id"),
+        # M7.12: the persistence query service filters by port, so the two port
+        # columns are indexed as well. They are the only additions over the M2
+        # index set; every other query path is already covered above.
+        Index("idx_packets_source_port", "source_port"),
+        Index("idx_packets_destination_port", "destination_port"),
     )

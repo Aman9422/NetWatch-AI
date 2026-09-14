@@ -152,3 +152,34 @@ def make_sniffer_factory(
         return sniffer
 
     return factory
+
+
+class FakeClock:
+    """A deterministic, manually advanced clock for time-dependent tests.
+
+    ``DeviceDiscoveryManager`` and the device-status logic read the current time
+    through a callable, so tests can drive status transitions and expiration
+    without sleeping.
+    """
+
+    def __init__(self, start: float = PACKET_BASE_TIME) -> None:
+        self._now = start
+
+    def __call__(self) -> float:
+        """Return the current epoch time; usable as a clock callable."""
+        return self._now
+
+    def now(self) -> float:
+        """Return the current epoch time."""
+        return self._now
+
+    def advance(self, seconds: float) -> float:
+        """Move the clock forwards and return the new time."""
+        if seconds < 0:
+            raise ValueError("cannot move the clock backwards")
+        self._now += seconds
+        return self._now
+
+    def set(self, value: float) -> None:
+        """Set the clock to an explicit epoch time."""
+        self._now = value

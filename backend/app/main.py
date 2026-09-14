@@ -28,6 +28,21 @@ def _stop_active_capture() -> None:
         logger.exception("Failed to stop packet capture during shutdown")
 
 
+def _shutdown_persistence() -> None:
+    """Flush buffered packets and stop the persistence worker (M7.18).
+
+    Stopping capture already flushes, but this also covers the case where a
+    persistence worker holds packets without an active capture session. The
+    call is guarded because application shutdown must never raise.
+    """
+    from app.persistence.manager import get_packet_persistence
+
+    try:
+        get_packet_persistence().shutdown()
+    except Exception:  # noqa: BLE001 - shutdown must never raise
+        logger.exception("Failed to flush packet persistence during shutdown")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager.
@@ -36,7 +51,8 @@ async def lifespan(app: FastAPI):
 
     On startup, the database schema is created automatically during
     development, then the app is ready to accept requests. On shutdown, any
-    active packet capture is stopped cleanly before the app exits.
+    active packet capture is stopped and the packet persistence layer is
+    flushed and closed before the app exits (M7.18).
     """
     logger.info("Starting %s (%s) — environment: %s", settings.app_name, settings.app_version, settings.app_env)
     if settings.app_env == "development":
@@ -44,6 +60,7 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Shutting down %s", settings.app_name)
     _stop_active_capture()
+    _shutdown_persistence()
 
 
 app = FastAPI(

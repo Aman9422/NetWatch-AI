@@ -96,11 +96,26 @@ class TrafficStatisticsManager:
             logger.exception("Statistics update failed for a packet; continuing")
 
     def _record(self, packet: NormalizedPacket) -> None:
-        """Update all counters for one packet (assumes a valid packet)."""
+        """Update all counters for one packet (assumes a valid packet).
+
+        The aggregate totals are updated *before* the ranked counters (NIT-4).
+        The two groups use different locks -- the totals take ``self._lock``
+        while each ranked counter locks itself -- so this program order is what
+        makes the snapshot in :meth:`get_statistics` provably consistent: a
+        ranked counter can never run ahead of the totals it is reported with.
+        """
         length = max(int(packet.length), 0)
         protocol = _protocol_label(packet)
         direction = self._classify_direction(packet)
         timestamp = packet.timestamp if packet.timestamp > 0 else time.time()
+
+        with self._lock:
+            self._total_packets += 1
+            self._total_bytes += length
+            self._protocol_packets[protocol] = self._protocol_packets.get(protocol, 0) + 1
+            self._protocol_bytes[protocol] = self._protocol_bytes.get(protocol, 0) + length
+            self._direction_packets[direction] = self._direction_packets.get(direction, 0) + 1
+            self._direction_bytes[direction] = self._direction_bytes.get(direction, 0) + length
 
         if packet.source_ip is not None:
             self._sources.add(packet.source_ip, 1, length)
@@ -116,14 +131,6 @@ class TrafficStatisticsManager:
         if conversation is not None:
             self._conversations.add(conversation, 1, length)
 
-        with self._lock:
-            self._total_packets += 1
-            self._total_bytes += length
-            self._protocol_packets[protocol] = self._protocol_packets.get(protocol, 0) + 1
-            self._protocol_bytes[protocol] = self._protocol_bytes.get(protocol, 0) + length
-            self._direction_packets[direction] = self._direction_packets.get(direction, 0) + 1
-            self._direction_bytes[direction] = self._direction_bytes.get(direction, 0) + length
-
         for window in self._rate_windows.values():
             window.record(1, length, at=timestamp)
 
@@ -132,10 +139,15 @@ class TrafficStatisticsManager:
     def get_statistics(self) -> TrafficSnapshot:
         """Return a near-consistent, monotonic snapshot of the statistics.
 
-        The ranked counters are snapshotted first, then the aggregate totals are
-        read under the main lock. Counters only ever grow, so the totals are
-        always at least as large as the ranked lists they accompany — the
-        snapshot can never report more per-IP activity than it reports in total.
+        Ordering matters here (NIT-4). Within one packet update the aggregate
+        totals advance *before* the ranked counters (see ``_record``), so this
+        method reads the ranked counters first and the totals second. Every
+        ranked counter is then observed no later than the totals it is reported
+        alongside, so the snapshot can never claim more per-source activity than
+        it claims in total.
+
+        The rate windows are read first too; they describe recent windows rather
+        than lifetime totals, so no ordering constraint applies to them.
         """
         rates = self.get_rates("1s")
         top_sources = self._to_entries(self._sources.top(DEFAULT_TOP_LIMIT, "packets"))

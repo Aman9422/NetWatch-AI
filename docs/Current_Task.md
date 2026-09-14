@@ -1,20 +1,66 @@
 # NetWatch AI — Current Task
 
 **Current Phase:** Base Application Implementation  
-**Current Milestone:** M6 — Traffic Statistics Engine  
-**Status:** ✅ Complete — verified (191 tests pass, pyright clean, baseline recorded)
+**Current Milestone:** M7 — Packet Persistence — ✅ COMPLETE  
+**Status:** Complete & verified
 
-> Audited after completion; five findings fixed. See `docs/prob.md`.
+---
+
+# M7 Completion Summary
+
+M7 is **complete and verified**. Packet Persistence stores normalized packet
+metadata to SQLite and answers historical queries, as the final stage of the
+shared M5/M6/M7/M8 pipeline.
+
+**Delivered**
+
+| Area | Artifact |
+|------|----------|
+| Mapping (M7.1/M7.2/M7.4/M7.5) | `app/persistence/mapping.py` |
+| Bounded buffer (M7.9) | `app/persistence/buffer.py` |
+| Batch worker + transactions (M7.6/M7.7/M7.8/M7.10/M7.11) | `app/persistence/worker.py` |
+| Facade, lifecycle, counters | `app/persistence/manager.py` |
+| Repository (M7.3) | `app/repositories/packet.py` |
+| Retention (M7.13/M7.14) | `app/persistence/retention.py` |
+| Query service (M7.15) | `app/services/packet_query.py` |
+| Internal API (M7.16) | `app/api/v1/packets.py` |
+| Indexes (M7.12) | `app/models/packet.py` (`source_port`, `destination_port`) |
+| Pipeline / stop / shutdown (M7.17/M7.18) | `packet_pipeline.py`, `capture_manager.py`, `main.py` |
+| Tests (M7.19-M7.21) | `tests/test_persistence_*.py`, `test_packet_repository.py`, `test_packet_retention.py`, `test_packet_query_service.py`, `test_packets_api.py` |
+| Verification / baseline (M7.22-M7.24) | `scripts/verify_m7.py`, `scripts/benchmark_m7.py` |
+
+**Verification**
+
+- Full suite: **453 passed**.
+- `pyright backend`: **0 errors, 0 warnings**.
+- `verify_m7.py` (sample mode): 4/4 packets persisted with the expected values,
+  `payload_length` NULL, and retention deleted only the expired row.
+- Baseline (`--packets 100000`): map+buffer ~220k-585k packets/sec; SQLite write
+  ~4.9k-6.65k packets/sec (~150-205 us/packet) — commit-bound on this disk.
+  Buffer bounded at 50k rows ≈ 24.8 MiB. Not a production-capacity claim.
+
+**Fixes applied during completion**
+
+- `mapping.protocol_label` now falls back to the transport label when the M5
+  classification is `OTHER`, so a usable label such as `QUIC` is kept.
+- `worker.stop` no longer races a stray final write: draining is owned by the
+  caller thread and a wedged worker is detected instead of blocking forever.
+- `manager.get_last_flush_at` now reports the last flush that actually wrote
+  rows, making it a meaningful "data last reached the database" diagnostic.
+- The interval-flush worker test now waits on the worker's own counter instead of
+  reading the shared in-memory connection while the worker writes on its thread.
 
 ---
 
 # Current Objective
 
-Build the Traffic Statistics Engine for NetWatch AI.
+Build the Packet Persistence layer for NetWatch AI.
 
 M5 converts raw Scapy packets into normalized packets.
 
-M6 will consume those normalized packets and continuously calculate useful traffic statistics.
+M6 calculates traffic statistics from those normalized packets.
+
+M7 will persist selected normalized packet metadata into the existing SQLite database so that NetWatch AI can retain historical packet information for investigation, analytics, reports, and future detection workflows.
 
 The main flow becomes:
 
@@ -26,325 +72,382 @@ The main flow becomes:
         ↓
     NormalizedPacket
         ↓
-    Traffic Statistics Engine
-        ↓
-    Aggregated Statistics
-
-These statistics will later support:
-
-- Dashboard metrics
-- Traffic analytics
-- Device behavior analysis
-- Detection rules
-- Behavioral baselines
-- ML anomaly detection
-- Reports
-
-M6 must remain focused on traffic aggregation.
+    ┌─────────────────────────────┐
+    │                             │
+    ↓                             ↓
+Traffic Statistics          Packet Persistence
+                                  ↓
+                              SQLite
+                                  ↓
+                         Historical Packet Data
 
 ---
 
-# M6 Development Rule
+# M7 Development Rule
+
+M7 is responsible only for packet persistence.
 
 Do NOT implement:
 
-- Detection rules
+- Threat detection
 - Alerts
 - Behavioral baselines
 - ML
 - AI
 - Correlation
 - Risk scoring
-- Device profiling
-- Database persistence
+- Automatic blocking
 - WebSockets
 - Frontend integration
+- External SIEM integrations
+- Advanced packet analysis
 
 Those belong to later milestones.
 
 ---
 
-# M6.1 — Statistics Manager
+# M7.1 — Review Existing Packet Database Model
 
-Create a dedicated service responsible for maintaining traffic statistics.
+Review the existing `packets` model created in M2.
 
-Suggested responsibility:
+Confirm:
 
-    TrafficStatisticsManager
+- Available columns
+- Data types
+- Nullable fields
+- Foreign keys
+- Existing indexes
+- Timestamp representation
+- Protocol representation
+- Packet length representation
 
-Possible interface:
+Do not redesign the entire database unnecessarily.
 
-    record_packet(packet)
-    get_statistics()
-    reset()
-    get_protocol_statistics()
-
-The manager should consume `NormalizedPacket`.
-
-It must not directly depend on Scapy.
+The persistence layer should remain consistent with the existing database architecture.
 
 ---
 
-# M6.2 — Packet Count
+# M7.2 — Define Persistence Model Mapping
 
-Track:
+Define how:
 
-- Total packets
-- Packets per protocol
-- Packets per time window
+    NormalizedPacket
+
+maps to:
+
+    Database Packet
+
+Document the mapping explicitly.
 
 Example:
 
-    Total Packets: 125430
+    NormalizedPacket.source_ip
+            ↓
+    Packet.source_ip
 
-Protocol counts:
+    NormalizedPacket.destination_ip
+            ↓
+    Packet.destination_ip
 
-    TCP: 82100
-    UDP: 31000
-    ICMP: 1200
-    Other: 11130
+Only persist fields that actually exist in the normalized packet.
+
+Do not invent values.
 
 ---
 
-# M6.3 — Byte Count
+# M7.3 — Packet Repository
 
-Track total traffic volume.
+Create a dedicated packet repository.
 
-Calculate:
+Suggested location:
 
-- Total bytes
-- Bytes per protocol
-- Bytes per direction where possible
+    app/repositories/packet_repository.py
+
+Suggested responsibilities:
+
+    add(packet)
+    add_many(packets)
+    get_by_id(packet_id)
+    list(...)
+    count(...)
+    delete_before(timestamp)
+
+The repository should isolate database operations from packet-processing logic.
+
+---
+
+# M7.4 — Store Normalized Packet Metadata
+
+Persist useful packet metadata.
+
+At minimum, support the fields already defined by the project's packet model/database design, such as:
+
+    timestamp
+    interface
+    source MAC
+    destination MAC
+    source IP
+    destination IP
+    IP version
+    protocol
+    source port
+    destination port
+    TCP flags
+    packet length
+    packet type
+
+Use the exact existing model fields where applicable.
+
+---
+
+# M7.5 — Payload Storage Policy
+
+Do NOT store full packet payloads by default.
+
+Reason:
+
+- High storage consumption
+- Potentially sensitive data
+- Not required for the current detection architecture
+- Metadata is sufficient for the base application
+
+If the existing database contains a payload-related field, determine whether it should remain unused in V1.
+
+Document the decision.
+
+---
+
+# M7.6 — Batch Write Strategy
+
+Do not perform a database transaction for every single packet if avoidable.
+
+Implement controlled batch persistence.
+
+Conceptual flow:
+
+    Packet 1 ─┐
+    Packet 2  │
+    Packet 3  │
+    Packet 4  ├──→ Batch Buffer
+    Packet 5  │
+              ┘
+                  ↓
+             Database Write
+
+Support configurable values such as:
+
+    batch size
+    flush interval
+
+The implementation must balance:
+
+- Database overhead
+- Memory usage
+- Persistence latency
+
+Do not create an unbounded buffer.
+
+---
+
+# M7.7 — Flush Behavior
+
+The persistence layer must flush buffered packets when:
+
+- Batch size is reached
+- Flush interval expires
+- Capture is stopped
+- Application is shutting down
+- Explicit flush is requested
+
+Pending packets should not be silently lost during normal shutdown.
+
+---
+
+# M7.8 — Persistence Worker
+
+Do not block packet capture unnecessarily with database writes.
+
+Use a controlled background persistence mechanism where appropriate.
+
+Conceptual architecture:
+
+    Capture Worker
+          ↓
+    PacketProcessor
+          ↓
+    NormalizedPacket
+          ↓
+    Persistence Queue
+          ↓
+    Persistence Worker
+          ↓
+    Packet Repository
+          ↓
+    SQLite
+
+The persistence worker must not interfere with packet capture lifecycle.
+
+---
+
+# M7.9 — Queue / Buffer Management
+
+Use a bounded queue or equivalent controlled buffer.
+
+Handle:
+
+- Queue growth
+- Temporary database slowdown
+- Database write failure
+- Shutdown with pending packets
+
+Define behavior when the queue is full.
+
+The system must never allow unlimited memory growth.
+
+Do not silently discard packets without documenting and logging the chosen policy.
+
+---
+
+# M7.10 — Database Transactions
+
+Batch writes should use appropriate transaction handling.
+
+Requirements:
+
+- Commit successful batches
+- Roll back failed batches
+- Avoid partially committed batches where possible
+- Release database resources properly
+
+A failed batch must not corrupt the database.
+
+---
+
+# M7.11 — Persistence Error Isolation
+
+A database failure must not crash the packet-capture process.
 
 Example:
 
-    Total Traffic: 842 MB
+    Capture
+       ↓
+    Packet Processing
+       ↓
+    Persistence
+       ↓
+    Database Error
 
-Do not estimate values.
+The capture and processing pipeline should remain operational according to the chosen failure policy.
 
-Use the normalized packet length.
-
----
-
-# M6.4 — Protocol Statistics
-
-Track basic protocol distribution.
-
-Initial protocols:
-
-- TCP
-- UDP
-- ICMP
-- DNS
-- ARP
-- IPv4
-- IPv6
-- Other
-
-Store:
-
-- Packet count
-- Byte count
-- Percentage of traffic
-
-Percentages should be calculated from actual counters.
+Log persistence failures clearly.
 
 ---
 
-# M6.5 — Source/Destination Statistics
+# M7.12 — Packet Indexes
 
-Track basic traffic distribution by:
+Review and add indexes that support expected packet queries.
 
-- Source IP
-- Destination IP
-- Source port
-- Destination port
+Potential indexed fields:
 
-The initial implementation should support querying the most active sources and destinations.
+- timestamp
+- source IP
+- destination IP
+- protocol
+- source port
+- destination port
+- interface
 
-Example:
+Do not add indexes blindly.
 
-    Top Sources
-    192.168.1.10 → 10,532 packets
-    192.168.1.15 →  8,231 packets
+Consider:
 
-Do not interpret activity as malicious yet.
+- Query usefulness
+- Write overhead
+- Storage cost
 
----
-
-# M6.6 — Port Statistics
-
-Track commonly observed destination ports.
-
-Examples:
-
-    443
-    53
-    80
-    22
-    3389
-
-Track:
-
-- Packet count
-- Byte count
-
-Do not classify ports as malicious.
-
-Port-based threat detection belongs to the Detection Engine.
+Use the existing database model and migration/init conventions.
 
 ---
 
-# M6.7 — Traffic Direction
+# M7.13 — Retention Policy
 
-Where information allows, classify traffic into:
+Implement packet retention.
 
-- Inbound
-- Outbound
-- Local/unknown
+Configuration should support a configurable retention period.
 
-Do not make unreliable assumptions about network direction.
+Existing configuration includes:
 
-If the local interface/network context is insufficient, use:
+    PACKET_RETENTION_DAYS
 
-    unknown
+Use that configuration rather than hard-coding a value.
 
-rather than inventing a direction.
+Conceptual flow:
 
----
+    Current Time
+        ↓
+    Retention Cutoff
+        ↓
+    Delete packet records older than cutoff
 
-# M6.8 — Time Windows
+Retention must be safe and controllable.
 
-Implement time-based aggregation.
-
-Initial window:
-
-    1 second
-
-Also support:
-
-    10 seconds
-    1 minute
-
-The engine should be capable of answering:
-
-    packets/sec
-    bytes/sec
-
-without needing to inspect every historical packet again.
+Do not delete recent packet records.
 
 ---
 
-# M6.9 — Throughput Calculation
+# M7.14 — Retention Cleanup
 
-Calculate basic traffic throughput.
+Create a controlled cleanup mechanism.
 
-Examples:
+Possible approach:
 
-    Packets per second
-    Bytes per second
-    Bits per second
+    delete_before(timestamp)
 
-Use actual observed data.
+The cleanup operation should:
 
-Avoid claiming network link speed.
+- Run safely
+- Be observable through logs
+- Handle database errors
+- Avoid blocking packet capture for long periods
+- Be testable independently
 
----
-
-# M6.10 — Top Talkers
-
-Calculate basic top talkers.
-
-Support:
-
-- Top source IPs
-- Top destination IPs
-- Top conversations where practical
-
-Ranking should be based on configurable metrics such as:
-
-    packets
-    bytes
-
-This is only traffic analytics.
-
-It is not threat detection.
+Automatic scheduling can remain simple in the base version.
 
 ---
 
-# M6.11 — Protocol Distribution
+# M7.15 — Packet Query Service
 
-Provide a structured summary.
+Create a service layer for packet queries where appropriate.
 
-Example:
+It should support queries such as:
 
-    TCP      65%
-    UDP      25%
-    ICMP      3%
-    ARP       2%
-    Other     5%
+    Recent packets
+    Packets by source IP
+    Packets by destination IP
+    Packets by protocol
+    Packets by port
+    Packets by time range
+    Packets by interface
 
-Percentages must be calculated dynamically from counters.
+Keep filtering logic organized.
 
----
-
-# M6.12 — Statistics Snapshot
-
-Create a consistent snapshot representation.
-
-Possible structure:
-
-    {
-        timestamp,
-        total_packets,
-        total_bytes,
-        packets_per_second,
-        bytes_per_second,
-        protocol_statistics,
-        top_sources,
-        top_destinations,
-        top_ports
-    }
-
-The exact implementation should use the project's existing schema/model conventions.
+Do not add detection logic to packet queries.
 
 ---
 
-# M6.13 — Thread Safety
+# M7.16 — Packet API Preparation
 
-The statistics engine may receive packets from the capture worker while API requests read statistics.
+The master roadmap places the complete REST API in M13.
 
-Protect shared state from race conditions.
+Therefore, M7 should focus on the persistence/query service and repository.
 
-Potential shared state:
+Do NOT build the complete frontend-facing packet API yet unless an internal test endpoint is required.
 
-- packet counters
-- byte counters
-- protocol counters
-- source counters
-- destination counters
-- port counters
-- time-window data
-
-Keep reads efficient.
+If a minimal internal endpoint is temporarily created for verification, clearly document it as a development/testing endpoint.
 
 ---
 
-# M6.14 — Memory Management
-
-Do not keep every packet indefinitely in memory.
-
-Use bounded/aggregated structures.
-
-The statistics engine should store counters and required aggregation state rather than raw packets.
-
-Avoid unbounded dictionaries for high-cardinality data.
-
-Design a reasonable cleanup/expiration mechanism for time-window statistics.
-
----
-
-# M6.15 — Integration With Packet Pipeline
+# M7.17 — Integration With Packet Pipeline
 
 Extend the current pipeline:
 
@@ -355,129 +458,126 @@ Extend the current pipeline:
     PacketProcessor
        ↓
     NormalizedPacket
-       ↓
-    TrafficStatisticsManager
+       ├── TrafficStatisticsManager
+       ├── DeviceDiscoveryManager
+       └── PacketPersistence
 
-The processing path should continue even if statistics processing encounters an individual error.
+Persistence must operate independently from:
 
-A statistics failure must not terminate packet capture.
+- Statistics
+- Device discovery
+- Future detection
 
----
-
-# M6.16 — Statistics API
-
-Add read-only API endpoints.
-
-Suggested endpoints:
-
-    GET /api/v1/statistics/traffic
-    GET /api/v1/statistics/protocols
-    GET /api/v1/statistics/top-talkers
-    GET /api/v1/statistics/ports
-
-These endpoints should return current aggregated statistics.
-
-Do not add WebSockets yet.
+A persistence failure must not stop the other pipeline components.
 
 ---
 
-# M6.17 — Reset Statistics
+# M7.18 — Capture Stop / Shutdown Handling
 
-Provide a controlled reset mechanism for development/testing.
+When capture stops:
 
-Suggested endpoint:
+    Capture Stop
+         ↓
+    Stop accepting new packets
+         ↓
+    Flush pending packet batch
+         ↓
+    Commit successful writes
+         ↓
+    Stop persistence worker
+         ↓
+    Release resources
 
-    POST /api/v1/statistics/reset
+When the application shuts down:
 
-Reset should:
+    Application Shutdown
+         ↓
+    Stop capture
+         ↓
+    Flush persistence queue
+         ↓
+    Close worker/resources
+         ↓
+    Shutdown
 
-- Clear counters
-- Clear time-window data
-- Preserve service availability
-- Not stop packet capture
+Pending packets should be handled according to the documented shutdown policy.
 
 ---
 
-# M6.18 — Tests
+# M7.19 — Tests
 
 Create unit tests for:
 
-### Packet counts
+### Repository
 
-- Single packet
-- Multiple packets
-- Protocol-specific counts
+- Add packet
+- Add multiple packets
+- Get packet
+- List packets
+- Count packets
+- Delete old packets
 
-### Bytes
+### Mapping
 
-- Correct byte aggregation
-- Multiple packets
+- NormalizedPacket → database model
+- Nullable fields
+- Protocol fields
+- Timestamp
+- Packet length
 
-### Protocols
+### Batch persistence
 
-- TCP
-- UDP
-- ICMP
-- DNS
-- ARP
-- Other
+- Batch below threshold
+- Batch reaches threshold
+- Flush interval
+- Explicit flush
+- Empty flush
 
-### IP statistics
+### Transactions
 
-- Source aggregation
-- Destination aggregation
+- Successful commit
+- Failed batch rollback
+- Database exception handling
 
-### Ports
+### Queue
 
-- Source port
-- Destination port
+- Normal enqueue
+- Dequeue
+- Bounded behavior
+- Shutdown with pending items
 
-### Time windows
+### Retention
 
-- Packets/sec
-- Bytes/sec
-- Window rollover
+- Old packets deleted
+- Recent packets preserved
+- Empty database
+- Retention configuration
 
-### Top talkers
+### Error isolation
 
-- Correct ordering
-- Equal values
-- Empty state
-
-### Reset
-
-- Statistics reset correctly
-
-### Errors
-
-- Invalid normalized packet
-- Individual processing failure does not crash manager
+- Database failure
+- Persistence worker failure
+- Capture remains operational
 
 ---
 
-# M6.19 — API Tests
-
-Test:
-
-    GET /api/v1/statistics/traffic
-    GET /api/v1/statistics/protocols
-    GET /api/v1/statistics/top-talkers
-    GET /api/v1/statistics/ports
-    POST /api/v1/statistics/reset
+# M7.20 — Database Tests
 
 Verify:
 
-- Correct response structure
-- Empty state
-- Non-empty state
-- Reset behavior
-- Invalid HTTP methods
-- Unknown routes
-- Correct HTTP status codes
+- Packets are actually persisted
+- Correct values are stored
+- Multiple packets are stored
+- Indexes exist as intended
+- Queries return expected packets
+- Retention deletes only eligible packets
+- Rollback works after failure
+
+Use a test database rather than the developer's live database where practical.
 
 ---
 
-# M6.20 — Integration Test
+# M7.21 — Integration Test
 
 Run:
 
@@ -485,271 +585,159 @@ Run:
         ↓
     PacketProcessor
         ↓
-    TrafficStatisticsManager
+    PacketPersistence
+        ↓
+    SQLite
 
-Generate harmless local traffic.
+Generate harmless authorized traffic.
 
-Verify that:
+Verify:
 
-- Packets are captured.
-- Packets are normalized.
-- Statistics increase.
-- Protocol counters change.
-- Byte counters change.
-- Top talkers update.
+1. Packets are captured.
+2. Packets are normalized.
+3. Packets enter the persistence queue.
+4. Batches are flushed.
+5. Database rows are created.
+6. Stored values match normalized packet values.
+7. Capture continues successfully.
+8. Statistics and device discovery continue functioning.
 
 ---
 
-# M6.21 — Manual Verification
+# M7.22 — Manual Verification
 
 Perform a controlled local test.
 
 Generate normal traffic such as:
 
-- Web browsing
-- DNS lookups
-- Ping
-- Local application connections
+    DNS lookup
+    Web request
+    Ping
+    Local TCP traffic
 
-Observe:
+Then verify in SQLite:
 
-    Total packets
-    Total bytes
-    Packets/sec
-    Bytes/sec
-    Protocol distribution
-    Top sources
-    Top destinations
-    Top ports
+    Packet records exist
+    Timestamp is correct
+    Source/destination information is correct
+    Protocol is correct
+    Ports are correct where available
+    Packet length is correct
 
-Verify that the values correspond to actual traffic.
+Verify that payload data is not stored by default.
 
 ---
 
-# M6.22 — Performance Baseline
+# M7.23 — Retention Verification
+
+Use a controlled test database.
+
+Insert or generate records with timestamps older than the configured retention period.
+
+Run cleanup.
+
+Verify:
+
+    Old records → deleted
+    Recent records → preserved
+
+Do not test retention destructively against important development data.
+
+---
+
+# M7.24 — Performance Baseline
 
 Measure:
 
-- Packets processed per second
-- Statistics update overhead
+- Packets persisted per second
+- Batch size
+- Average write latency
+- Queue depth
+- Database write overhead
 - CPU usage
 - Memory usage
-- API response time
+- SQLite database growth
 
-Do not optimize prematurely.
+Test at least more than one batch size if practical.
 
-Do not claim production-scale performance.
-
----
-
-# M6 Completion Criteria
-
-M6 is complete when:
-
-- [x] TrafficStatisticsManager exists.
-- [x] It consumes NormalizedPacket objects.
-- [x] Packet counts work.
-- [x] Byte counts work.
-- [x] Protocol statistics work.
-- [x] Source statistics work.
-- [x] Destination statistics work.
-- [x] Port statistics work.
-- [x] Traffic time windows work.
-- [x] Packets/sec and bytes/sec work.
-- [x] Top talkers work.
-- [x] Statistics are thread-safe.
-- [x] Memory growth is controlled.
-- [x] Statistics errors do not terminate packet capture.
-- [x] Statistics API works.
-- [x] Reset functionality works.
-- [x] Unit tests pass.
-- [x] API tests pass.
-- [x] Integration test passes.
-- [x] Manual verification succeeds.
-- [x] Performance baseline is recorded.
+Do not claim production-scale database throughput.
 
 ---
 
-# M6 Delivered
+# M7 Completion Criteria
 
-**Status: complete and verified.**
+M7 is complete when:
 
-## Code
-
-- `backend/app/statistics/manager.py` — `TrafficStatisticsManager`
-  (`record_packet`, `get_statistics`, `get_protocol_statistics`, `get_rates`,
-  `get_top_talkers`, `get_top_ports`, `reset`, direction classification).
-- `backend/app/statistics/bounded_counter.py` — `BoundedCounter`, evicting the
-  least-active key so high-cardinality data stays bounded (M6.14).
-- `backend/app/statistics/rate_window.py` — `RateWindow`, sliding-window rates
-  stored as fixed 100 ms buckets so memory depends on window length, not packet
-  rate (M6.8/M6.9/M6.14).
-- `backend/app/schemas/statistics.py` — `TrafficSnapshot`, `ProtocolStat`,
-  `DirectionStat`, `TopEntry`, `TopTalkers`, `TrafficDirection` (M6.12).
-- `backend/app/services/packet_pipeline.py` — ties M5 normalization to M6
-  statistics, isolating failures so stats can never stop capture (M6.15).
-- `backend/app/api/v1/statistics.py` — read-only endpoints + reset (M6.16/M6.17).
-- `backend/app/services/capture_manager.py` — wiring for the shared manager.
-
-## API
-
-    GET  /api/v1/statistics/traffic        (?window=1s|10s|60s)
-    GET  /api/v1/statistics/protocols
-    GET  /api/v1/statistics/top-talkers    (?limit=&by=)
-    GET  /api/v1/statistics/ports          (?limit=&by=&direction=)
-    POST /api/v1/statistics/reset
-
-## Tests and tooling
-
-- `backend/tests/test_statistics.py` — engine unit tests (M6.18).
-- `backend/tests/test_statistics_windows.py` — windows/rankings/bounded memory.
-- `backend/tests/test_statistics_api.py` — API tests (M6.19).
-- `backend/tests/test_statistics_pipeline.py` — integration test (M6.20).
-- `backend/scripts/verify_m6.py` — manual verification (M6.21).
-- `backend/scripts/benchmark_m6.py` — performance baseline (M6.22).
-
-## Verification
-
-- Full suite: **191 passed** (baseline before M6 was 107; +5 audit regression tests).
-- `pyright`: **0 errors, 0 warnings**.
-
-## Performance baseline (this machine, `--packets 200000`)
-
-    200,000 packets (direction provider wired; high-cardinality eviction exercised)
-    wall 1.43 s  |  cpu 1.44 s  |  ~139,700 packets/sec  |  ~7.16 us/packet
-    heap after 1.86 MiB (bounded; independent of packet count)
-    API 1.9-3.1 ms avg per endpoint (in-process)
-
-Not a production-capacity claim — see `backend/scripts/benchmark_m6.py`.
-
-> The earlier ~12,000 packets/sec figure was measured on a manager with **no
-> direction provider wired** and **low key cardinality**, so it hid the
-> per-packet interface-discovery cost. It was replaced after the audit — see
-> *Post-Completion Audit* below and `docs/prob.md`.
-
-## Design note (memory, M6.14)
-
-A rate window originally stored one tuple per packet and only pruned when its
-own `rates()` was called, so the `10s`/`60s` windows grew without bound. Windows
-now prune on every `record()` and aggregate into 100 ms buckets, capping each
-window at `window_seconds / 0.1` buckets. Measured heap fell from 27.94 MiB to
-0.25 MiB with no measurable throughput cost.
+- Existing Packet database model has been reviewed.
+- NormalizedPacket → database mapping is defined.
+- Packet repository exists.
+- Normalized packet metadata can be persisted.
+- Payload is not stored by default.
+- Batch writes work.
+- Flush behavior works.
+- Persistence runs without unnecessarily blocking packet capture.
+- Queue/buffer is bounded.
+- Transaction handling works.
+- Persistence errors are isolated.
+- Appropriate packet indexes exist.
+- Retention configuration works.
+- Retention cleanup works.
+- Packet query service works.
+- Capture stop flushes pending packets.
+- Application shutdown handles pending persistence work.
+- Unit tests pass.
+- Database tests pass.
+- Integration tests pass.
+- Manual verification succeeds.
+- Retention verification succeeds.
+- Performance baseline is recorded.
 
 ---
 
-# Post-Completion Audit — Problems Found and Fixed
+# Current Immediate Task — M7.1 (completed)
 
-After M6 was marked complete, the engine was audited against its own claims.
-Five findings were found — one high-severity throughput bug that both the tests
-and the original benchmark had missed — and all five were fixed and verified.
-Full detail is in `docs/prob.md`; this section records each problem and its fix.
+**M7.1 — Review the existing `packets` database model and define the NormalizedPacket → Packet persistence mapping.**
 
-## BUG-1 (HIGH) — Direction classification re-ran a full interface discovery for every packet
+All eleven preparation steps were completed before the repository and worker were
+written; the resulting mapping is the single source of truth in
+`app/persistence/mapping.py`.
 
-**Problem.** `TrafficStatisticsManager._record()` classifies each packet's
-traffic direction by calling `_classify_direction()`, which resolved the local
-address set through `_local_addresses()`. That helper invoked the injected
-provider unconditionally, and the production provider
-(`InterfaceManager.get_local_addresses`) runs `psutil.net_if_addrs()` +
-`psutil.net_if_stats()`, rebuilds a Pydantic model per NIC, and emits an INFO
-log line every call. Measured cost was ~14.5 ms per call, so the wired capture
-path was capped at roughly **69 packets/sec** — about 170x slower than the
-~12,000 packets/sec the M6.22 baseline claimed — while flooding the log with one
-"Discovered N network interface(s)" line per packet.
+1. [x] Reviewed the M2 `Packet` SQLAlchemy model.
+2. [x] Reviewed the M5 `NormalizedPacket` schema.
+3. [x] Compared their fields.
+4. [x] Identified missing mappings (interface, MACs and ip_version have no column).
+5. [x] Decided the nullable fields (`source_port`, `destination_port`, `tcp_flags`).
+6. [x] Confirmed timestamp representation (naive UTC `datetime` in SQLite).
+7. [x] Confirmed payload is excluded (`payload_length` stays NULL, M7.5).
+8. [x] Reviewed existing packet indexes and added the two port indexes (M7.12).
+9. [x] Defined the repository interface (`add`, `add_many`, `write_batch`,
+       `get_by_id`, `list`, `count`, `delete_before`).
+10. [x] Added model/mapping tests (`tests/test_persistence_mapping.py`).
+11. [x] Implemented batch persistence afterwards.
 
-It was missed because `benchmark_m6.py` measured a bare manager with no
-direction provider wired, so `_local_addresses()` returned an empty set
-immediately and the expensive branch never ran.
-
-**Fix.** `_local_addresses()` now caches the resolved set for
-`_LOCAL_ADDRESSES_TTL_SECONDS = 5.0`, guarded by its own lock, and
-`set_local_addresses_provider()` invalidates that cache. A failed resolution is
-cached as an empty set for the same TTL, so a provider outage cannot stall
-ingestion. Regression tests: `test_direction_provider_is_not_called_per_packet`
-and `test_setting_a_new_provider_invalidates_the_cache`.
-
-## BUG-2 (LOW) — `BoundedCounter` eviction was O(n) per new key
-
-**Problem.** When the counter was at capacity and a new key arrived,
-`_evict_smallest()` ran `min()` over every tracked key — O(`max_keys`) per
-insertion, ~1024 comparisons per packet under a new-key flood (port scans,
-spoofed sources), compounding BUG-1 on the same hot path.
-
-**Fix.** Eviction now uses a lazily-invalidated min-heap of
-`(packet_count, key)`. Stale entries are discarded on pop and the heap is
-rebuilt when it outgrows `4 * max_keys + 16`, keeping it bounded. Admitting a
-new key is O(log n) amortized, and `top()`/`items()`/`reset()` semantics are
-unchanged. Regression tests: `test_bounded_counter_keeps_the_most_active_keys`
-and `test_bounded_counter_heap_does_not_grow_without_bound`.
-
-## BUG-3 (LOW) — The M6.22 benchmark did not reflect production wiring
-
-**Problem.** The recorded baseline measured a manager with (a) no direction
-provider wired, which hid BUG-1, and (b) only 64 distinct source IPs, which
-never triggered BUG-2 eviction. It therefore reported a happy-path-only number
-that did not represent the running system.
-
-**Fix.** `benchmark_m6.py` now wires a `set_local_addresses_provider(...)` so
-direction classification runs through the same TTL cache as production, and
-sweeps `_IP_HOSTS = 4096` distinct source hosts (above the default 1024 cap) so
-eviction is exercised. Re-measured baseline: **139,671 packets/sec**, 7.16
-us/packet (see the performance baseline above).
-
-## NIT-4 (LOW) — Snapshot was not a single atomic read
-
-**Problem.** `get_statistics()` read the aggregate totals under the main lock
-but read the ranked counters after releasing it, so `top_*` could be *ahead* of
-`total_packets` — a live snapshot could report more per-IP activity than its own
-total packet count.
-
-**Fix.** The ranked counters are now snapshotted first, then the totals are read
-under the lock. Counters only grow, so the totals are always at least as large
-as the ranked lists. Regression test:
-`test_snapshot_totals_cover_ranked_entries_under_concurrency`.
-
-## NIT-5 (LOW) — Local addresses were only set once the capture manager was built
-
-**Problem.** `get_statistics_manager()` created the singleton without a
-provider; only `get_capture_manager()` set one. Statistics served before any
-capture endpoint was touched therefore reported every direction as `unknown`.
-
-**Fix.** The singleton now attaches a default provider on creation (lazily
-importing the interface manager to avoid an import cycle), so direction
-classification works regardless of capture-manager construction.
-
-## Audit summary
-
-| ID | Severity | Problem | Fix |
-|----|----------|---------|-----|
-| BUG-1 | High | Interface discovery ran once per packet | 5 s TTL cache for local addresses |
-| BUG-2 | Low | O(n) eviction in `BoundedCounter` | Lazy min-heap eviction, O(log n) |
-| BUG-3 | Low | Benchmark missed the real path | Wire provider, sweep 4096 hosts |
-| NIT-4 | Low | Snapshot `top_*` could exceed totals | Snapshot ranked lists before totals |
-| NIT-5 | Low | Direction `unknown` before capture built | Default provider on the singleton |
-
-Result: **191 tests pass** (+5 regression tests), `pyright` clean.
+**Next milestone:** M9 — Connection Tracking.
 
 ---
 
 # Architecture Boundary
 
-M6 should produce:
+M7 produces:
 
     NormalizedPacket
           ↓
-    TrafficStatisticsManager
+    PacketPersistence
           ↓
-    Traffic Statistics Snapshot
+    PacketRepository
+          ↓
+    SQLite
 
-Future milestones will consume these statistics for:
+M7 provides historical packet metadata for future:
 
     Detection
-    Device Discovery
-    Behavioral Analysis
-    ML
-    Dashboard
+    Device Analysis
+    Connection Tracking
+    Analytics
     Reports
+    Investigation
 
-M6 itself must not implement those systems.
-
----
+M7 itself must not implement those systems.
