@@ -72,3 +72,27 @@ def db_session(db_engine) -> Generator[Session, None, None]:
     finally:
         session.close()
         Base.metadata.drop_all(bind=db_engine)
+
+
+@pytest.fixture
+def session_factory(db_engine):
+    """Provide a factory of sessions bound to the isolated in-memory database.
+
+    The M7 persistence layer takes a *factory* rather than a session, because a
+    SQLAlchemy session is not thread-safe and the persistence worker runs on its
+    own thread. This fixture supplies a factory pointing at the temporary engine
+    so persistence tests never touch the developer's real ``netwatch.db``.
+    """
+    # Importing the models package registers every table with Base.metadata.
+    from app import models as _models  # noqa: F401
+    from app.database.base import Base
+
+    Base.metadata.create_all(bind=db_engine)
+
+    def factory() -> Session:
+        return Session(bind=db_engine)
+
+    try:
+        yield factory
+    finally:
+        Base.metadata.drop_all(bind=db_engine)
