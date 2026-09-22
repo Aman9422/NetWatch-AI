@@ -56,6 +56,28 @@ class Settings(BaseSettings):
     # Days a packet row is kept before retention cleanup may delete it (M7.13).
     packet_retention_days: int = 30
 
+    # Connection tracking (M9)
+    # Master switch for the connection-tracking consumer of the pipeline. When
+    # disabled the capture pipeline stops grouping packets into conversations,
+    # while the read-only connection API keeps working (M9.20).
+    connection_tracking_enabled: bool = True
+    # Seconds a TCP connection may stay idle before it is retired (M9.15).
+    connection_tcp_timeout_seconds: float = 300.0
+    # Seconds a UDP conversation may stay idle before it is retired (M9.15).
+    connection_udp_timeout_seconds: float = 60.0
+    # Seconds an ICMP conversation may stay idle before it is retired (M9.15).
+    connection_icmp_timeout_seconds: float = 30.0
+    # Hard cap on active connections, so a flow flood cannot exhaust memory.
+    connection_max_tracked: int = 8192
+    # Cap on retired connections retained for reporting (M9.16).
+    connection_max_historical: int = 1024
+    # Period of the background idle sweep in seconds (M9.15).
+    connection_cleanup_interval_seconds: float = 5.0
+    # Master switch for writing aggregated connections to SQLite (M9.17).
+    connection_persistence_enabled: bool = True
+    # Cap on connection rows written per persistence pass (M9.17).
+    connection_persistence_max_per_pass: int = 500
+
 
 @lru_cache
 def get_settings() -> Settings:

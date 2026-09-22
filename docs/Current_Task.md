@@ -1,455 +1,499 @@
 # NetWatch AI — Current Task
 
-**Current Phase:** Base Application Implementation  
-**Current Milestone:** M7 — Packet Persistence — ✅ COMPLETE  
-**Status:** Complete & verified
-
----
-
-# M7 Completion Summary
-
-M7 is **complete and verified**. Packet Persistence stores normalized packet
-metadata to SQLite and answers historical queries, as the final stage of the
-shared M5/M6/M7/M8 pipeline.
-
-**Delivered**
-
-| Area | Artifact |
-|------|----------|
-| Mapping (M7.1/M7.2/M7.4/M7.5) | `app/persistence/mapping.py` |
-| Bounded buffer (M7.9) | `app/persistence/buffer.py` |
-| Batch worker + transactions (M7.6/M7.7/M7.8/M7.10/M7.11) | `app/persistence/worker.py` |
-| Facade, lifecycle, counters | `app/persistence/manager.py` |
-| Repository (M7.3) | `app/repositories/packet.py` |
-| Retention (M7.13/M7.14) | `app/persistence/retention.py` |
-| Query service (M7.15) | `app/services/packet_query.py` |
-| Internal API (M7.16) | `app/api/v1/packets.py` |
-| Indexes (M7.12) | `app/models/packet.py` (`source_port`, `destination_port`) |
-| Pipeline / stop / shutdown (M7.17/M7.18) | `packet_pipeline.py`, `capture_manager.py`, `main.py` |
-| Tests (M7.19-M7.21) | `tests/test_persistence_*.py`, `test_packet_repository.py`, `test_packet_retention.py`, `test_packet_query_service.py`, `test_packets_api.py` |
-| Verification / baseline (M7.22-M7.24) | `scripts/verify_m7.py`, `scripts/benchmark_m7.py` |
-
-**Verification**
-
-- Full suite: **453 passed**.
-- `pyright backend`: **0 errors, 0 warnings**.
-- `verify_m7.py` (sample mode): 4/4 packets persisted with the expected values,
-  `payload_length` NULL, and retention deleted only the expired row.
-- Baseline (`--packets 100000`): map+buffer ~220k-585k packets/sec; SQLite write
-  ~4.9k-6.65k packets/sec (~150-205 us/packet) — commit-bound on this disk.
-  Buffer bounded at 50k rows ≈ 24.8 MiB. Not a production-capacity claim.
-
-**Fixes applied during completion**
-
-- `mapping.protocol_label` now falls back to the transport label when the M5
-  classification is `OTHER`, so a usable label such as `QUIC` is kept.
-- `worker.stop` no longer races a stray final write: draining is owned by the
-  caller thread and a wedged worker is detected instead of blocking forever.
-- `manager.get_last_flush_at` now reports the last flush that actually wrote
-  rows, making it a meaningful "data last reached the database" diagnostic.
-- The interval-flush worker test now waits on the worker's own counter instead of
-  reading the shared in-memory connection while the worker writes on its thread.
+**Current Phase:** Base Application Implementation
+**Current Milestone:** M10 — Base Detection
+**Status:** In Progress
 
 ---
 
 # Current Objective
 
-Build the Packet Persistence layer for NetWatch AI.
+Build the first rule-based detection layer for NetWatch AI.
 
-M5 converts raw Scapy packets into normalized packets.
+M5 provides normalized packets.
+M6 provides traffic statistics.
+M7 provides packet persistence.
+M8 provides device discovery and tracking.
+M9 provides network conversations.
 
-M6 calculates traffic statistics from those normalized packets.
-
-M7 will persist selected normalized packet metadata into the existing SQLite database so that NetWatch AI can retain historical packet information for investigation, analytics, reports, and future detection workflows.
+M10 will use these existing components to identify a small set of high-confidence suspicious network behaviors.
 
 The main flow becomes:
 
     Network
         ↓
-    Scapy Capture
+    Packet Capture
         ↓
-    PacketProcessor
+    Packet Processing
         ↓
     NormalizedPacket
-        ↓
-    ┌─────────────────────────────┐
-    │                             │
-    ↓                             ↓
-Traffic Statistics          Packet Persistence
-                                  ↓
-                              SQLite
-                                  ↓
-                         Historical Packet Data
+        ├── Statistics
+        ├── Packet Persistence
+        ├── Device Discovery
+        └── Connection Tracking
+                    ↓
+              Detection Engine
+                    ↓
+              Detection Findings
+
+M10 produces detection findings.
+
+The Alert Engine in M11 will later convert appropriate findings into alerts.
 
 ---
 
-# M7 Development Rule
+# Important Detection Architecture
 
-M7 is responsible only for packet persistence.
+M10 must NOT depend on hundreds of static rules.
+
+The initial detection layer should use a small number of clear, configurable, testable detectors.
+
+Initial detectors:
+
+1. Port Scan
+2. SYN Flood
+3. ICMP Flood
+4. Internal Network Scan
+5. High Bandwidth / Traffic Spike
+
+Future detectors may include:
+
+- DNS anomaly
+- Suspicious port activity
+- Brute-force patterns
+- Beaconing
+- Unusual connection behavior
+
+These are future additions unless explicitly added to the M10 implementation.
+
+---
+
+# M10 Development Rule
 
 Do NOT implement:
 
-- Threat detection
-- Alerts
-- Behavioral baselines
-- ML
-- AI
-- Correlation
+- Alert lifecycle
+- Alert deduplication
+- Correlation engine
 - Risk scoring
+- Behavioral baselines
+- ML anomaly detection
+- AI analysis
 - Automatic blocking
 - WebSockets
 - Frontend integration
 - External SIEM integrations
-- Advanced packet analysis
+- Full incident response
 
-Those belong to later milestones.
+M10 is responsible only for detection.
 
----
-
-# M7.1 — Review Existing Packet Database Model
-
-Review the existing `packets` model created in M2.
-
-Confirm:
-
-- Available columns
-- Data types
-- Nullable fields
-- Foreign keys
-- Existing indexes
-- Timestamp representation
-- Protocol representation
-- Packet length representation
-
-Do not redesign the entire database unnecessarily.
-
-The persistence layer should remain consistent with the existing database architecture.
+Detection findings must remain separate from alerts.
 
 ---
 
-# M7.2 — Define Persistence Model Mapping
+# M10.1 — Review Existing Components
 
-Define how:
+Review:
+
+- `NormalizedPacket`
+- TrafficStatisticsManager
+- PacketPersistence
+- DeviceDiscoveryManager
+- ConnectionTracker
+- Existing database models
+- Existing configuration system
+
+Identify which existing data each detector will consume.
+
+Do not duplicate functionality from previous milestones.
+
+---
+
+# M10.2 — Detection Package
+
+Create a dedicated detection package.
+
+Suggested structure:
+
+    app/detection/
+        __init__.py
+        base.py
+        context.py
+        finding.py
+        engine.py
+        rules/
+            __init__.py
+            port_scan.py
+            syn_flood.py
+            icmp_flood.py
+            internal_scan.py
+            high_bandwidth.py
+
+The exact structure may follow existing project conventions.
+
+Keep detectors modular.
+
+---
+
+# M10.3 — Detection Rule Interface
+
+Define a common detector interface.
+
+Conceptually:
+
+    DetectionRule
+        ↓
+    evaluate(context)
+        ↓
+    DetectionFinding | None
+
+Each detector should:
+
+- Have a stable rule identifier
+- Have a human-readable name
+- Accept a defined detection context
+- Return a structured finding
+- Avoid direct database/API/frontend logic
+
+---
+
+# M10.4 — Detection Context
+
+Create a controlled detection context containing only the information required by the detectors.
+
+Possible inputs:
 
     NormalizedPacket
+    Traffic statistics
+    Connections
+    Devices
+    Current timestamp
 
-maps to:
+The context should avoid exposing unrelated application internals.
 
-    Database Packet
-
-Document the mapping explicitly.
-
-Example:
-
-    NormalizedPacket.source_ip
-            ↓
-    Packet.source_ip
-
-    NormalizedPacket.destination_ip
-            ↓
-    Packet.destination_ip
-
-Only persist fields that actually exist in the normalized packet.
-
-Do not invent values.
+Do not make detectors directly access global application state.
 
 ---
 
-# M7.3 — Packet Repository
+# M10.5 — Detection Finding
 
-Create a dedicated packet repository.
+Create a normalized detection finding model.
 
-Suggested location:
+Suggested fields:
 
-    app/repositories/packet_repository.py
-
-Suggested responsibilities:
-
-    add(packet)
-    add_many(packets)
-    get_by_id(packet_id)
-    list(...)
-    count(...)
-    delete_before(timestamp)
-
-The repository should isolate database operations from packet-processing logic.
-
----
-
-# M7.4 — Store Normalized Packet Metadata
-
-Persist useful packet metadata.
-
-At minimum, support the fields already defined by the project's packet model/database design, such as:
-
+    finding_id
+    rule_id
+    rule_name
     timestamp
-    interface
-    source MAC
-    destination MAC
-    source IP
-    destination IP
-    IP version
+    source_ip
+    destination_ip
+    source_device_id
+    destination_device_id
     protocol
-    source port
-    destination port
-    TCP flags
-    packet length
-    packet type
+    description
+    evidence
+    confidence
+    metadata
 
-Use the exact existing model fields where applicable.
+Do not add final alert severity/risk scoring here.
 
----
-
-# M7.5 — Payload Storage Policy
-
-Do NOT store full packet payloads by default.
-
-Reason:
-
-- High storage consumption
-- Potentially sensitive data
-- Not required for the current detection architecture
-- Metadata is sufficient for the base application
-
-If the existing database contains a payload-related field, determine whether it should remain unused in V1.
-
-Document the decision.
+A detection finding is an observation from a detector, not an alert.
 
 ---
 
-# M7.6 — Batch Write Strategy
+# M10.6 — Detection Engine
 
-Do not perform a database transaction for every single packet if avoidable.
+Create:
 
-Implement controlled batch persistence.
+    DetectionEngine
 
-Conceptual flow:
+Responsibilities:
 
-    Packet 1 ─┐
-    Packet 2  │
-    Packet 3  │
-    Packet 4  ├──→ Batch Buffer
-    Packet 5  │
-              ┘
-                  ↓
-             Database Write
+- Register enabled detection rules
+- Evaluate rules
+- Process detection context
+- Collect findings
+- Isolate individual rule failures
+- Track detector execution diagnostics
 
-Support configurable values such as:
+Conceptually:
 
-    batch size
-    flush interval
-
-The implementation must balance:
-
-- Database overhead
-- Memory usage
-- Persistence latency
-
-Do not create an unbounded buffer.
-
----
-
-# M7.7 — Flush Behavior
-
-The persistence layer must flush buffered packets when:
-
-- Batch size is reached
-- Flush interval expires
-- Capture is stopped
-- Application is shutting down
-- Explicit flush is requested
-
-Pending packets should not be silently lost during normal shutdown.
-
----
-
-# M7.8 — Persistence Worker
-
-Do not block packet capture unnecessarily with database writes.
-
-Use a controlled background persistence mechanism where appropriate.
-
-Conceptual architecture:
-
-    Capture Worker
+    Detection Context
           ↓
-    PacketProcessor
+    Detection Engine
           ↓
-    NormalizedPacket
-          ↓
-    Persistence Queue
-          ↓
-    Persistence Worker
-          ↓
-    Packet Repository
-          ↓
-    SQLite
-
-The persistence worker must not interfere with packet capture lifecycle.
+    ┌──────────┬──────────┬──────────┬──────────┬──────────┐
+    ↓          ↓          ↓          ↓          ↓
+   Port      SYN        ICMP       Internal   Bandwidth
+   Scan      Flood      Flood       Scan       Spike
+    ↓          ↓          ↓          ↓          ↓
+    └──────────┴──────────┴──────────┴──────────┴──────────┘
+                         ↓
+                  Detection Findings
 
 ---
 
-# M7.9 — Queue / Buffer Management
+# M10.7 — Rule Configuration
 
-Use a bounded queue or equivalent controlled buffer.
+Detection thresholds must be configurable.
 
-Handle:
+Do not hard-code important thresholds directly inside detector logic.
 
-- Queue growth
-- Temporary database slowdown
-- Database write failure
-- Shutdown with pending packets
+Configuration should support values such as:
 
-Define behavior when the queue is full.
+    PORT_SCAN_TIME_WINDOW_SECONDS
+    PORT_SCAN_UNIQUE_PORT_THRESHOLD
+    PORT_SCAN_SYN_RATIO_THRESHOLD
 
-The system must never allow unlimited memory growth.
+    SYN_FLOOD_TIME_WINDOW_SECONDS
+    SYN_FLOOD_RATE_THRESHOLD
 
-Do not silently discard packets without documenting and logging the chosen policy.
+    ICMP_FLOOD_TIME_WINDOW_SECONDS
+    ICMP_FLOOD_RATE_THRESHOLD
 
----
+    INTERNAL_SCAN_TIME_WINDOW_SECONDS
+    INTERNAL_SCAN_UNIQUE_DESTINATION_THRESHOLD
 
-# M7.10 — Database Transactions
+    HIGH_BANDWIDTH_TIME_WINDOW_SECONDS
+    HIGH_BANDWIDTH_BYTES_PER_SECOND_THRESHOLD
 
-Batch writes should use appropriate transaction handling.
+Use sensible development defaults.
 
-Requirements:
-
-- Commit successful batches
-- Roll back failed batches
-- Avoid partially committed batches where possible
-- Release database resources properly
-
-A failed batch must not corrupt the database.
+The exact defaults should be documented.
 
 ---
 
-# M7.11 — Persistence Error Isolation
+# M10.8 — Port Scan Detector
 
-A database failure must not crash the packet-capture process.
+Detect a host attempting connections to an unusually large number of destination ports within a configured time window.
+
+Possible evidence:
+
+- Unique destination ports
+- Number of connection attempts
+- SYN count where available
+- Failed/incomplete connection observations
+
+Initial design:
+
+    Source Device/IP
+          ↓
+    Time Window
+          ↓
+    Unique Destination Ports
+          ↓
+    Configurable Threshold
+          ↓
+    Finding
+
+Do not label every multi-port connection as malicious.
+
+The detector should produce a finding only when its configured conditions are met.
+
+---
+
+# M10.9 — SYN Flood Detector
+
+Detect an unusually high rate of TCP SYN traffic.
+
+Possible evidence:
+
+- SYN packet rate
+- Incomplete connection observations
+- Time window
+- Destination concentration
+
+Initial detector should focus on observable network behavior.
+
+Do not implement traffic blocking.
+
+Do not treat a single SYN packet as a flood.
+
+---
+
+# M10.10 — ICMP Flood Detector
+
+Detect unusually high ICMP packet rates.
+
+Possible evidence:
+
+- ICMP packets per second
+- Time window
+- Destination concentration
+
+Use configurable thresholds.
+
+Do not assume that normal ping activity is malicious.
+
+---
+
+# M10.11 — Internal Network Scan Detector
+
+Detect a source communicating with an unusually large number of internal destinations within a configured window.
+
+Possible evidence:
+
+- Unique destination IPs
+- Connection attempts
+- Time window
+
+The detector should define what counts as an internal destination using available network context.
+
+Do not assume every private IP is malicious.
+
+---
+
+# M10.12 — High Bandwidth / Traffic Spike Detector
+
+Detect unusually high observed traffic volume using the statistics already produced by M6.
+
+Possible evidence:
+
+- Bytes per second
+- Packet rate
+- Time window
+- Source/destination concentration where available
+
+Use a configurable threshold.
+
+This is a traffic-volume finding, not automatically a security incident.
+
+---
+
+# M10.13 — Detection Windows
+
+Detectors that use time-based thresholds must use explicit windows.
+
+The system should support:
+
+    Start time
+    End time
+    Window duration
+
+Avoid repeatedly scanning unlimited historical data.
+
+Reuse existing M6/M9 aggregation capabilities where appropriate.
+
+---
+
+# M10.14 — Evidence
+
+Every finding must contain enough evidence to explain why it was produced.
+
+Examples:
+
+    Unique destination ports: 37
+    Threshold: 20
+    Observation window: 10 seconds
+
+or:
+
+    SYN packets: 2400
+    SYN threshold: 1000
+    Window: 5 seconds
+
+Evidence must come from actual observed data.
+
+Do not fabricate packet counts, IPs, devices, or timestamps.
+
+---
+
+# M10.15 — Confidence
+
+Detection findings may contain a confidence value describing how strongly the detector's evidence supports its own rule condition.
+
+Keep:
+
+    confidence
+
+separate from future:
+
+    risk score
+
+Do not implement the M12 risk-scoring engine here.
+
+---
+
+# M10.16 — False Positive Awareness
+
+Detectors must not assume:
+
+    threshold exceeded = confirmed attack
+
+Use wording such as:
+
+    Possible port scan detected
+
+or another clearly descriptive finding description.
+
+The finding should describe observed behavior.
+
+The Alert Engine and later correlation/risk layers will add additional context.
+
+---
+
+# M10.17 — Rule Failure Isolation
+
+A failure in one detector must not stop the other detectors.
 
 Example:
 
-    Capture
-       ↓
-    Packet Processing
-       ↓
-    Persistence
-       ↓
-    Database Error
+    Port Scan      → finding
+    SYN Flood      → error
+    ICMP Flood     → finding
+    Internal Scan  → finding
+    Bandwidth      → finding
 
-The capture and processing pipeline should remain operational according to the chosen failure policy.
+The engine must continue evaluating remaining rules.
 
-Log persistence failures clearly.
+Track detector failures for diagnostics.
 
 ---
 
-# M7.12 — Packet Indexes
+# M10.18 — Deduplication Boundary
 
-Review and add indexes that support expected packet queries.
+Do not implement full alert deduplication.
 
-Potential indexed fields:
+However, a single detector should avoid generating an excessive number of identical findings from the same observation window.
 
-- timestamp
-- source IP
-- destination IP
-- protocol
-- source port
-- destination port
-- interface
+Implement only minimal rule-level suppression if required.
 
-Do not add indexes blindly.
-
-Consider:
-
-- Query usefulness
-- Write overhead
-- Storage cost
-
-Use the existing database model and migration/init conventions.
+Full finding/alert deduplication belongs to later architecture.
 
 ---
 
-# M7.13 — Retention Policy
+# M10.19 — Detection State
 
-Implement packet retention.
+Rules that require a time window may maintain bounded runtime state.
 
-Configuration should support a configurable retention period.
+Examples:
 
-Existing configuration includes:
+    Port observations
+    SYN counters
+    ICMP counters
+    Destination sets
 
-    PACKET_RETENTION_DAYS
+State must be bounded and periodically cleaned.
 
-Use that configuration rather than hard-coding a value.
-
-Conceptual flow:
-
-    Current Time
-        ↓
-    Retention Cutoff
-        ↓
-    Delete packet records older than cutoff
-
-Retention must be safe and controllable.
-
-Do not delete recent packet records.
+Do not keep unlimited packet history in detector memory.
 
 ---
 
-# M7.14 — Retention Cleanup
+# M10.20 — Thread Safety
 
-Create a controlled cleanup mechanism.
+Detection may run while packet capture and other pipeline components operate.
 
-Possible approach:
+Protect mutable detector state.
 
-    delete_before(timestamp)
+Do not introduce unnecessary global locks.
 
-The cleanup operation should:
-
-- Run safely
-- Be observable through logs
-- Handle database errors
-- Avoid blocking packet capture for long periods
-- Be testable independently
-
-Automatic scheduling can remain simple in the base version.
+A detector must not corrupt shared state used by other services.
 
 ---
 
-# M7.15 — Packet Query Service
+# M10.21 — Pipeline Integration
 
-Create a service layer for packet queries where appropriate.
-
-It should support queries such as:
-
-    Recent packets
-    Packets by source IP
-    Packets by destination IP
-    Packets by protocol
-    Packets by port
-    Packets by time range
-    Packets by interface
-
-Keep filtering logic organized.
-
-Do not add detection logic to packet queries.
-
----
-
-# M7.16 — Packet API Preparation
-
-The master roadmap places the complete REST API in M13.
-
-Therefore, M7 should focus on the persistence/query service and repository.
-
-Do NOT build the complete frontend-facing packet API yet unless an internal test endpoint is required.
-
-If a minimal internal endpoint is temporarily created for verification, clearly document it as a development/testing endpoint.
-
----
-
-# M7.17 — Integration With Packet Pipeline
-
-Extend the current pipeline:
+Extend the architecture:
 
     Scapy
        ↓
@@ -459,285 +503,267 @@ Extend the current pipeline:
        ↓
     NormalizedPacket
        ├── TrafficStatisticsManager
+       ├── PacketPersistence
        ├── DeviceDiscoveryManager
-       └── PacketPersistence
+       ├── ConnectionTracker
+       └── DetectionEngine
 
-Persistence must operate independently from:
+Detection must run after the required normalized data is available.
 
+A detection failure must not stop:
+
+- Capture
+- Processing
 - Statistics
+- Persistence
 - Device discovery
-- Future detection
-
-A persistence failure must not stop the other pipeline components.
+- Connection tracking
 
 ---
 
-# M7.18 — Capture Stop / Shutdown Handling
+# M10.22 — Detection Queries
 
-When capture stops:
+Provide an internal mechanism to retrieve findings for testing and later milestones.
 
-    Capture Stop
-         ↓
-    Stop accepting new packets
-         ↓
-    Flush pending packet batch
-         ↓
-    Commit successful writes
-         ↓
-    Stop persistence worker
-         ↓
-    Release resources
+Support:
 
-When the application shuts down:
+    Recent findings
+    Findings by rule
+    Findings by source IP
+    Findings by destination IP
+    Findings by device
+    Findings by time window
 
-    Application Shutdown
-         ↓
-    Stop capture
-         ↓
-    Flush persistence queue
-         ↓
-    Close worker/resources
-         ↓
-    Shutdown
-
-Pending packets should be handled according to the documented shutdown policy.
+Do not implement the complete alert API.
 
 ---
 
-# M7.19 — Tests
+# M10.23 — Tests — Detection Framework
 
-Create unit tests for:
+Test:
 
-### Repository
-
-- Add packet
-- Add multiple packets
-- Get packet
-- List packets
-- Count packets
-- Delete old packets
-
-### Mapping
-
-- NormalizedPacket → database model
-- Nullable fields
-- Protocol fields
-- Timestamp
-- Packet length
-
-### Batch persistence
-
-- Batch below threshold
-- Batch reaches threshold
-- Flush interval
-- Explicit flush
-- Empty flush
-
-### Transactions
-
-- Successful commit
-- Failed batch rollback
-- Database exception handling
-
-### Queue
-
-- Normal enqueue
-- Dequeue
-- Bounded behavior
-- Shutdown with pending items
-
-### Retention
-
-- Old packets deleted
-- Recent packets preserved
-- Empty database
-- Retention configuration
-
-### Error isolation
-
-- Database failure
-- Persistence worker failure
-- Capture remains operational
+- Rule registration
+- Rule enable/disable
+- Context creation
+- Finding validation
+- Engine execution
+- Multiple rules
+- Rule failure isolation
+- Empty context
+- Invalid context
+- Diagnostics
 
 ---
 
-# M7.20 — Database Tests
+# M10.24 — Port Scan Tests
+
+Test at minimum:
+
+- Below threshold
+- Exactly at threshold
+- Above threshold
+- Multiple ports
+- Repeated same port
+- Multiple sources
+- Multiple time windows
+- SYN evidence
+- Cleanup
+- No false finding for normal low-volume traffic
+
+---
+
+# M10.25 — SYN Flood Tests
+
+Test:
+
+- Below threshold
+- At threshold
+- Above threshold
+- Different destinations
+- Different time windows
+- Normal SYN traffic
+- Cleanup
+
+---
+
+# M10.26 — ICMP Flood Tests
+
+Test:
+
+- Below threshold
+- At threshold
+- Above threshold
+- Normal ping traffic
+- Time window behavior
+- Cleanup
+
+---
+
+# M10.27 — Internal Scan Tests
+
+Test:
+
+- Few destinations
+- Threshold boundary
+- Large number of destinations
+- Internal destination filtering
+- External destination traffic
+- Multiple sources
+- Cleanup
+
+---
+
+# M10.28 — High Bandwidth Tests
+
+Test:
+
+- Below threshold
+- At threshold
+- Above threshold
+- Different windows
+- Normal traffic
+- Statistics input failure
+
+---
+
+# M10.29 — Integration Tests
 
 Verify:
-
-- Packets are actually persisted
-- Correct values are stored
-- Multiple packets are stored
-- Indexes exist as intended
-- Queries return expected packets
-- Retention deletes only eligible packets
-- Rollback works after failure
-
-Use a test database rather than the developer's live database where practical.
-
----
-
-# M7.21 — Integration Test
-
-Run:
 
     CaptureManager
         ↓
     PacketProcessor
         ↓
-    PacketPersistence
+    Statistics
+        +
+    Devices
+        +
+    Connections
         ↓
-    SQLite
+    DetectionEngine
 
-Generate harmless authorized traffic.
+Use controlled local/lab traffic.
+
+Verify that findings are generated only when configured detection conditions are actually satisfied.
+
+---
+
+# M10.30 — Manual Verification
+
+Use only authorized/local traffic.
+
+Perform controlled tests for:
+
+- Port scan-like traffic in a lab
+- High-rate SYN traffic in a controlled environment
+- High-rate ICMP traffic in a controlled environment
+- Multiple internal destinations
+- Controlled traffic-volume increase
 
 Verify:
 
-1. Packets are captured.
-2. Packets are normalized.
-3. Packets enter the persistence queue.
-4. Batches are flushed.
-5. Database rows are created.
-6. Stored values match normalized packet values.
-7. Capture continues successfully.
-8. Statistics and device discovery continue functioning.
+    Observed behavior
+         ↓
+    Detection condition
+         ↓
+    Detection finding
+         ↓
+    Evidence
+
+Do not perform attacks against unauthorized systems.
 
 ---
 
-# M7.22 — Manual Verification
-
-Perform a controlled local test.
-
-Generate normal traffic such as:
-
-    DNS lookup
-    Web request
-    Ping
-    Local TCP traffic
-
-Then verify in SQLite:
-
-    Packet records exist
-    Timestamp is correct
-    Source/destination information is correct
-    Protocol is correct
-    Ports are correct where available
-    Packet length is correct
-
-Verify that payload data is not stored by default.
-
----
-
-# M7.23 — Retention Verification
-
-Use a controlled test database.
-
-Insert or generate records with timestamps older than the configured retention period.
-
-Run cleanup.
-
-Verify:
-
-    Old records → deleted
-    Recent records → preserved
-
-Do not test retention destructively against important development data.
-
----
-
-# M7.24 — Performance Baseline
+# M10.31 — Performance Baseline
 
 Measure:
 
-- Packets persisted per second
-- Batch size
-- Average write latency
-- Queue depth
-- Database write overhead
-- CPU usage
+- Packets processed per second with detection disabled
+- Packets processed per second with detection enabled
+- Detection overhead per packet/window
+- Rule execution time
 - Memory usage
-- SQLite database growth
+- Active detector state size
 
-Test at least more than one batch size if practical.
+Measure each detector individually where practical.
 
-Do not claim production-scale database throughput.
+Do not claim production-scale detection throughput.
 
 ---
 
-# M7 Completion Criteria
+# M10 Completion Criteria
 
-M7 is complete when:
+M10 is complete when:
 
-- Existing Packet database model has been reviewed.
-- NormalizedPacket → database mapping is defined.
-- Packet repository exists.
-- Normalized packet metadata can be persisted.
-- Payload is not stored by default.
-- Batch writes work.
-- Flush behavior works.
-- Persistence runs without unnecessarily blocking packet capture.
-- Queue/buffer is bounded.
-- Transaction handling works.
-- Persistence errors are isolated.
-- Appropriate packet indexes exist.
-- Retention configuration works.
-- Retention cleanup works.
-- Packet query service works.
-- Capture stop flushes pending packets.
-- Application shutdown handles pending persistence work.
+- Detection framework exists.
+- Common detection rule interface exists.
+- Detection context exists.
+- Detection finding model exists.
+- Detection Engine exists.
+- Rule configuration exists.
+- Port Scan detector works.
+- SYN Flood detector works.
+- ICMP Flood detector works.
+- Internal Scan detector works.
+- High Bandwidth detector works.
+- Evidence is attached to findings.
+- Confidence is separated from future risk scoring.
+- Detector state is bounded.
+- Rule failures are isolated.
+- Detection integrates with the packet pipeline.
 - Unit tests pass.
-- Database tests pass.
 - Integration tests pass.
-- Manual verification succeeds.
-- Retention verification succeeds.
+- Manual authorized verification succeeds.
 - Performance baseline is recorded.
+- No alerts, correlation, risk scoring, ML/AI, WebSockets, or frontend code are introduced.
 
 ---
 
-# Current Immediate Task — M7.1 (completed)
+# Current Immediate Task
 
-**M7.1 — Review the existing `packets` database model and define the NormalizedPacket → Packet persistence mapping.**
+**M10.1 — Design the detection framework before implementing individual detectors.**
 
-All eleven preparation steps were completed before the repository and worker were
-written; the resulting mapping is the single source of truth in
-`app/persistence/mapping.py`.
+First:
 
-1. [x] Reviewed the M2 `Packet` SQLAlchemy model.
-2. [x] Reviewed the M5 `NormalizedPacket` schema.
-3. [x] Compared their fields.
-4. [x] Identified missing mappings (interface, MACs and ip_version have no column).
-5. [x] Decided the nullable fields (`source_port`, `destination_port`, `tcp_flags`).
-6. [x] Confirmed timestamp representation (naive UTC `datetime` in SQLite).
-7. [x] Confirmed payload is excluded (`payload_length` stays NULL, M7.5).
-8. [x] Reviewed existing packet indexes and added the two port indexes (M7.12).
-9. [x] Defined the repository interface (`add`, `add_many`, `write_batch`,
-       `get_by_id`, `list`, `count`, `delete_before`).
-10. [x] Added model/mapping tests (`tests/test_persistence_mapping.py`).
-11. [x] Implemented batch persistence afterwards.
-
-**Next milestone:** M9 — Connection Tracking.
+1. Review `NormalizedPacket`.
+2. Review M6 traffic statistics.
+3. Review M8 device information.
+4. Review M9 connection information.
+5. Define the DetectionContext.
+6. Define the DetectionRule interface.
+7. Define the DetectionFinding schema.
+8. Define rule registration and configuration.
+9. Define detector state ownership.
+10. Define error isolation behavior.
+11. Add framework tests.
+12. Only after the framework is stable, implement the Port Scan detector.
 
 ---
 
 # Architecture Boundary
 
-M7 produces:
+M10 produces:
 
-    NormalizedPacket
-          ↓
-    PacketPersistence
-          ↓
-    PacketRepository
-          ↓
-    SQLite
+    Network Data
+         ↓
+    Detection Engine
+         ↓
+    Detection Findings
 
-M7 provides historical packet metadata for future:
+M11 will consume findings to create:
 
-    Detection
-    Device Analysis
-    Connection Tracking
-    Analytics
-    Reports
-    Investigation
+    Alerts
+    Alert Evidence
+    Alert Severity
+    Alert Lifecycle
+    Alert Deduplication
 
-M7 itself must not implement those systems.
+M12 will later add:
+
+    Correlation
+    Risk Scoring
+    Historical Context
+    Behavioral Contribution
+    ML Contribution
+
+M10 itself must not implement those systems.

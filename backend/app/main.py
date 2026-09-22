@@ -43,6 +43,23 @@ def _shutdown_persistence() -> None:
         logger.exception("Failed to flush packet persistence during shutdown")
 
 
+def _shutdown_connections() -> None:
+    """Write the remaining connection aggregates and stop the sweep (M9.18).
+
+    Stopping capture already flushes the conversations of that session, but a
+    tracker that outlived a capture session (or never captured at all) may still
+    hold conversations and a running cleanup thread. Shutting it down retires
+    what is idle, writes the rest and joins the thread, so no daemon thread
+    survives the application. Guarded because shutdown must never raise.
+    """
+    from app.connections.manager import get_connection_tracker
+
+    try:
+        get_connection_tracker().shutdown()
+    except Exception:  # noqa: BLE001 - shutdown must never raise
+        logger.exception("Failed to flush connection tracking during shutdown")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager.
@@ -51,8 +68,9 @@ async def lifespan(app: FastAPI):
 
     On startup, the database schema is created automatically during
     development, then the app is ready to accept requests. On shutdown, any
-    active packet capture is stopped and the packet persistence layer is
-    flushed and closed before the app exits (M7.18).
+    active packet capture is stopped, the packet persistence layer is flushed
+    and closed (M7.18), and the connection tracker writes its remaining
+    aggregates and stops its cleanup sweep (M9.17/M9.18).
     """
     logger.info("Starting %s (%s) — environment: %s", settings.app_name, settings.app_version, settings.app_env)
     if settings.app_env == "development":
@@ -61,6 +79,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down %s", settings.app_name)
     _stop_active_capture()
     _shutdown_persistence()
+    _shutdown_connections()
 
 
 app = FastAPI(
