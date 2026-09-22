@@ -1,32 +1,41 @@
-"""Packet pipeline: normalize a raw packet, then feed its M6/M7/M8 consumers.
+"""Packet pipeline: normalize a raw packet, then feed its M6/M7/M8/M9 consumers.
 
 This is the seam the capture callback talks to. It chains the M5
-PacketProcessor with three independent consumers of the normalized packet:
+PacketProcessor with four independent consumers of the normalized packet:
 
 * the M6 TrafficStatisticsManager, which aggregates traffic totals;
 * the M7 PacketPersistence layer, which buffers the packet for SQLite;
-* the M8 DeviceDiscoveryManager, which tracks the devices behind the traffic.
+* the M8 DeviceDiscoveryManager, which tracks the devices behind the traffic;
+* the M9 ConnectionTracker, which groups the traffic into conversations.
 
 Failures are isolated per stage:
 
 * if normalization fails, the packet is counted as a normalization error and
   the exception is re-raised so the capture sniffer can isolate it too;
-* if statistics aggregation, persistence or device discovery fails, the
-  normalized packet is still produced and the remaining stages still run.
+* if statistics aggregation, persistence, device discovery or connection
+  tracking fails, the normalized packet is still produced and the remaining
+  stages still run.
 
 A consumer failure is logged and counted, never raised, so packet capture keeps
-running (M6.15/M7.11/M7.17/M8.17).
+running (M6.15/M7.11/M7.17/M8.17/M9.20).
+
+Device discovery runs *before* connection tracking on purpose: M9 associates a
+conversation's endpoints with the M8 devices that own them (M9.14), so the
+devices must already know about this packet's addresses when the tracker reads
+them.
 
 Persistence is *injected* rather than created here: the application wires the
 real layer in :func:`app.services.capture_manager.get_capture_manager`. When no
 persistence layer is supplied the pipeline simply does not persist, which keeps
 the pipeline usable — and its tests free of a database — without changing the
-runtime behaviour, where persistence is always present.
+runtime behaviour, where persistence is always present. Connection tracking is
+injected the same way.
 """
 
 import logging
 from typing import Any, Optional
 
+from app.connections.manager import ConnectionTracker
 from app.devices.manager import DeviceDiscoveryManager
 from app.persistence.manager import PacketPersistence
 from app.processing.processor import PacketProcessor
@@ -36,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 class PacketPipeline:
-    """Normalizes raw packets and feeds the M6/M7/M8 consumers."""
+    """Normalizes raw packets and feeds the M6/M7/M8/M9 consumers."""
 
     def __init__(
         self,
@@ -44,16 +53,19 @@ class PacketPipeline:
         statistics: TrafficStatisticsManager | None = None,
         devices: DeviceDiscoveryManager | None = None,
         persistence: PacketPersistence | None = None,
+        connections: ConnectionTracker | None = None,
     ) -> None:
         self._processor = processor or PacketProcessor()
         self._statistics = statistics or TrafficStatisticsManager()
         self._devices = devices or DeviceDiscoveryManager()
         self._persistence = persistence
+        self._connections = connections
         self._processed_count = 0
         self._normalization_error_count = 0
         self._statistics_error_count = 0
         self._device_error_count = 0
         self._persistence_error_count = 0
+        self._connection_error_count = 0
 
     def process(self, packet: Any, captured_at: Optional[float] = None) -> None:
         """Normalize a raw packet and record its statistics.
@@ -85,6 +97,12 @@ class PacketPipeline:
             except Exception:  # noqa: BLE001 - persistence must never stop capture
                 self._persistence_error_count += 1
                 logger.warning("Packet persistence failed; capture continues")
+        if self._connections is not None:
+            try:
+                self._connections.process_packet(normalized)
+            except Exception:  # noqa: BLE001 - tracking must never stop capture
+                self._connection_error_count += 1
+                logger.warning("Connection tracking failed; capture continues")
 
     def flush_persistence(self) -> int:
         """Write every packet still buffered for persistence (M7.7/M7.18).
@@ -120,6 +138,21 @@ class PacketPipeline:
         """Return how many persistence updates failed (M7.11/M7.17)."""
         return self._persistence_error_count
 
+    def get_connection_error_count(self) -> int:
+        """Return how many connection-tracking updates failed (M9.20)."""
+        return self._connection_error_count
+
+    def flush_connections(self) -> int:
+        """Write every tracked conversation with unwritten observations (M9.17).
+
+        Called when capture stops, so the aggregate rows for a session exist
+        even for conversations that were still in progress when it ended.
+        Returns 0 when no tracker is wired.
+        """
+        if self._connections is None:
+            return 0
+        return self._connections.flush_persistence()
+
     @property
     def processor(self) -> PacketProcessor:
         """Return the packet processor used by this pipeline."""
@@ -139,3 +172,8 @@ class PacketPipeline:
     def persistence(self) -> PacketPersistence | None:
         """Return the persistence layer fed by this pipeline, if any."""
         return self._persistence
+
+    @property
+    def connections(self) -> ConnectionTracker | None:
+        """Return the connection tracker fed by this pipeline, if any."""
+        return self._connections

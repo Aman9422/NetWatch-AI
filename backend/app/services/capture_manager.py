@@ -1,13 +1,15 @@
-"""Capture manager: controls the packet capture lifecycle (M4/M5/M6/M8).
+"""Capture manager: controls the packet capture lifecycle (M4/M5/M6/M8/M9).
 
 The manager owns the state of a capture session and delegates the actual
 sniffing to a CaptureSniffer. It uses the interface selected by the M3
 InterfaceManager, prevents two sessions at once, tracks the packet count,
 exposes a thread-safe status snapshot, translates failures into controlled
 errors, and feeds each captured packet through a PacketPipeline that normalizes
-it (M5), records traffic statistics (M6) and tracks observed devices (M8).
+it (M5), records traffic statistics (M6), tracks observed devices (M8) and
+groups the traffic into network conversations (M9).
 
-It deliberately does NOT detect threats, correlate, score risk, or persist data.
+It deliberately does NOT detect threats, correlate, score risk, or persist
+packets itself.
 """
 
 import logging
@@ -104,6 +106,7 @@ class CaptureManager:
         # isolated — the session stopped successfully and must still report
         # STOPPED, because a database problem is not a capture problem.
         self._flush_persistence()
+        self._flush_connections()
 
         with self._lock:
             self._sniffer = None
@@ -146,6 +149,10 @@ class CaptureManager:
     def get_device_error_count(self) -> int:
         """Return how many device-discovery updates failed (M8.17)."""
         return self._pipeline.get_device_error_count()
+
+    def get_connection_error_count(self) -> int:
+        """Return how many connection-tracking updates failed (M9.20)."""
+        return self._pipeline.get_connection_error_count()
 
     def get_pipeline(self) -> PacketPipeline:
         """Return the pipeline that normalizes packets and records statistics."""
@@ -201,6 +208,22 @@ class CaptureManager:
         if written:
             logger.info("Flushed %d buffered packet(s) on capture stop", written)
 
+    def _flush_connections(self) -> None:
+        """Write the aggregates of the conversations the session observed (M9.17).
+
+        Like the packet flush above, this runs after ``sniffer.stop()`` has
+        returned, so no conversation can be updated while its aggregate is being
+        written. The call is guarded for the same reason: a storage problem must
+        never turn a successful stop into a ``CaptureStopError``.
+        """
+        try:
+            written = self._pipeline.flush_connections()
+        except Exception:  # noqa: BLE001 - storage must not fail a stop
+            logger.exception("Failed to flush tracked connections during stop")
+            return
+        if written:
+            logger.info("Wrote %d connection aggregate(s) on capture stop", written)
+
     def _refresh_state(self) -> None:
         """Detect an unexpected worker termination and flag an error."""
         with self._lock:
@@ -248,7 +271,18 @@ def get_capture_manager() -> CaptureManager:
         devices = get_device_manager()
         # Direction classification (M6.7) uses the real local IP addresses.
         statistics.set_local_addresses_provider(interface_manager.get_local_addresses)
+        from app.config.settings import settings
+        from app.connections.manager import get_connection_tracker
         from app.persistence.manager import get_packet_persistence
+
+        # The tracker is a pipeline consumer like persistence and devices, so
+        # the master switch only decides whether the capture path feeds it. The
+        # read-only connection API keeps its own tracker either way (M9.20).
+        connections = (
+            get_connection_tracker()
+            if settings.connection_tracking_enabled
+            else None
+        )
 
         _capture_manager = CaptureManager(
             interface_manager=interface_manager,
@@ -256,6 +290,7 @@ def get_capture_manager() -> CaptureManager:
                 statistics=statistics,
                 devices=devices,
                 persistence=get_packet_persistence(),
+                connections=connections,
             ),
         )
     return _capture_manager

@@ -4,13 +4,13 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M7 — Packet Persistence ✅ COMPLETE (next: M9 — Connection Tracking)
+**Current Milestone:** M9 — Connection Tracking ✅ COMPLETE (next: M10 — Base Detection)
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
 > as **M6** and **M7 (Packet Persistence) was deferred**, so Device Discovery
 > shipped first as **M8** and Packet Persistence shipped afterwards as **M7**.
-> With M5-M8 all complete, the next milestone is M9; M9 and later keep their
+> With M5-M9 all complete, the next milestone is M10; M10 and later keep their
 > roadmap numbers.
 
 ---
@@ -225,17 +225,59 @@ discovered, registry 1.47 MiB (bounded by the 4,096-device cap), API 3.62 ms
 
 ---
 
-# M9 — Connection Tracking
+# M9 — Connection Tracking ✅ COMPLETE
 
-* [ ] Identify flows
-* [ ] Track source/destination
-* [ ] Track ports
-* [ ] Track protocol
-* [ ] Track packet counts
-* [ ] Track byte counts
-* [ ] Track start/end time
-* [ ] Track connection status
-* [ ] Connection tests
+* [x] Review M5 `NormalizedPacket`, the M8 device registry and the M2
+      `connections` model; define identity, direction, state and expiration (M9.1) —
+      `docs/13_M9_Connection_Tracking_Design.md`
+* [x] `ConnectionTracker` service, no direct Scapy dependency (M9.2) —
+      `app/connections/manager.py`
+* [x] Deterministic 5-tuple identity for TCP/UDP/ICMP (M9.3) —
+      `app/connections/identity.py`
+* [x] Bidirectional conversation handling (M9.4)
+* [x] Canonical bidirectional key + preserved direction (M9.5)
+* [x] Runtime `Connection` model, only observed values populated (M9.6) —
+      `app/connections/connection.py`
+* [x] First seen / last seen (M9.7)
+* [x] Packet, byte and directional counters (M9.8)
+* [x] TCP tracking — ports, flags, counters, timestamps (M9.9)
+* [x] TCP state logic — observed/established/closing/closed, no full state machine
+      (M9.10) — `app/connections/tcp.py`, `app/connections/state.py`
+* [x] UDP tracking — active/inactive/unknown, never TCP-style states (M9.11)
+* [x] ICMP tracking — portless bidirectional conversation (M9.12)
+* [x] IPv4 + IPv6, canonicalized addresses (M9.13)
+* [x] Device association via the M8 registry; unknown stays unknown (M9.14)
+* [x] Configurable per-protocol expiration (M9.15)
+* [x] Active vs historical state — non-destructive retirement (M9.16)
+* [x] Persistence to the existing `connections` table, aggregates only (M9.17) —
+      `app/connections/persistence.py`, `app/connections/mapping.py`
+* [x] Memory management — bounded active/historical caps, documented cleanup (M9.18) —
+      `app/connections/registry.py`
+* [x] Thread safety — one registry `RLock`, lock-free records (M9.19)
+* [x] Pipeline integration, failure-isolated (M9.20) —
+      `app/services/packet_pipeline.py`, `app/services/capture_manager.py`
+* [x] Connection queries with filtering and limits, no detection logic (M9.21)
+* [x] Internal read-only verification API (M9.22) — `app/api/v1/connections.py`
+* [x] Unit tests — `tests/test_connection_identity.py`, `tests/test_connections.py` (M9.23)
+* [x] Integration test — `tests/test_connections_pipeline.py` (M9.24)
+* [x] Database tests — `tests/test_connection_persistence.py` (M9.25)
+* [x] Manual verification — `backend/scripts/verify_m9.py` (M9.26)
+* [x] Performance baseline — `backend/scripts/benchmark_m9.py` (M9.27)
+
+**Verification:** full suite 669 passed; pyright 0 errors, 0 warnings.
+**Baseline (this machine, `--packets 200000 --flows 20000`):** ~30,600 packets/sec,
+~32.7 us/packet, ~20,000 new conversations/sec; single-connection lookup 0.42 us;
+100-connection listing 5.4 ms (dominated by building 100 pydantic views); an idle
+sweep retires 20,000 conversations in 27.4 ms (1.37 us each); registry footprint
+4.79 MiB at 5,000 conversations, bounded by the 8,192-active / 1,024-historical
+caps; API 8.14 ms (list) / 7.92 ms (active) / 1.57 ms (detail). Not a
+production-capacity claim.
+**Design:** `docs/13_M9_Connection_Tracking_Design.md`.
+
+> Deliberately out of scope for M9: threat detection, detection rules, alerts,
+> behavioural baselines, correlation, risk scoring, ML/AI, automatic blocking,
+> WebSockets, frontend integration and SIEM integrations. M9 only groups
+> normalized packets into network conversations.
 
 ---
 

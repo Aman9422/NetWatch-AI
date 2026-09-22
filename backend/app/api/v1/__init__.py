@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import capture, devices, health, packets, statistics
+from app.api.v1 import capture, connections, devices, health, packets, statistics
 
 api_router = APIRouter()
 api_router.include_router(health.router, prefix="/health", tags=["health"])
@@ -13,3 +13,7 @@ api_router.include_router(
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
 # Internal read-only packet endpoints (M7.16); the public packet API is M13.
 api_router.include_router(packets.router, prefix="/packets", tags=["packets"])
+# Internal read-only connection endpoints (M9.22); the public API is M13.
+api_router.include_router(
+    connections.router, prefix="/connections", tags=["connections"]
+)
