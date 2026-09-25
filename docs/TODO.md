@@ -4,7 +4,7 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M9 — Connection Tracking ✅ COMPLETE (next: M10 — Base Detection)
+**Current Milestone:** M10 — Base Detection ✅ COMPLETE (next: M11 — Alert Engine)
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -281,43 +281,72 @@ production-capacity claim.
 
 ---
 
-# M10 — Base Detection
+# M10 — Base Detection ✅ COMPLETE
 
-## Port Scan
+* [x] Review M5 `NormalizedPacket`, M6 rates, M8 devices, M9 connections and the
+      existing configuration; define the detection context, rule interface,
+      finding schema and error isolation (M10.1) —
+      `docs/14_M10_Detection_Engine_Design.md`
+* [x] Detection package structure (M10.2) — `app/detection/` + `rules/`
+* [x] Common rule interface (M10.3) — `app/detection/base.py` (`DetectionRule`)
+* [x] Detection context, no global application state (M10.4) —
+      `app/detection/context.py` (`DetectionContext`, `DetectionWindow`)
+* [x] Normalized finding model, no severity or risk score (M10.5/M10.15) —
+      `app/detection/finding.py` (`DetectionFinding`, `threshold_confidence`)
+* [x] Detection engine — registration, evaluation, failure isolation,
+      diagnostics (M10.6/M10.17) — `app/detection/engine.py`
+* [x] Rule configuration in `Settings`, sensible documented defaults (M10.7) —
+      `app/detection/rules/__init__.py` (`build_default_rules`)
+* [x] Port Scan detector — distinct destination ports in a window, threshold +
+      SYN ratio (M10.8) — `app/detection/rules/port_scan.py`
+* [x] SYN Flood detector — SYN rate per destination, pure-SYN only, minimum of
+      two SYNs (M10.9) — `app/detection/rules/syn_flood.py`
+* [x] ICMP Flood detector — ICMP rate per destination, normal ping stays silent
+      (M10.10) — `app/detection/rules/icmp_flood.py`
+* [x] Internal Scan detector — distinct internal destinations, external traffic
+      ignored by construction (M10.11) — `app/detection/rules/internal_scan.py`
+* [x] High Bandwidth detector — consumes the M6 rate, minimum interval between
+      findings (M10.12) — `app/detection/rules/high_bandwidth.py`
+* [x] Explicit detection windows, inclusive start / exclusive end (M10.13) —
+      `DetectionWindow`
+* [x] Evidence on every finding, drawn from observed data (M10.14)
+* [x] Descriptive false-positive-aware wording (M10.16)
+* [x] Minimal rule-level suppression only, no alert deduplication (M10.18)
+* [x] Bounded detector state (M10.19) — `WindowedCounter`, `WindowedDistinct`
+* [x] Thread safety — engine lock + per-rule locks, rules evaluated off the table
+      lock (M10.20)
+* [x] Pipeline integration, detection runs last and is failure-isolated (M10.21) —
+      `app/services/packet_pipeline.py`, `app/services/capture_manager.py`
+* [x] Internal read-only verification API + queries (M10.22) —
+      `app/api/v1/detections.py`, `app/detection/history.py`
+* [x] Framework tests (M10.23) — `tests/test_detection_framework.py`
+* [x] Port scan tests (M10.24) — `tests/test_detection_port_scan.py`
+* [x] SYN flood tests (M10.25) — `tests/test_detection_syn_flood.py`
+* [x] ICMP flood tests (M10.26) — `tests/test_detection_icmp_flood.py`
+* [x] Internal scan tests (M10.27) — `tests/test_detection_internal_scan.py`
+* [x] High bandwidth tests (M10.28) — `tests/test_detection_high_bandwidth.py`
+* [x] Pipeline integration tests (M10.29) — `tests/test_detection_pipeline.py`
+* [x] API tests (M10.22) — `tests/test_detections_api.py`
+* [x] Manual verification (M10.30) — `backend/scripts/verify_m10.py`
+* [x] Performance baseline (M10.31) — `backend/scripts/benchmark_m10.py`
 
-* [ ] Create rule interface
-* [ ] Create detection context
-* [ ] Implement port scan detector
-* [ ] Configurable threshold
-* [ ] Time window
-* [ ] SYN ratio
-* [ ] Failed connection ratio
-* [ ] Unit tests
+**Verification:** detection suite 190 passed (framework 55, port scan 18,
+SYN flood 19, ICMP flood 16, internal scan 16, high bandwidth 12, pipeline 19,
+API 33; fakes shared). `verify_m10.py` sample mode: all five detectors fired with
+evidence, 0 rule failures.
+**Baseline (this machine, `--packets 100000 --flows 10000`):** ~107,600
+packets/sec, ~9.29 us/packet with detection enabled (~0.03 us/packet with the
+engine disabled, so ~9.26 us/packet of detection overhead); per-detector cost
+0.9-3.5 us/packet (internal scan most expensive); detector state bounded
+(2 subjects tracked); API 4.91 ms (`/detections` limit 100) / 1.23 ms
+(`/detections/rules`). Not a production-capacity claim.
+**Design:** `docs/14_M10_Detection_Engine_Design.md`.
 
-## SYN Flood
-
-* [ ] Implement detector
-* [ ] SYN rate calculation
-* [ ] Incomplete connection tracking
-* [ ] Unit tests
-
-## ICMP Flood
-
-* [ ] Implement detector
-* [ ] Configurable threshold
-* [ ] Unit tests
-
-## Internal Scan
-
-* [ ] Implement detector
-* [ ] Unique destination calculation
-* [ ] Unit tests
-
-## High Bandwidth
-
-* [ ] Implement detector
-* [ ] Baseline/threshold comparison
-* [ ] Unit tests
+> Deliberately out of scope for M10: alerts, alert lifecycle, alert deduplication,
+> correlation, risk scoring, behavioural baselines, ML/AI anomaly detection,
+> automatic blocking, WebSockets, frontend integration and SIEM integrations.
+> A detection finding is an observation, not an alert; M11 converts findings into
+> alerts.
 
 ---
 

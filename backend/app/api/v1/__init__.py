@@ -2,7 +2,15 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import capture, connections, devices, health, packets, statistics
+from app.api.v1 import (
+    capture,
+    connections,
+    detections,
+    devices,
+    health,
+    packets,
+    statistics,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router, prefix="/health", tags=["health"])
@@ -16,4 +24,9 @@ api_router.include_router(packets.router, prefix="/packets", tags=["packets"])
 # Internal read-only connection endpoints (M9.22); the public API is M13.
 api_router.include_router(
     connections.router, prefix="/connections", tags=["connections"]
+)
+# Internal read-only detection endpoints (M10.22); the public alert and
+# detection API is M13, and the alert API itself is M11.
+api_router.include_router(
+    detections.router, prefix="/detections", tags=["detections"]
 )
