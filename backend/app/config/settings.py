@@ -78,6 +78,47 @@ class Settings(BaseSettings):
     # Cap on connection rows written per persistence pass (M9.17).
     connection_persistence_max_per_pass: int = 500
 
+    # Detection (M10)
+    # Master switch for the detection consumer of the pipeline. When disabled
+    # the capture path stops evaluating rules, while the read-only findings API
+    # keeps working (M10.21).
+    detection_enabled: bool = True
+    # Hard cap on the findings the engine retains for querying (M10.22).
+    detection_max_findings: int = 1000
+    # Hard cap on the subjects one detector tracks at once, so a spoofed flood
+    # cannot exhaust memory (M10.19).
+    detection_max_state_keys: int = 4096
+    # Cap on the distinct values tracked per subject within one window (M10.19).
+    detection_max_values_per_key: int = 4096
+
+    # Port scan detector (M10.8). A finding requires more than
+    # ``port_scan_unique_port_threshold`` distinct destination ports from one
+    # source inside the window; when SYN evidence exists, the SYN share of that
+    # source's traffic must also reach ``port_scan_syn_ratio_threshold``.
+    port_scan_time_window_seconds: float = 10.0
+    port_scan_unique_port_threshold: int = 20
+    port_scan_syn_ratio_threshold: float = 0.5
+
+    # SYN flood detector (M10.9): SYN packets per second aimed at one
+    # destination, averaged over the window.
+    syn_flood_time_window_seconds: float = 5.0
+    syn_flood_rate_threshold: float = 200.0
+
+    # ICMP flood detector (M10.10): ICMP packets per second aimed at one
+    # destination, averaged over the window.
+    icmp_flood_time_window_seconds: float = 5.0
+    icmp_flood_rate_threshold: float = 100.0
+
+    # Internal scan detector (M10.11): distinct internal destinations contacted
+    # by one source inside the window.
+    internal_scan_time_window_seconds: float = 10.0
+    internal_scan_unique_destination_threshold: int = 15
+
+    # High bandwidth detector (M10.12): observed bytes per second over the M6
+    # one-second rate window.
+    high_bandwidth_time_window_seconds: float = 5.0
+    high_bandwidth_bytes_per_second_threshold: float = 1_000_000.0
+
 
 @lru_cache
 def get_settings() -> Settings:

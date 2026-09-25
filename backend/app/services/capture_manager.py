@@ -1,15 +1,17 @@
-"""Capture manager: controls the packet capture lifecycle (M4/M5/M6/M8/M9).
+"""Capture manager: controls the packet capture lifecycle (M4/M5/M6/M8/M9/M10).
 
 The manager owns the state of a capture session and delegates the actual
 sniffing to a CaptureSniffer. It uses the interface selected by the M3
 InterfaceManager, prevents two sessions at once, tracks the packet count,
 exposes a thread-safe status snapshot, translates failures into controlled
 errors, and feeds each captured packet through a PacketPipeline that normalizes
-it (M5), records traffic statistics (M6), tracks observed devices (M8) and
-groups the traffic into network conversations (M9).
+it (M5), records traffic statistics (M6), tracks observed devices (M8), groups
+the traffic into network conversations (M9) and observes it for suspicious
+behaviour (M10).
 
-It deliberately does NOT detect threats, correlate, score risk, or persist
-packets itself.
+It deliberately does NOT implement detection logic, correlation, risk scoring,
+alerting or packet storage itself: each of those is a pipeline consumer wired in
+by :func:`get_capture_manager`, so this class owns only the capture lifecycle.
 """
 
 import logging
@@ -154,6 +156,15 @@ class CaptureManager:
         """Return how many connection-tracking updates failed (M9.20)."""
         return self._pipeline.get_connection_error_count()
 
+    def get_detection_error_count(self) -> int:
+        """Return how many detection evaluations failed (M10.21).
+
+        Detection isolates its own rule failures (M10.17), so this is normally
+        zero; it exists so a detection problem can never be invisible from the
+        capture layer that feeds it.
+        """
+        return self._pipeline.get_detection_error_count()
+
     def get_pipeline(self) -> PacketPipeline:
         """Return the pipeline that normalizes packets and records statistics."""
         return self._pipeline
@@ -273,6 +284,7 @@ def get_capture_manager() -> CaptureManager:
         statistics.set_local_addresses_provider(interface_manager.get_local_addresses)
         from app.config.settings import settings
         from app.connections.manager import get_connection_tracker
+        from app.detection import get_detection_engine
         from app.persistence.manager import get_packet_persistence
 
         # The tracker is a pipeline consumer like persistence and devices, so
@@ -283,6 +295,14 @@ def get_capture_manager() -> CaptureManager:
             if settings.connection_tracking_enabled
             else None
         )
+        # Detection is wired the same way: the master switch only decides
+        # whether the capture path feeds the engine, while the read-only
+        # findings API keeps working against the shared engine either way
+        # (M10.21). Disabling it therefore removes detection cost from the hot
+        # path without removing the detection layer from the application.
+        detection = (
+            get_detection_engine() if settings.detection_enabled else None
+        )
 
         _capture_manager = CaptureManager(
             interface_manager=interface_manager,
@@ -291,6 +311,7 @@ def get_capture_manager() -> CaptureManager:
                 devices=devices,
                 persistence=get_packet_persistence(),
                 connections=connections,
+                detection=detection,
             ),
         )
     return _capture_manager
