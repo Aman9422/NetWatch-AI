@@ -119,6 +119,33 @@ class Settings(BaseSettings):
     high_bandwidth_time_window_seconds: float = 5.0
     high_bandwidth_bytes_per_second_threshold: float = 1_000_000.0
 
+    # Alerts (M11)
+    # Master switch for the alert consumer of the pipeline. When disabled the
+    # capture path stops turning findings into alerts, while the read-only alert
+    # API keeps working against the alerts already stored (M11.24).
+    alerts_enabled: bool = True
+    # Seconds a repeated observation is folded into an existing alert instead of
+    # raising a new one (M11.9/M11.10). Bounded: see
+    # ``app.alerts.dedup.MAX_DEDUP_WINDOW_SECONDS``.
+    alert_dedup_window_seconds: float = 300.0
+    # Hard cap on the evidence records one alert may carry (M11.12), so a flood
+    # cannot turn a single alert into thousands of rows.
+    alert_max_evidence_per_alert: int = 64
+    # Whether packet evidence is resolved at all. Packet resolution is the only
+    # evidence lookup that touches a table which grows without bound, so it has
+    # its own switch (M11.13).
+    alert_packet_evidence_enabled: bool = True
+    # Most packet references attached to one alert, and how far either side of
+    # the observation to look for them (M11.13).
+    alert_packet_evidence_max_packets: int = 5
+    alert_packet_evidence_window_seconds: float = 5.0
+    # Most conversation references attached to one alert (M11.14).
+    alert_connection_evidence_max: int = 5
+    # Default and maximum page size for alert listings (M11.18), so a response
+    # stays bounded however many alerts have accumulated.
+    alert_default_page_size: int = 100
+    alert_max_page_size: int = 1000
+
 
 @lru_cache
 def get_settings() -> Settings:
