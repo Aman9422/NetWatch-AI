@@ -1,742 +1,821 @@
 # NetWatch AI — Current Task
 
 **Current Phase:** Base Application Implementation
-**Current Milestone:** M10 — Base Detection
-**Status:** In Progress
+**Current Milestone:** M11 — Alert Engine
+**Status:** ✅ COMPLETE (next: M12 — Correlation + Risk Scoring)
 
 ---
 
 # Current Objective
 
-Build the first rule-based detection layer for NetWatch AI.
+Build the Alert Engine for NetWatch AI.
 
-M5 provides normalized packets.
-M6 provides traffic statistics.
-M7 provides packet persistence.
-M8 provides device discovery and tracking.
-M9 provides network conversations.
+M10 detects suspicious network behavior and produces structured Detection Findings.
 
-M10 will use these existing components to identify a small set of high-confidence suspicious network behaviors.
+M11 converts those findings into security Alerts that can be:
+
+- Stored
+- Investigated
+- Updated through a defined lifecycle
+- Linked to evidence
+- Associated with devices
+- Associated with relevant packets/connections
+- Deduplicated where appropriate
+- Queried by later application layers
 
 The main flow becomes:
 
     Network
-        ↓
+       ↓
     Packet Capture
-        ↓
+       ↓
     Packet Processing
-        ↓
-    NormalizedPacket
-        ├── Statistics
-        ├── Packet Persistence
-        ├── Device Discovery
-        └── Connection Tracking
-                    ↓
-              Detection Engine
-                    ↓
-              Detection Findings
-
-M10 produces detection findings.
-
-The Alert Engine in M11 will later convert appropriate findings into alerts.
-
----
-
-# Important Detection Architecture
-
-M10 must NOT depend on hundreds of static rules.
-
-The initial detection layer should use a small number of clear, configurable, testable detectors.
-
-Initial detectors:
-
-1. Port Scan
-2. SYN Flood
-3. ICMP Flood
-4. Internal Network Scan
-5. High Bandwidth / Traffic Spike
-
-Future detectors may include:
-
-- DNS anomaly
-- Suspicious port activity
-- Brute-force patterns
-- Beaconing
-- Unusual connection behavior
-
-These are future additions unless explicitly added to the M10 implementation.
+       ↓
+    Statistics / Devices / Connections
+       ↓
+    Detection Engine
+       ↓
+    Detection Finding
+       ↓
+    Alert Engine
+       ↓
+    Security Alert
+       ↓
+    Alert Evidence
+       ↓
+    Existing Database
 
 ---
 
-# M10 Development Rule
+# M11 Development Rule
+
+M11 is responsible only for alert management.
 
 Do NOT implement:
 
-- Alert lifecycle
-- Alert deduplication
-- Correlation engine
-- Risk scoring
+- New detection algorithms
 - Behavioral baselines
 - ML anomaly detection
 - AI analysis
+- Correlation engine
+- Risk scoring
 - Automatic blocking
 - WebSockets
 - Frontend integration
 - External SIEM integrations
-- Full incident response
+- Advanced incident response
 
-M10 is responsible only for detection.
+M10 detects.
 
-Detection findings must remain separate from alerts.
+M11 alerts.
+
+M12 will correlate findings and calculate risk.
 
 ---
 
-# M10.1 — Review Existing Components
+# M11.1 — Review Existing Components
 
 Review:
 
-- `NormalizedPacket`
-- TrafficStatisticsManager
-- PacketPersistence
-- DeviceDiscoveryManager
-- ConnectionTracker
-- Existing database models
-- Existing configuration system
-
-Identify which existing data each detector will consume.
+- M10 DetectionFinding
+- M5 NormalizedPacket
+- M8 Device information
+- M9 Connection information
+- M7 packet persistence
+- Existing `alerts` database model
+- Existing `alert_evidence` database model
+- Existing repositories
+- Existing configuration conventions
 
 Do not duplicate functionality from previous milestones.
 
 ---
 
-# M10.2 — Detection Package
+# M11.2 — Alert Service
 
-Create a dedicated detection package.
+Create a dedicated alert service.
 
-Suggested structure:
+Suggested component:
 
-    app/detection/
-        __init__.py
-        base.py
-        context.py
-        finding.py
-        engine.py
-        rules/
-            __init__.py
-            port_scan.py
-            syn_flood.py
-            icmp_flood.py
-            internal_scan.py
-            high_bandwidth.py
+    AlertService
 
-The exact structure may follow existing project conventions.
+Suggested responsibilities:
 
-Keep detectors modular.
+    create_alert(finding)
+    get_alert(alert_id)
+    list_alerts(...)
+    update_alert(...)
+    acknowledge_alert(...)
+    resolve_alert(...)
+    dismiss_alert(...)
+    add_evidence(...)
+    deduplicate(...)
+
+Keep alert business logic out of API route handlers.
 
 ---
 
-# M10.3 — Detection Rule Interface
+# M11.3 — Alert Model
 
-Define a common detector interface.
-
-Conceptually:
-
-    DetectionRule
-        ↓
-    evaluate(context)
-        ↓
-    DetectionFinding | None
-
-Each detector should:
-
-- Have a stable rule identifier
-- Have a human-readable name
-- Accept a defined detection context
-- Return a structured finding
-- Avoid direct database/API/frontend logic
-
----
-
-# M10.4 — Detection Context
-
-Create a controlled detection context containing only the information required by the detectors.
-
-Possible inputs:
-
-    NormalizedPacket
-    Traffic statistics
-    Connections
-    Devices
-    Current timestamp
-
-The context should avoid exposing unrelated application internals.
-
-Do not make detectors directly access global application state.
-
----
-
-# M10.5 — Detection Finding
-
-Create a normalized detection finding model.
+Create/verify the normalized runtime alert representation.
 
 Suggested fields:
 
-    finding_id
+    alert_id
     rule_id
-    rule_name
-    timestamp
+    title
+    description
+    severity
+    confidence
+    status
+    created_at
+    updated_at
     source_ip
     destination_ip
     source_device_id
     destination_device_id
     protocol
-    description
-    evidence
-    confidence
-    metadata
+    connection_id
+    finding_id
+    evidence_count
 
-Do not add final alert severity/risk scoring here.
+Use only information supported by the Detection Finding and existing application state.
 
-A detection finding is an observation from a detector, not an alert.
-
----
-
-# M10.6 — Detection Engine
-
-Create:
-
-    DetectionEngine
-
-Responsibilities:
-
-- Register enabled detection rules
-- Evaluate rules
-- Process detection context
-- Collect findings
-- Isolate individual rule failures
-- Track detector execution diagnostics
-
-Conceptually:
-
-    Detection Context
-          ↓
-    Detection Engine
-          ↓
-    ┌──────────┬──────────┬──────────┬──────────┬──────────┐
-    ↓          ↓          ↓          ↓          ↓
-   Port      SYN        ICMP       Internal   Bandwidth
-   Scan      Flood      Flood       Scan       Spike
-    ↓          ↓          ↓          ↓          ↓
-    └──────────┴──────────┴──────────┴──────────┴──────────┘
-                         ↓
-                  Detection Findings
+Do not add risk score yet.
 
 ---
 
-# M10.7 — Rule Configuration
+# M11.4 — Alert Severity
 
-Detection thresholds must be configurable.
+Define alert severity independently from confidence.
 
-Do not hard-code important thresholds directly inside detector logic.
+Initial levels:
 
-Configuration should support values such as:
+    low
+    medium
+    high
+    critical
 
-    PORT_SCAN_TIME_WINDOW_SECONDS
-    PORT_SCAN_UNIQUE_PORT_THRESHOLD
-    PORT_SCAN_SYN_RATIO_THRESHOLD
+Severity should be determined using an explicit documented mapping from detection rules/findings.
 
-    SYN_FLOOD_TIME_WINDOW_SECONDS
-    SYN_FLOOD_RATE_THRESHOLD
+Do not allow a detector to silently invent arbitrary severity values.
 
-    ICMP_FLOOD_TIME_WINDOW_SECONDS
-    ICMP_FLOOD_RATE_THRESHOLD
-
-    INTERNAL_SCAN_TIME_WINDOW_SECONDS
-    INTERNAL_SCAN_UNIQUE_DESTINATION_THRESHOLD
-
-    HIGH_BANDWIDTH_TIME_WINDOW_SECONDS
-    HIGH_BANDWIDTH_BYTES_PER_SECOND_THRESHOLD
-
-Use sensible development defaults.
-
-The exact defaults should be documented.
+Do not use severity as a risk score.
 
 ---
 
-# M10.8 — Port Scan Detector
+# M11.5 — Alert Confidence
 
-Detect a host attempting connections to an unusually large number of destination ports within a configured time window.
-
-Possible evidence:
-
-- Unique destination ports
-- Number of connection attempts
-- SYN count where available
-- Failed/incomplete connection observations
-
-Initial design:
-
-    Source Device/IP
-          ↓
-    Time Window
-          ↓
-    Unique Destination Ports
-          ↓
-    Configurable Threshold
-          ↓
-    Finding
-
-Do not label every multi-port connection as malicious.
-
-The detector should produce a finding only when its configured conditions are met.
-
----
-
-# M10.9 — SYN Flood Detector
-
-Detect an unusually high rate of TCP SYN traffic.
-
-Possible evidence:
-
-- SYN packet rate
-- Incomplete connection observations
-- Time window
-- Destination concentration
-
-Initial detector should focus on observable network behavior.
-
-Do not implement traffic blocking.
-
-Do not treat a single SYN packet as a flood.
-
----
-
-# M10.10 — ICMP Flood Detector
-
-Detect unusually high ICMP packet rates.
-
-Possible evidence:
-
-- ICMP packets per second
-- Time window
-- Destination concentration
-
-Use configurable thresholds.
-
-Do not assume that normal ping activity is malicious.
-
----
-
-# M10.11 — Internal Network Scan Detector
-
-Detect a source communicating with an unusually large number of internal destinations within a configured window.
-
-Possible evidence:
-
-- Unique destination IPs
-- Connection attempts
-- Time window
-
-The detector should define what counts as an internal destination using available network context.
-
-Do not assume every private IP is malicious.
-
----
-
-# M10.12 — High Bandwidth / Traffic Spike Detector
-
-Detect unusually high observed traffic volume using the statistics already produced by M6.
-
-Possible evidence:
-
-- Bytes per second
-- Packet rate
-- Time window
-- Source/destination concentration where available
-
-Use a configurable threshold.
-
-This is a traffic-volume finding, not automatically a security incident.
-
----
-
-# M10.13 — Detection Windows
-
-Detectors that use time-based thresholds must use explicit windows.
-
-The system should support:
-
-    Start time
-    End time
-    Window duration
-
-Avoid repeatedly scanning unlimited historical data.
-
-Reuse existing M6/M9 aggregation capabilities where appropriate.
-
----
-
-# M10.14 — Evidence
-
-Every finding must contain enough evidence to explain why it was produced.
-
-Examples:
-
-    Unique destination ports: 37
-    Threshold: 20
-    Observation window: 10 seconds
-
-or:
-
-    SYN packets: 2400
-    SYN threshold: 1000
-    Window: 5 seconds
-
-Evidence must come from actual observed data.
-
-Do not fabricate packet counts, IPs, devices, or timestamps.
-
----
-
-# M10.15 — Confidence
-
-Detection findings may contain a confidence value describing how strongly the detector's evidence supports its own rule condition.
+Preserve detection confidence from M10 where available.
 
 Keep:
 
+    severity
     confidence
 
-separate from future:
-
-    risk score
-
-Do not implement the M12 risk-scoring engine here.
-
----
-
-# M10.16 — False Positive Awareness
-
-Detectors must not assume:
-
-    threshold exceeded = confirmed attack
-
-Use wording such as:
-
-    Possible port scan detected
-
-or another clearly descriptive finding description.
-
-The finding should describe observed behavior.
-
-The Alert Engine and later correlation/risk layers will add additional context.
-
----
-
-# M10.17 — Rule Failure Isolation
-
-A failure in one detector must not stop the other detectors.
+as separate concepts.
 
 Example:
 
-    Port Scan      → finding
-    SYN Flood      → error
-    ICMP Flood     → finding
-    Internal Scan  → finding
-    Bandwidth      → finding
+    Severity: high
+    Confidence: 0.92
 
-The engine must continue evaluating remaining rules.
+This does NOT mean the alert has a risk score of 92.
 
-Track detector failures for diagnostics.
+Risk scoring belongs to M12.
 
 ---
 
-# M10.18 — Deduplication Boundary
+# M11.6 — Alert Status / Lifecycle
 
-Do not implement full alert deduplication.
+Define an explicit lifecycle.
 
-However, a single detector should avoid generating an excessive number of identical findings from the same observation window.
+Initial statuses:
 
-Implement only minimal rule-level suppression if required.
+    open
+    acknowledged
+    resolved
+    dismissed
+    false_positive
 
-Full finding/alert deduplication belongs to later architecture.
+Suggested flow:
 
----
+    open
+      ↓
+    acknowledged
+      ↓
+    resolved
 
-# M10.19 — Detection State
+Alternative outcomes:
 
-Rules that require a time window may maintain bounded runtime state.
+    open → dismissed
+    open → false_positive
+    acknowledged → false_positive
+    acknowledged → resolved
 
-Examples:
+The lifecycle must be validated.
 
-    Port observations
-    SYN counters
-    ICMP counters
-    Destination sets
-
-State must be bounded and periodically cleaned.
-
-Do not keep unlimited packet history in detector memory.
-
----
-
-# M10.20 — Thread Safety
-
-Detection may run while packet capture and other pipeline components operate.
-
-Protect mutable detector state.
-
-Do not introduce unnecessary global locks.
-
-A detector must not corrupt shared state used by other services.
+Do not allow arbitrary invalid state transitions.
 
 ---
 
-# M10.21 — Pipeline Integration
+# M11.7 — Alert Creation
+
+When a detection finding satisfies alert-generation conditions:
+
+    Detection Finding
+          ↓
+      Alert Engine
+          ↓
+      Create Alert
+          ↓
+      Create Evidence
+
+The original finding should remain identifiable.
+
+Do not modify the detection result merely to create an alert.
+
+---
+
+# M11.8 — Detection-to-Alert Mapping
+
+Define which M10 findings create alerts.
+
+Initial rule mapping should cover the implemented M10 detectors:
+
+    Port Scan
+    SYN Flood
+    ICMP Flood
+    Internal Scan
+    High Bandwidth
+
+Document:
+
+    rule_id
+    alert title
+    alert description
+    severity
+    confidence source
+
+Do not create alerts for functionality that does not exist.
+
+---
+
+# M11.9 — Alert Deduplication
+
+Prevent repeated identical findings from creating an uncontrolled number of alerts.
+
+Define an explicit deduplication key.
+
+Possible components:
+
+    rule_id
+    source
+    destination
+    protocol
+    related device
+    related connection
+    time window
+
+The exact key must be documented.
+
+Deduplication must not merge clearly separate incidents.
+
+---
+
+# M11.10 — Deduplication Window
+
+Use a configurable deduplication interval.
+
+Example:
+
+    Same rule
+       +
+    Same source
+       +
+    Same target
+       +
+    Within configured window
+       ↓
+    Existing Alert
+
+After the deduplication window expires, a new alert may be created.
+
+Do not use an unlimited deduplication window.
+
+---
+
+# M11.11 — Alert Evidence
+
+Create structured alert evidence.
+
+Evidence should answer:
+
+    Why was this alert created?
+
+Possible evidence types:
+
+    detection finding
+    packet reference
+    connection reference
+    traffic statistic
+    device information
+
+Each evidence record should contain only data that actually supports the alert.
+
+Do not copy entire packet payloads into evidence.
+
+---
+
+# M11.12 — Evidence Model
+
+Review the existing `alert_evidence` database model.
+
+Map runtime evidence to the existing schema.
+
+Support relationships such as:
+
+    Alert
+      ├── Finding evidence
+      ├── Packet evidence
+      ├── Connection evidence
+      └── Device evidence
+
+Do not redesign the database unless a genuine missing requirement is discovered.
+
+---
+
+# M11.13 — Packet Evidence
+
+Where appropriate, link an alert to relevant persisted packets.
+
+Use M7 packet persistence.
+
+Do not duplicate packet records.
+
+An evidence record should reference the relevant packet rather than copying the packet into the alert.
+
+---
+
+# M11.14 — Connection Evidence
+
+Where appropriate, link alerts to M9 connection information.
+
+Example:
+
+    Port Scan Finding
+         ↓
+    Relevant Connections
+         ↓
+    Alert Evidence
+
+Do not create another connection store.
+
+---
+
+# M11.15 — Device Association
+
+Associate alerts with devices when the M8 registry provides the required identity.
+
+Possible associations:
+
+    Source device
+    Destination device
+
+If a device cannot be resolved:
+
+    leave association empty
+
+Do not invent devices.
+
+---
+
+# M11.16 — Alert Persistence
+
+Persist alerts using the existing database architecture.
+
+Use:
+
+    AlertRepository
+    AlertEvidenceRepository
+
+where appropriate.
+
+Follow existing session/transaction patterns.
+
+---
+
+# M11.17 — Alert Repository
+
+Support operations such as:
+
+    create
+    get_by_id
+    list
+    update_status
+    update_alert
+    count
+    find_duplicate_candidate
+
+Do not put detection logic into the repository.
+
+---
+
+# M11.18 — Alert Queries
+
+Support queries such as:
+
+    Recent alerts
+    Open alerts
+    Alerts by severity
+    Alerts by status
+    Alerts by rule
+    Alerts by source IP
+    Alerts by destination IP
+    Alerts by device
+    Alerts by time range
+
+Use bounded results and deterministic ordering.
+
+---
+
+# M11.19 — Alert Lifecycle Validation
+
+Define valid transitions.
+
+Example:
+
+    open → acknowledged
+    open → resolved
+    open → dismissed
+    open → false_positive
+
+    acknowledged → resolved
+    acknowledged → dismissed
+    acknowledged → false_positive
+
+Invalid transitions must be rejected.
+
+Example:
+
+    resolved → open
+
+should not silently succeed unless an explicit reopen operation is deliberately designed.
+
+---
+
+# M11.20 — Alert Updates
+
+Allow controlled status updates.
+
+At minimum support:
+
+    acknowledge
+    resolve
+    dismiss
+    mark_false_positive
+
+Record:
+
+    updated_at
+
+Do not add user/authentication fields unless already supported by the project's current architecture.
+
+---
+
+# M11.21 — Finding-to-Alert Error Isolation
+
+A single alert-processing failure must not stop detection processing.
+
+Example:
+
+    Finding 1 → Alert created
+    Finding 2 → Persistence error
+    Finding 3 → Alert created
+
+Failures must be:
+
+- Counted
+- Logged
+- Isolated
+
+Do not crash the capture or detection pipeline.
+
+---
+
+# M11.22 — Alert Processing Pipeline
 
 Extend the architecture:
 
-    Scapy
-       ↓
-    CaptureManager
-       ↓
-    PacketProcessor
-       ↓
     NormalizedPacket
-       ├── TrafficStatisticsManager
-       ├── PacketPersistence
-       ├── DeviceDiscoveryManager
-       ├── ConnectionTracker
-       └── DetectionEngine
+          ↓
+    Detection Engine
+          ↓
+    Detection Findings
+          ↓
+    Alert Engine
+          ↓
+    Alerts
+          ↓
+    Alert Evidence
 
-Detection must run after the required normalized data is available.
+The alert engine consumes M10 findings.
 
-A detection failure must not stop:
+It must not independently inspect raw packets to reimplement detection logic.
 
-- Capture
-- Processing
-- Statistics
+---
+
+# M11.23 — Thread Safety
+
+Alert processing may occur concurrently with:
+
+- Detection
 - Persistence
-- Device discovery
-- Connection tracking
+- Queries
+- Status updates
+
+Protect shared alert/deduplication state where necessary.
+
+Database transactions must remain safe.
+
+Avoid unnecessary global locks.
 
 ---
 
-# M10.22 — Detection Queries
+# M11.24 — Alert Configuration
 
-Provide an internal mechanism to retrieve findings for testing and later milestones.
+Add configuration where appropriate.
 
-Support:
+Potential settings:
 
-    Recent findings
-    Findings by rule
-    Findings by source IP
-    Findings by destination IP
-    Findings by device
-    Findings by time window
+    ALERTS_ENABLED
+    ALERT_DEDUP_WINDOW_SECONDS
+    ALERT_MAX_EVIDENCE_PER_ALERT
 
-Do not implement the complete alert API.
+Use project configuration conventions.
+
+Do not hard-code operational limits unnecessarily.
 
 ---
 
-# M10.23 — Tests — Detection Framework
+# M11.25 — Tests — Alert Model
 
 Test:
 
-- Rule registration
-- Rule enable/disable
-- Context creation
-- Finding validation
-- Engine execution
-- Multiple rules
-- Rule failure isolation
-- Empty context
-- Invalid context
-- Diagnostics
+- Valid alert creation
+- Required fields
+- Optional fields
+- Severity values
+- Confidence values
+- Status values
+- Timestamp behavior
+- Finding association
 
 ---
 
-# M10.24 — Port Scan Tests
-
-Test at minimum:
-
-- Below threshold
-- Exactly at threshold
-- Above threshold
-- Multiple ports
-- Repeated same port
-- Multiple sources
-- Multiple time windows
-- SYN evidence
-- Cleanup
-- No false finding for normal low-volume traffic
-
----
-
-# M10.25 — SYN Flood Tests
+# M11.26 — Tests — Alert Creation
 
 Test:
 
-- Below threshold
-- At threshold
-- Above threshold
-- Different destinations
-- Different time windows
-- Normal SYN traffic
-- Cleanup
+- Finding creates alert
+- Unsupported finding does not create alert
+- Correct rule mapping
+- Correct severity
+- Correct confidence
+- Correct device association
+- Correct connection association
 
 ---
 
-# M10.26 — ICMP Flood Tests
+# M11.27 — Tests — Deduplication
 
 Test:
 
-- Below threshold
-- At threshold
-- Above threshold
-- Normal ping traffic
-- Time window behavior
-- Cleanup
+- Identical finding within dedup window
+- Identical finding outside window
+- Different source
+- Different destination
+- Different rule
+- Different connection
+- Multiple independent alerts
+
+Verify that legitimate separate events are not incorrectly merged.
 
 ---
 
-# M10.27 — Internal Scan Tests
+# M11.28 — Tests — Alert Lifecycle
 
 Test:
 
-- Few destinations
-- Threshold boundary
-- Large number of destinations
-- Internal destination filtering
-- External destination traffic
-- Multiple sources
-- Cleanup
+    open → acknowledged
+    open → resolved
+    open → dismissed
+    open → false_positive
+    acknowledged → resolved
+    acknowledged → dismissed
+    acknowledged → false_positive
+
+Also test invalid transitions.
 
 ---
 
-# M10.28 — High Bandwidth Tests
+# M11.29 — Tests — Evidence
 
 Test:
 
-- Below threshold
-- At threshold
-- Above threshold
-- Different windows
-- Normal traffic
-- Statistics input failure
+- Finding evidence
+- Packet evidence
+- Connection evidence
+- Device evidence
+- Multiple evidence records
+- Missing evidence
+- Evidence count
+
+Verify that packet payloads are not duplicated.
 
 ---
 
-# M10.29 — Integration Tests
+# M11.30 — Tests — Repository / Database
+
+Test:
+
+- Create alert
+- Retrieve alert
+- List alerts
+- Filter alerts
+- Update status
+- Persist evidence
+- Retrieve evidence
+- Deduplication lookup
+- Transaction rollback
+
+Use a test database.
+
+---
+
+# M11.31 — Integration Tests
 
 Verify:
 
-    CaptureManager
-        ↓
-    PacketProcessor
-        ↓
-    Statistics
-        +
-    Devices
-        +
-    Connections
-        ↓
-    DetectionEngine
+    Detection Engine
+          ↓
+    Detection Finding
+          ↓
+    Alert Engine
+          ↓
+    Alert Repository
+          ↓
+    SQLite
 
-Use controlled local/lab traffic.
-
-Verify that findings are generated only when configured detection conditions are actually satisfied.
-
----
-
-# M10.30 — Manual Verification
-
-Use only authorized/local traffic.
-
-Perform controlled tests for:
-
-- Port scan-like traffic in a lab
-- High-rate SYN traffic in a controlled environment
-- High-rate ICMP traffic in a controlled environment
-- Multiple internal destinations
-- Controlled traffic-volume increase
+Use controlled findings from M10.
 
 Verify:
 
-    Observed behavior
+- Correct alerts are created.
+- Severity is correct.
+- Confidence is preserved.
+- Evidence is stored.
+- Duplicate findings are handled.
+- Detection continues after alert failure.
+
+---
+
+# M11.32 — Manual Verification
+
+Use controlled authorized/lab detection scenarios.
+
+Trigger the existing M10 rules using safe test conditions.
+
+For each resulting finding verify:
+
+    Detection Finding
          ↓
-    Detection condition
+    Alert Created
          ↓
-    Detection finding
+    Severity
+         ↓
+    Confidence
          ↓
     Evidence
+         ↓
+    Database Record
 
-Do not perform attacks against unauthorized systems.
+Then verify alert lifecycle operations:
+
+    Open
+      ↓
+    Acknowledge
+      ↓
+    Resolve
+
+Also verify false-positive/dismissed workflows.
 
 ---
 
-# M10.31 — Performance Baseline
+# M11.33 — Performance Baseline
 
 Measure:
 
-- Packets processed per second with detection disabled
-- Packets processed per second with detection enabled
-- Detection overhead per packet/window
-- Rule execution time
+- Findings processed per second
+- Alerts created per second
+- Deduplication lookup time
+- Database write latency
+- Evidence write overhead
 - Memory usage
-- Active detector state size
+- Query response time
 
-Measure each detector individually where practical.
-
-Do not claim production-scale detection throughput.
+Do not claim production-scale alert throughput.
 
 ---
 
-# M10 Completion Criteria
+# M11 Completion Criteria
 
-M10 is complete when:
+M11 is complete when:
 
-- Detection framework exists.
-- Common detection rule interface exists.
-- Detection context exists.
-- Detection finding model exists.
-- Detection Engine exists.
-- Rule configuration exists.
-- Port Scan detector works.
-- SYN Flood detector works.
-- ICMP Flood detector works.
-- Internal Scan detector works.
-- High Bandwidth detector works.
-- Evidence is attached to findings.
-- Confidence is separated from future risk scoring.
-- Detector state is bounded.
-- Rule failures are isolated.
-- Detection integrates with the packet pipeline.
+- AlertService exists.
+- Runtime Alert model exists.
+- Detection-to-alert mapping exists.
+- Severity is implemented.
+- Confidence is preserved separately.
+- Alert lifecycle works.
+- Invalid lifecycle transitions are rejected.
+- Alert evidence works.
+- Packet references work where applicable.
+- Connection references work where applicable.
+- Device association works where available.
+- Alert persistence works.
+- Alert repository works.
+- Deduplication works.
+- Query/filter functionality works.
+- Alert-processing errors are isolated.
+- Thread safety is implemented where needed.
 - Unit tests pass.
+- Database tests pass.
 - Integration tests pass.
-- Manual authorized verification succeeds.
+- Manual verification succeeds.
 - Performance baseline is recorded.
-- No alerts, correlation, risk scoring, ML/AI, WebSockets, or frontend code are introduced.
+- No correlation, risk scoring, ML/AI, WebSockets, or frontend work is introduced.
 
 ---
 
-# Current Immediate Task
+# Completion Record
 
-**M10.1 — Design the detection framework before implementing individual detectors.**
+M11 is complete. The alert layer turns M10 findings into persisted alerts with a
+severity, a validated lifecycle, a deduplication identity and reference-based
+evidence. Every item in the M11 Completion Criteria above is met.
 
-First:
+| Area | Where |
+| --- | --- |
+| Alert service (M11.2) | `app/alerts/service.py` (`AlertService`) |
+| Runtime alert model (M11.3) | `app/alerts/alert.py` |
+| Severity (M11.4) | `app/alerts/severity.py` |
+| Confidence handling (M11.5) | `app/alerts/persistence.py` (`confidence_to_percent`) |
+| Lifecycle + validation (M11.6/M11.19) | `app/alerts/status.py` |
+| Detection-to-alert mapping (M11.8) | `app/alerts/mapping.py` |
+| Deduplication key + window (M11.9/M11.10) | `app/alerts/dedup.py` |
+| Evidence + builder + resolvers (M11.11-M11.15) | `app/alerts/evidence.py`, `evidence_builder.py`, `resolvers.py` |
+| Persistence + repositories (M11.16/M11.17) | `app/alerts/persistence.py`, `app/repositories/alert.py`, `app/repositories/alert_evidence.py` |
+| Queries / filters (M11.18) | `app/alerts/queries.py` |
+| Error isolation + pipeline (M11.21/M11.22) | `app/alerts/engine.py`, `app/services/packet_pipeline.py` |
+| Thread safety (M11.23) | `AlertService` write lock + per-call sessions |
+| Configuration (M11.24) | `app/config/settings.py` (the `ALERT*` settings) |
+| API (M11.18/M11.19) | `app/api/v1/alerts.py` |
+| Schema upgrade (M11.6) | `app/database/upgrade.py` (`upgrade_alert_status_constraint`) |
+| Design | `docs/15_M11_Alert_Engine_Design.md` |
 
-1. Review `NormalizedPacket`.
-2. Review M6 traffic statistics.
-3. Review M8 device information.
-4. Review M9 connection information.
-5. Define the DetectionContext.
-6. Define the DetectionRule interface.
-7. Define the DetectionFinding schema.
-8. Define rule registration and configuration.
-9. Define detector state ownership.
-10. Define error isolation behavior.
-11. Add framework tests.
-12. Only after the framework is stable, implement the Port Scan detector.
+**Verification:** full suite **1077 passed**; pyright **0 errors, 0 warnings**; the
+M11 alert suite is **218 tests**. `scripts/verify_m11.py` sample mode passes every
+check (all five mapped rules → alerts at the mapped severity, confidence
+preserved, evidence stored with no payload copied, deduplication window honoured,
+lifecycle applied and a reopen rejected). `scripts/benchmark_m11.py` recorded the
+local baseline (documented in the design doc and `docs/TODO.md`).
+
+**Live verification:** the application boots against an isolated SQLite database
+(`uvicorn app.main:app`), `init_db` upgrades the schema, `/api/v1/health`,
+`/api/v1/alerts`, `/api/v1/alerts/summary`, `/api/v1/alerts/diagnostics`,
+`/docs` and `/openapi.json` all answer, a missing alert and an unknown severity
+return 404 and 400, and a seeded alert walked the real HTTP lifecycle
+`open → acknowledged → resolved` with the counters reporting `transitions: 2`
+before a reopen was rejected with 409.
+
+**Schema note:** the M2 `alerts.status` CHECK is widened to the M11 vocabulary
+(plus the legacy `new`/`investigating`) by rebuilding the table in
+`app/database/upgrade.py`, which `init_db` runs on startup.
+
+---
+
+# Next Task
+
+**M12 — Correlation + Risk Scoring (not started).**
+
+M12 will consume the findings (M10) and alerts (M11) already produced to
+implement correlation, risk scoring, historical context, a behavioural
+contribution and an ML contribution placeholder. M11 deliberately leaves no risk
+field anywhere; risk is M12's concern.
+
+Beginning M12 follows the project's usual pattern: review the M11 `Alert` and the
+M10 `DetectionFinding` first, then define the correlation window, the grouping
+rules and the risk model before implementing anything.
 
 ---
 
@@ -744,21 +823,14 @@ First:
 
 M10 produces:
 
-    Network Data
-         ↓
-    Detection Engine
-         ↓
     Detection Findings
 
-M11 will consume findings to create:
+M11 produces:
 
     Alerts
-    Alert Evidence
-    Alert Severity
-    Alert Lifecycle
-    Alert Deduplication
+       └── Alert Evidence
 
-M12 will later add:
+M12 will consume alerts/findings to implement:
 
     Correlation
     Risk Scoring
@@ -766,4 +838,4 @@ M12 will later add:
     Behavioral Contribution
     ML Contribution
 
-M10 itself must not implement those systems.
+M11 itself must not implement those systems.

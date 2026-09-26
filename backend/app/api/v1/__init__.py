@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    alerts,
     capture,
     connections,
     detections,
@@ -30,3 +31,6 @@ api_router.include_router(
 api_router.include_router(
     detections.router, prefix="/detections", tags=["detections"]
 )
+# Alert lifecycle and read endpoints (M11.18/M11.19); the public alert API is
+# M13, and the alert layer itself is M11.
+api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])

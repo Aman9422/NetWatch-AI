@@ -1,4 +1,4 @@
-"""Capture manager: controls the packet capture lifecycle (M4/M5/M6/M8/M9/M10).
+"""Capture manager: controls the packet capture lifecycle (M4/M5/M6/M8/M9/M10/M11).
 
 The manager owns the state of a capture session and delegates the actual
 sniffing to a CaptureSniffer. It uses the interface selected by the M3
@@ -6,8 +6,8 @@ InterfaceManager, prevents two sessions at once, tracks the packet count,
 exposes a thread-safe status snapshot, translates failures into controlled
 errors, and feeds each captured packet through a PacketPipeline that normalizes
 it (M5), records traffic statistics (M6), tracks observed devices (M8), groups
-the traffic into network conversations (M9) and observes it for suspicious
-behaviour (M10).
+the traffic into network conversations (M9), observes it for suspicious
+behaviour (M10) and turns those observations into alerts (M11).
 
 It deliberately does NOT implement detection logic, correlation, risk scoring,
 alerting or packet storage itself: each of those is a pipeline consumer wired in
@@ -165,6 +165,15 @@ class CaptureManager:
         """
         return self._pipeline.get_detection_error_count()
 
+    def get_alert_error_count(self) -> int:
+        """Return how many alert-processing calls failed (M11.21).
+
+        Alerting isolates its own failures (M11.26), so this is normally zero; it
+        exists so an alerting problem can never be invisible from the capture
+        layer that feeds it.
+        """
+        return self._pipeline.get_alert_error_count()
+
     def get_pipeline(self) -> PacketPipeline:
         """Return the pipeline that normalizes packets and records statistics."""
         return self._pipeline
@@ -282,6 +291,7 @@ def get_capture_manager() -> CaptureManager:
         devices = get_device_manager()
         # Direction classification (M6.7) uses the real local IP addresses.
         statistics.set_local_addresses_provider(interface_manager.get_local_addresses)
+        from app.alerts import get_alert_engine
         from app.config.settings import settings
         from app.connections.manager import get_connection_tracker
         from app.detection import get_detection_engine
@@ -303,6 +313,16 @@ def get_capture_manager() -> CaptureManager:
         detection = (
             get_detection_engine() if settings.detection_enabled else None
         )
+        # Alerting is the final consumer, wired the same way again: the master
+        # switch only decides whether the capture path hands M10's findings to
+        # the alert engine, while the read-only alert API keeps working against
+        # what is already stored (M11.24). With detection off there are no
+        # findings to consume, so the engine is left out of the hot path.
+        alerts = (
+            get_alert_engine()
+            if settings.alerts_enabled and detection is not None
+            else None
+        )
 
         _capture_manager = CaptureManager(
             interface_manager=interface_manager,
@@ -312,6 +332,7 @@ def get_capture_manager() -> CaptureManager:
                 persistence=get_packet_persistence(),
                 connections=connections,
                 detection=detection,
+                alerts=alerts,
             ),
         )
     return _capture_manager

@@ -43,6 +43,7 @@ injected the same way.
 import logging
 from typing import Any, Optional
 
+from app.alerts.engine import AlertEngine
 from app.connections.manager import ConnectionTracker
 from app.detection.engine import DetectionEngine
 from app.devices.manager import DeviceDiscoveryManager
@@ -54,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 
 class PacketPipeline:
-    """Normalizes raw packets and feeds the M6/M7/M8/M9/M10 consumers."""
+    """Normalizes raw packets and feeds the M6/M7/M8/M9/M10/M11 consumers."""
 
     def __init__(
         self,
@@ -64,6 +65,7 @@ class PacketPipeline:
         persistence: PacketPersistence | None = None,
         connections: ConnectionTracker | None = None,
         detection: DetectionEngine | None = None,
+        alerts: AlertEngine | None = None,
     ) -> None:
         self._processor = processor or PacketProcessor()
         self._statistics = statistics or TrafficStatisticsManager()
@@ -71,6 +73,7 @@ class PacketPipeline:
         self._persistence = persistence
         self._connections = connections
         self._detection = detection
+        self._alerts = alerts
         self._processed_count = 0
         self._normalization_error_count = 0
         self._statistics_error_count = 0
@@ -78,6 +81,7 @@ class PacketPipeline:
         self._persistence_error_count = 0
         self._connection_error_count = 0
         self._detection_error_count = 0
+        self._alert_error_count = 0
 
     def process(self, packet: Any, captured_at: Optional[float] = None) -> None:
         """Normalize a raw packet and record its statistics.
@@ -116,15 +120,25 @@ class PacketPipeline:
                 self._connection_error_count += 1
                 logger.warning("Connection tracking failed; capture continues")
         # Detection runs last: it consumes the rates M6 maintains and the
-        # devices M8 has already attributed (M10.21). It returns its findings
-        # rather than storing them anywhere new — nothing downstream in the
-        # pipeline is affected by them.
+        # devices M8 has already attributed (M10.21). It returns its findings,
+        # and those findings are handed straight to the alert engine (M11.21) —
+        # the engine consumes the observations as they are produced rather than
+        # re-reading a finding history that is bounded and may already have
+        # evicted them. Alerting is only reached when detection produced
+        # something, so the disabled or silent path costs nothing.
+        findings: list[Any] = []
         if self._detection is not None:
             try:
-                self._detection.process_packet(normalized)
+                findings = self._detection.process_packet(normalized)
             except Exception:  # noqa: BLE001 - detection must never stop capture
                 self._detection_error_count += 1
                 logger.warning("Detection failed; capture continues")
+        if self._alerts is not None and findings:
+            try:
+                self._alerts.process_findings(findings)
+            except Exception:  # noqa: BLE001 - alerting must never stop capture
+                self._alert_error_count += 1
+                logger.warning("Alerting failed; capture continues")
 
     def flush_persistence(self) -> int:
         """Write every packet still buffered for persistence (M7.7/M7.18).
@@ -173,6 +187,15 @@ class PacketPipeline:
         """
         return self._detection_error_count
 
+    def get_alert_error_count(self) -> int:
+        """Return how many alert-processing calls failed (M11.21).
+
+        The alert engine and its service both contain their own failures
+        (M11.26), so this normally stays zero: it records only a failure that
+        escaped both, which M11.21 requires the pipeline to contain anyway.
+        """
+        return self._alert_error_count
+
     def flush_connections(self) -> int:
         """Write every tracked conversation with unwritten observations (M9.17).
 
@@ -213,3 +236,8 @@ class PacketPipeline:
     def detection(self) -> DetectionEngine | None:
         """Return the detection engine fed by this pipeline, if any."""
         return self._detection
+
+    @property
+    def alerts(self) -> AlertEngine | None:
+        """Return the alert engine fed by this pipeline, if any."""
+        return self._alerts

@@ -36,11 +36,24 @@ class Alert(TimestampMixin, Base):
         title / description: Human-readable summary.
         severity: ``critical``, ``high``, ``medium``, or ``low``.
         risk_score / confidence: 0-100 numeric values.
-        status: ``new``, ``acknowledged``, ``investigating``, ``resolved``,
-            or ``false_positive``.
-        correlation_key: Optional key used to deduplicate related alerts.
-        resolved_at: When the alert was resolved (optional).
+        status: The alert lifecycle state. ``open``, ``acknowledged``,
+            ``resolved``, ``dismissed`` or ``false_positive``, as
+            :mod:`app.alerts.status` defines it (M11.6). The legacy M2 names
+            ``new`` and ``investigating`` are still *accepted* by the CHECK so a
+            pre-M11 row remains valid, but nothing writes them any more.
+        correlation_key: The deduplication key of the incident this alert
+            belongs to (M11.9), which is also where the detector's string rule
+            id is carried.
+        resolved_at: When the alert reached a terminal state (optional).
     """
+
+    # ``risk_score`` is retained because M2 defined the column and later
+    # milestones populate it. No M11 code writes it: risk needs the historical
+    # context M12 owns, and M11 states severity and confidence only.
+    # ``status`` defaults to ``open``, the M11 lifecycle's initial state. The
+    # database default of a pre-existing table is not altered by a model change,
+    # which is harmless because the alert service always writes the status
+    # explicitly (M11.3) — this only governs rows created outside it.
 
     __tablename__ = "alerts"
 
@@ -60,7 +73,7 @@ class Alert(TimestampMixin, Base):
     severity: Mapped[str] = mapped_column(String(20), nullable=False)
     risk_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="new")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
 
     correlation_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -78,8 +91,14 @@ class Alert(TimestampMixin, Base):
             "severity IN ('critical', 'high', 'medium', 'low')",
             name="ck_alerts_severity",
         ),
+        # The M11 lifecycle values first, then the legacy M2 names so a pre-M11
+        # row stays valid. The order mirrors ``app.alerts.status``'s
+        # ``STORED_STATUS_VALUES`` exactly — as a single unbroken line — so the
+        # constraint a *fresh* database gets is byte-identical to the one
+        # ``upgrade_alert_status_constraint`` produces. That is what lets the
+        # upgrade recognise a current schema as a no-op instead of rebuilding it.
         CheckConstraint(
-            "status IN ('new', 'acknowledged', 'investigating', 'resolved', 'false_positive')",
+            "status IN ('open', 'acknowledged', 'resolved', 'dismissed', 'false_positive', 'new', 'investigating')",
             name="ck_alerts_status",
         ),
         CheckConstraint(

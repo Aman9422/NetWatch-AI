@@ -4,7 +4,7 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M10 — Base Detection ✅ COMPLETE (next: M11 — Alert Engine)
+**Current Milestone:** M11 — Alert Engine ✅ COMPLETE (next: M12 — Correlation + Risk Scoring)
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -350,20 +350,68 @@ engine disabled, so ~9.26 us/packet of detection overhead); per-detector cost
 
 ---
 
-# M11 — Alert Engine
+# M11 — Alert Engine ✅ COMPLETE
 
-* [ ] Create alert service
-* [ ] Create alert schema
-* [ ] Store alerts
-* [ ] Store evidence
-* [ ] Assign severity
-* [ ] Calculate confidence
-* [ ] Link alert to device
-* [ ] Link alert to packets
-* [ ] Alert lifecycle
-* [ ] Alert deduplication
-* [ ] False-positive state
-* [ ] Alert tests
+* [x] Review the M10 `DetectionFinding`, the M2 `alerts` / `alert_evidence`
+      models, the repositories and the config; define the runtime alert model,
+      severity mapping, confidence handling, lifecycle, dedup key/window and
+      evidence mapping (M11.1) — `docs/15_M11_Alert_Engine_Design.md`
+* [x] Alert service (M11.2) — `app/alerts/service.py` (`AlertService`)
+* [x] Runtime alert model, frozen value (M11.3) — `app/alerts/alert.py`
+* [x] Alert severity, independent of confidence (M11.4) — `app/alerts/severity.py`
+* [x] Confidence preserved separately from severity (M11.5)
+* [x] Alert lifecycle statuses + validated transitions (M11.6/M11.19) —
+      `app/alerts/status.py`
+* [x] Alert creation from a finding, finding remains identifiable (M11.7)
+* [x] Detection-to-alert rule mapping for the five M10 detectors (M11.8) —
+      `app/alerts/mapping.py`
+* [x] Alert deduplication key (M11.9) — `app/alerts/dedup.py`
+* [x] Bounded, configurable deduplication window (M11.10)
+* [x] Alert evidence, bounded and reference-based (M11.11) — `app/alerts/evidence.py`
+* [x] Evidence model mapped onto the existing `alert_evidence` table (M11.12)
+* [x] Packet evidence references persisted packets, no duplication (M11.13)
+* [x] Connection evidence references M9 conversations (M11.14)
+* [x] Device association from the M8 registry, never invented (M11.15)
+* [x] Alert persistence via the existing schema (M11.16) — `app/alerts/persistence.py`
+* [x] Alert repository (M11.17) — `app/repositories/alert.py`
+* [x] Alert queries / filters, bounded and ordered (M11.18) — `app/alerts/queries.py`
+* [x] Invalid lifecycle transitions rejected (M11.19)
+* [x] Controlled status updates + `updated_at` (M11.20)
+* [x] Finding-to-alert error isolation (M11.21)
+* [x] Alert processing pipeline consumer (M11.22) — `app/alerts/engine.py`
+* [x] Thread safety — atomic check-and-insert, per-call sessions (M11.23)
+* [x] Alert configuration (M11.24) — `app/config/settings.py`
+* [x] Tests — alert model (M11.25) — `tests/test_alerts_model.py`
+* [x] Tests — alert creation (M11.26) — `tests/test_alerts_creation.py`
+* [x] Tests — deduplication (M11.27) — `tests/test_alerts_dedup.py`
+* [x] Tests — lifecycle (M11.28) — `tests/test_alerts_lifecycle.py`
+* [x] Tests — evidence (M11.29) — `tests/test_alerts_evidence.py`
+* [x] Tests — repository / database (M11.30) — `tests/test_alerts_repository.py`
+* [x] Integration tests (M11.31) — `tests/test_alerts_integration.py`
+* [x] Manual verification (M11.32) — `backend/scripts/verify_m11.py`
+* [x] Performance baseline (M11.33) — `backend/scripts/benchmark_m11.py`
+
+**Verification:** full suite 1077 passed; pyright 0 errors, 0 warnings. The M11
+alert suite is 218 tests. `verify_m11.py` sample mode: all five mapped rules
+produced an alert at the mapped severity with confidence preserved, rule +
+behavioural + packet evidence stored (no payload copied), a repeat inside the
+window folded in while one outside it created a new alert, and the lifecycle
+applied `open → acknowledged → resolved` and rejected a reopen.
+**Baseline (this machine, OneDrive-synced disk):** create path ~143 alerts/sec
+(~6,995 us/alert — dominated by the per-alert SQLite commit on this disk);
+deduplication path ~602 lookups/sec (~1,661 us/finding); evidence write overhead
+~881 us/alert; heap after 500 alerts ~0.13 MiB (stored alerts live in SQLite);
+API avg ~15 ms (`/alerts?limit=100`), ~3.8 ms (`/summary`), ~4.3 ms
+(`/diagnostics`), ~5 ms (detail). Not a production-capacity claim.
+**Schema note:** M11 widens the M2 `alerts.status` CHECK to the M11 vocabulary
+(`open`/`acknowledged`/`resolved`/`dismissed`/`false_positive`) plus the legacy
+`new`/`investigating` names, rebuilding the table in `app/database/upgrade.py`.
+**Design:** `docs/15_M11_Alert_Engine_Design.md`.
+
+> Deliberately out of scope for M11: correlation, risk scoring, behavioural
+> baselines, ML/AI anomaly detection, automatic blocking, WebSockets, frontend
+> integration and SIEM integrations. M10 detects; M11 alerts; M12 correlates and
+> scores risk.
 
 ---
 
