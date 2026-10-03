@@ -1,36 +1,49 @@
 """Packet pipeline: normalize a raw packet, then feed its M6/M7/M8/M9/M10 consumers.
 
 This is the seam the capture callback talks to. It chains the M5
-PacketProcessor with five independent consumers of the normalized packet:
+PacketProcessor with seven independent consumers of the normalized packet:
 
 * the M6 TrafficStatisticsManager, which aggregates traffic totals;
 * the M7 PacketPersistence layer, which buffers the packet for SQLite;
 * the M8 DeviceDiscoveryManager, which tracks the devices behind the traffic;
 * the M9 ConnectionTracker, which groups the traffic into conversations;
-* the M10 DetectionEngine, which observes the traffic for suspicious behaviour.
+* the M10 DetectionEngine, which observes the traffic for suspicious behaviour;
+* the M11 AlertEngine, which turns those observations into alerts;
+* the M12 CorrelationEngine, which groups related alerts into scored incidents.
 
 Failures are isolated per stage:
 
 * if normalization fails, the packet is counted as a normalization error and
   the exception is re-raised so the capture sniffer can isolate it too;
-* if statistics aggregation, persistence, device discovery, connection tracking
-  or detection fails, the normalized packet is still produced and the remaining
-  stages still run.
+* if statistics aggregation, persistence, device discovery, connection tracking,
+  detection, alerting or correlation fails, the normalized packet is still
+  produced and the remaining stages still run.
 
 A consumer failure is logged and counted, never raised, so packet capture keeps
-running (M6.15/M7.11/M7.17/M8.17/M9.20/M10.21).
+running (M6.15/M7.11/M7.17/M8.17/M9.20/M10.21/M11.21/M12.25).
 
 Device discovery runs *before* connection tracking on purpose: M9 associates a
 conversation's endpoints with the M8 devices that own them (M9.14), so the
 devices must already know about this packet's addresses when the tracker reads
 them.
 
-Detection runs **last**, after every other consumer. It observes the normalized
-packet and the traffic rates M6 maintains, and it anchors findings to the M8
-device registry, so the data it consumes must already have been updated for
-this packet before a rule is evaluated (M10.4/M10.21). It is also the consumer
-whose failure is least able to matter: if detection is disabled or fails, the
-record of what happened on the wire is still complete.
+Detection runs after every traffic consumer. It observes the normalized packet
+and the traffic rates M6 maintains, and it anchors findings to the M8 device
+registry, so the data it consumes must already have been updated for this packet
+before a rule is evaluated (M10.4/M10.21). It is also the consumer whose failure
+is least able to matter: if detection is disabled or fails, the record of what
+happened on the wire is still complete.
+
+Correlation runs **last of all**, because it consumes what alerting produced
+rather than the packet itself: an incident is a relationship between *alerts*, so
+the alerts have to exist before it can group them (M12.25). It is fed the runtime
+alerts the alert engine just returned — not a re-read of the alerts table — so a
+finding that folded into an existing alert still contributes that alert under the
+identity the alert layer reported. Correlation then deduplicates by alert
+identity (M12.11), so a repeated observation of one alert cannot inflate an
+incident or its score. Its failure is contained like every other stage's: a
+correlation problem cannot stop capture, and M12.25 additionally requires that it
+cannot damage the alert it was reading.
 
 Persistence is *injected* rather than created here: the application wires the
 real layer in :func:`app.services.capture_manager.get_capture_manager`. When no
@@ -45,6 +58,7 @@ from typing import Any, Optional
 
 from app.alerts.engine import AlertEngine
 from app.connections.manager import ConnectionTracker
+from app.correlation.engine import CorrelationEngine
 from app.detection.engine import DetectionEngine
 from app.devices.manager import DeviceDiscoveryManager
 from app.persistence.manager import PacketPersistence
@@ -66,6 +80,7 @@ class PacketPipeline:
         connections: ConnectionTracker | None = None,
         detection: DetectionEngine | None = None,
         alerts: AlertEngine | None = None,
+        correlation: CorrelationEngine | None = None,
     ) -> None:
         self._processor = processor or PacketProcessor()
         self._statistics = statistics or TrafficStatisticsManager()
@@ -74,6 +89,7 @@ class PacketPipeline:
         self._connections = connections
         self._detection = detection
         self._alerts = alerts
+        self._correlation = correlation
         self._processed_count = 0
         self._normalization_error_count = 0
         self._statistics_error_count = 0
@@ -82,6 +98,7 @@ class PacketPipeline:
         self._connection_error_count = 0
         self._detection_error_count = 0
         self._alert_error_count = 0
+        self._correlation_error_count = 0
 
     def process(self, packet: Any, captured_at: Optional[float] = None) -> None:
         """Normalize a raw packet and record its statistics.
@@ -133,12 +150,33 @@ class PacketPipeline:
             except Exception:  # noqa: BLE001 - detection must never stop capture
                 self._detection_error_count += 1
                 logger.warning("Detection failed; capture continues")
+        alerts: list[Any] = []
         if self._alerts is not None and findings:
             try:
-                self._alerts.process_findings(findings)
+                outcomes = self._alerts.process_findings(findings)
+                # The runtime alerts the engine just produced — including an
+                # alert a finding was folded into — so correlation sees the same
+                # alert identity the alert layer reported rather than a re-read
+                # that a concurrent write could already have moved on from.
+                alerts = [
+                    outcome.alert
+                    for outcome in outcomes
+                    if getattr(outcome, "alert", None) is not None
+                ]
             except Exception:  # noqa: BLE001 - alerting must never stop capture
                 self._alert_error_count += 1
                 logger.warning("Alerting failed; capture continues")
+        # Correlation runs last of all and only when alerting produced something,
+        # so the disabled or quiet path costs nothing (M12.25). It is handed the
+        # alerts themselves: the correlation engine normalizes each into a
+        # correlation event and deduplicates by alert identity, so a repeated
+        # observation of one alert cannot grow an incident twice (M12.11).
+        if self._correlation is not None and alerts:
+            try:
+                self._correlation.correlate_alerts(alerts)
+            except Exception:  # noqa: BLE001 - correlation must never stop capture
+                self._correlation_error_count += 1
+                logger.warning("Correlation failed; capture continues")
 
     def flush_persistence(self) -> int:
         """Write every packet still buffered for persistence (M7.7/M7.18).
@@ -196,6 +234,15 @@ class PacketPipeline:
         """
         return self._alert_error_count
 
+    def get_correlation_error_count(self) -> int:
+        """Return how many correlation calls failed (M12.25).
+
+        The correlation engine contains its own failures (M12.25), so this
+        normally stays zero: it records only a failure that escaped the engine
+        entirely, which the same requirement asks the pipeline to contain anyway.
+        """
+        return self._correlation_error_count
+
     def flush_connections(self) -> int:
         """Write every tracked conversation with unwritten observations (M9.17).
 
@@ -241,3 +288,8 @@ class PacketPipeline:
     def alerts(self) -> AlertEngine | None:
         """Return the alert engine fed by this pipeline, if any."""
         return self._alerts
+
+    @property
+    def correlation(self) -> CorrelationEngine | None:
+        """Return the correlation engine fed by this pipeline, if any."""
+        return self._correlation
