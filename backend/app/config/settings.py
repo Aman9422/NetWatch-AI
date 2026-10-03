@@ -146,6 +146,67 @@ class Settings(BaseSettings):
     alert_default_page_size: int = 100
     alert_max_page_size: int = 1000
 
+    # Correlation (M12)
+    # Master switch for the correlation consumer of the pipeline. When disabled
+    # the capture path stops grouping alerts into correlated incidents, while the
+    # read-only correlation API keeps working against the incidents already held
+    # (M12.25).
+    correlation_enabled: bool = True
+    # Seconds two events may be apart and still be considered for correlation
+    # (M12.5). Bounded: see
+    # ``app.correlation.window.MAX_CORRELATION_WINDOW_SECONDS``.
+    correlation_window_seconds: float = 900.0
+    # Seconds within which two related events count as *time-proximal*, which
+    # strengthens an existing relationship but never creates one on its own
+    # (M12.6).
+    correlation_proximity_seconds: float = 300.0
+    # Lowest correlation confidence at which an event joins an existing incident
+    # (M12.7). Below it the event starts its own incident instead.
+    correlation_min_confidence: float = 0.5
+    # Lowest strength a single correlation relationship must reach on its own to
+    # be accepted as an *anchor*. Time proximity and rule identity alone are
+    # deliberately below this, so events are never merged merely because they
+    # occurred close together (M12.4).
+    correlation_min_anchor_strength: float = 0.55
+    # Hard cap on the incidents held in runtime state, so a busy or spoofed
+    # network cannot grow correlation memory without limit (M12.22).
+    correlation_max_incidents: int = 1024
+    # Seconds an incident may stay untouched before expiration may drop it
+    # (M12.22). Bounded runtime state, not a security record.
+    correlation_retention_seconds: float = 3600.0
+    # Hard caps on an incident's membership lists, so one incident cannot
+    # accumulate an unbounded set of related references (M12.22).
+    correlation_max_related_alerts: int = 64
+    correlation_max_correlation_reasons: int = 16
+    # Whether an incident's risk score is written onto its member alerts through
+    # the existing ``alerts.risk_score`` column (M12.24). No new table or column
+    # is introduced: M11 left that column at 0 precisely because M12 owns it.
+    correlation_risk_persistence_enabled: bool = True
+    # Default and maximum page size for incident listings (M12.26), so a response
+    # stays bounded however many incidents are held.
+    correlation_default_page_size: int = 100
+    correlation_max_page_size: int = 500
+
+    # Risk scoring (M12)
+    # Whether a future ML subsystem's contribution may be added to a risk score.
+    # M12 ships no ML subsystem, so the default is False and the ML contribution
+    # is pinned to 0 — the scoring model reserves the slot without inventing a
+    # signal (M12.18).
+    risk_ml_contribution_enabled: bool = False
+    # Number of *additional* related alerts (beyond the first) that earns the
+    # full volume share of the correlation term (M12.17). A lone alert earns no
+    # correlation contribution at all, so the model reaches its maximum at
+    # ``risk_max_volume_alerts + 1`` grouped alerts — the point at which the
+    # documented contribution maxima add up to exactly 100.
+    risk_max_volume_alerts: int = 5
+    # Highest number of historical occurrences that contributes the full
+    # historical term, so history stays bounded context and never dominates
+    # (M12.20).
+    risk_max_historical_occurrences: int = 5
+    # Seconds over which the recency share of the context term decays to zero
+    # (M12.15).
+    risk_recency_seconds: float = 3600.0
+
 
 @lru_cache
 def get_settings() -> Settings:

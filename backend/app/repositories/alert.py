@@ -25,7 +25,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from app.models.alert import Alert
@@ -59,6 +60,18 @@ LEGACY_STATUS_ALIASES: dict[str, str] = {
     "new": "open",
     "investigating": "acknowledged",
 }
+
+#: Inclusive bounds of the ``alerts.risk_score`` column, mirroring the model's
+#: ``ck_alerts_risk_score`` CHECK constraint and
+#: ``app.risk.bands.MAX_RISK_SCORE``. Spelled out here for the same reason the
+#: status vocabulary is: this module must not import the layer that owns the
+#: value, so the bound is restated and asserted by the M12 repository tests.
+RISK_SCORE_MIN = 0
+RISK_SCORE_MAX = 100
+
+#: How many ids one ``UPDATE`` may carry. Bounds the statement size so a
+#: thousand-alert incident cannot build a thousand-term ``IN`` clause.
+RISK_UPDATE_CHUNK_SIZE = 500
 
 
 class AlertRepository(BaseRepository[Alert]):
@@ -345,6 +358,78 @@ class AlertRepository(BaseRepository[Alert]):
         self.db.commit()
         self.db.refresh(alert)
         return alert
+
+    def update_risk_scores(
+        self,
+        alert_ids: Sequence[int],
+        *,
+        risk_score: int,
+        chunk_size: int = RISK_UPDATE_CHUNK_SIZE,
+    ) -> int:
+        """Write a correlation-derived risk score onto alert rows (M12.24).
+
+        M11 deliberately leaves ``risk_score`` at ``0`` because a meaningful score
+        needs the incident context and history M12 owns; this is the writer that
+        fills it in. The value is clamped into the column's documented range
+        *before* it is sent, so an out-of-range score is bounded rather than
+        rejected by the CHECK constraint and losing the whole update.
+
+        **Only ``risk_score`` is touched.** ``updated_at`` is left alone on
+        purpose: that column tells an operator when the alert's own lifecycle last
+        changed, and overwriting it with a correlation time would make M11's
+        ordering lie about a human's actions to record a machine's. Status,
+        severity, confidence and evidence are likewise untouched — correlation
+        records a relationship, it does not revise what M11 recorded (M12.10).
+
+        Args:
+            alert_ids: The alerts to stamp. Duplicates are collapsed.
+            risk_score: The incident's bounded score.
+            chunk_size: How many ids one statement may carry.
+
+        Returns:
+            How many rows were updated. An unknown id simply matches nothing, so a
+            deleted alert cannot fail the write.
+
+        Raises:
+            ValueError: If an id is not a positive integer, or ``chunk_size`` is
+                below 1. An id is a primary key, so a non-positive one is a caller
+                bug rather than a row to skip silently.
+        """
+        if int(chunk_size) < 1:
+            raise ValueError("chunk_size must be at least 1")
+        values = sorted({int(value) for value in alert_ids})
+        if not values:
+            return 0
+        for value in values:
+            if value < 1:
+                raise ValueError("alert ids must be positive integers")
+        bounded = min(max(int(risk_score), RISK_SCORE_MIN), RISK_SCORE_MAX)
+        updated = 0
+        for start in range(0, len(values), int(chunk_size)):
+            chunk = values[start : start + int(chunk_size)]
+            # ``updated_at`` is assigned to itself rather than omitted. The
+            # column carries ``onupdate=func.now()``, so leaving it out of the
+            # statement would restamp it with the correlation time — and M12.24
+            # requires that only ``risk_score`` is written. That column dates a
+            # human's own lifecycle actions; a machine's grouping is not one of
+            # them, and silently moving it would change what "last updated" means
+            # for every alert that has ever been correlated. A self-assignment is
+            # a no-op in SQL and is what suppresses the model-level default for
+            # this one statement.
+            statement = (
+                update(Alert)
+                .where(Alert.id.in_(chunk))
+                .values(risk_score=bounded, updated_at=Alert.updated_at)
+            )
+            result = self.db.execute(statement)
+            # ``Session.execute`` is typed as returning a generic ``Result``; an
+            # UPDATE really produces a ``CursorResult``, and only that kind
+            # reports how many rows it matched. Narrowing explicitly keeps the
+            # count honest instead of blindly trusting an attribute.
+            if isinstance(result, CursorResult):
+                updated += int(result.rowcount or 0)
+            self.db.commit()
+        return updated
 
     # -- internals --------------------------------------------------------
 

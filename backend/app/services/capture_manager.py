@@ -7,7 +7,8 @@ exposes a thread-safe status snapshot, translates failures into controlled
 errors, and feeds each captured packet through a PacketPipeline that normalizes
 it (M5), records traffic statistics (M6), tracks observed devices (M8), groups
 the traffic into network conversations (M9), observes it for suspicious
-behaviour (M10) and turns those observations into alerts (M11).
+behaviour (M10), turns those observations into alerts (M11) and correlates the
+alerts into scored incidents (M12).
 
 It deliberately does NOT implement detection logic, correlation, risk scoring,
 alerting or packet storage itself: each of those is a pipeline consumer wired in
@@ -174,6 +175,15 @@ class CaptureManager:
         """
         return self._pipeline.get_alert_error_count()
 
+    def get_correlation_error_count(self) -> int:
+        """Return how many correlation calls failed (M12.25).
+
+        Correlation isolates its own failures (M12.25), so this is normally zero;
+        it exists so a correlation problem can never be invisible from the
+        capture layer that feeds it.
+        """
+        return self._pipeline.get_correlation_error_count()
+
     def get_pipeline(self) -> PacketPipeline:
         """Return the pipeline that normalizes packets and records statistics."""
         return self._pipeline
@@ -294,6 +304,7 @@ def get_capture_manager() -> CaptureManager:
         from app.alerts import get_alert_engine
         from app.config.settings import settings
         from app.connections.manager import get_connection_tracker
+        from app.correlation import get_correlation_engine
         from app.detection import get_detection_engine
         from app.persistence.manager import get_packet_persistence
 
@@ -323,6 +334,17 @@ def get_capture_manager() -> CaptureManager:
             if settings.alerts_enabled and detection is not None
             else None
         )
+        # Correlation is the last consumer, wired the same way once more: the
+        # master switch only decides whether the capture path hands the alerts
+        # to the correlation engine, while the read-only incident API keeps
+        # working against what the shared engine already holds (M12.25/M12.26).
+        # With alerting off there are no alerts to consume, so it is left out of
+        # the hot path entirely and costs nothing.
+        correlation = (
+            get_correlation_engine()
+            if settings.correlation_enabled and alerts is not None
+            else None
+        )
 
         _capture_manager = CaptureManager(
             interface_manager=interface_manager,
@@ -333,6 +355,7 @@ def get_capture_manager() -> CaptureManager:
                 connections=connections,
                 detection=detection,
                 alerts=alerts,
+                correlation=correlation,
             ),
         )
     return _capture_manager

@@ -1,33 +1,32 @@
 # NetWatch AI — Current Task
 
 **Current Phase:** Base Application Implementation
-**Current Milestone:** M11 — Alert Engine
-**Status:** ✅ COMPLETE (next: M12 — Correlation + Risk Scoring)
+**Current Milestone:** M13 — REST API
+**Status:** Ready to start (M12 complete)
+**Predecessor:** M12 — Correlation + Risk Scoring ✅ COMPLETE
+
+> M12 is done: 1 271 tests pass, `docs/16_M12_Correlation_Design.md` is the design
+> of record, and `scripts/verify_m12.py` / `scripts/benchmark_m12.py` are the
+> verification and baseline scripts. M12 deliberately shipped **no** public API —
+> M13 is where the incident surface becomes reachable over HTTP.
 
 ---
 
 # Current Objective
 
-Build the Alert Engine for NetWatch AI.
+Turn the backend's existing per-milestone verification endpoints into **one
+consistent, validated, paginated REST API** that the frontend can consume, and
+expose the surfaces that currently exist only inside the process — above all the
+M12 correlated incidents.
 
-M10 detects suspicious network behavior and produces structured Detection Findings.
+The contract already exists: **`docs/04_API_Specification.md`** is the
+specification, not a sketch. M13 implements it, and where reality and the spec
+disagree the disagreement is reported and the doc corrected rather than the code
+silently diverging.
 
-M11 converts those findings into security Alerts that can be:
-
-- Stored
-- Investigated
-- Updated through a defined lifecycle
-- Linked to evidence
-- Associated with devices
-- Associated with relevant packets/connections
-- Deduplicated where appropriate
-- Queried by later application layers
-
-The main flow becomes:
+The pipeline M13 exposes:
 
     Network
-       ↓
-    Packet Capture
        ↓
     Packet Processing
        ↓
@@ -35,787 +34,642 @@ The main flow becomes:
        ↓
     Detection Engine
        ↓
-    Detection Finding
+    Detection Findings
        ↓
     Alert Engine
        ↓
-    Security Alert
+    Alerts
        ↓
-    Alert Evidence
+    Correlation Engine
        ↓
-    Existing Database
+    Correlated Incidents
+       ↓
+    Risk Scoring Engine
+       ↓
+    Risk Score
+       ↓
+    REST API            ← M13
+       ↓
+    Frontend (M15)
+
+M13 must keep:
+
+    Read paths
+    Write paths
+
+as separate concerns, and must keep:
+
+    Alert confidence
+    Correlation confidence
+    Risk score
+
+as separate fields on the wire — M12.16 is not relaxed by serialization.
 
 ---
 
-# M11 Development Rule
+# What already exists (review before writing anything)
 
-M11 is responsible only for alert management.
+Eight routers are already registered under `/api/v1`:
+
+| Router | File | Nature |
+| --- | --- | --- |
+| health | `app/api/v1/health.py` | foundation (M1) |
+| capture | `app/api/v1/capture.py` | control plane (M3/M4) |
+| packets | `app/api/v1/packets.py` | read, dev/testing (M7) |
+| statistics | `app/api/v1/statistics.py` | read (M6) |
+| devices | `app/api/v1/devices.py` | read (M8) |
+| connections | `app/api/v1/connections.py` | read (M9) |
+| detections | `app/api/v1/detections.py` | read (M10) |
+| alerts | `app/api/v1/alerts.py` | read + one lifecycle write (M11) |
+
+Their schemas live in `app/schemas/`, they are registered through
+`app/api/__init__.py`'s `api_router`, and they already follow the project's
+envelope and error conventions. **M13 extends them; it does not rewrite them.**
+Every one of those earlier milestones deliberately scoped its endpoints to "what
+verification needs" — M13 is the milestone that makes them the real thing.
+
+Not yet exposed anywhere over HTTP: **M12's correlated incidents and risk
+scores**, and the dashboard, analytics, detection-rule, settings, system and
+report surfaces.
+
+---
+
+# M13 Development Rule
 
 Do NOT implement:
 
-- New detection algorithms
-- Behavioral baselines
-- ML anomaly detection
-- AI analysis
-- Correlation engine
-- Risk scoring
+- New packet detectors or detection rules
+- New alert types
+- New correlation rules or changes to the risk formula
+- Behavioural baselines
+- ML or AI analysis
 - Automatic blocking
-- WebSockets
-- Frontend integration
-- External SIEM integrations
-- Advanced incident response
+- WebSockets (M14)
+- Frontend work of any kind (M15)
+- New analytics computation beyond what M6/M10/M11/M12 already hold (M16 owns the
+  analytics *product*; M13 exposes the data that exists)
+- Authentication or RBAC (explicitly out of scope for the base application)
+- Report generation (M17) — M13 may expose the *stored* report rows if the table
+  is populated, but does not build PDF/CSV generation
+- Notifications generation — M13 may expose the `notifications` table; it does not
+  create notification events
 
-M10 detects.
-
-M11 alerts.
-
-M12 will correlate findings and calculate risk.
-
----
-
-# M11.1 — Review Existing Components
-
-Review:
-
-- M10 DetectionFinding
-- M5 NormalizedPacket
-- M8 Device information
-- M9 Connection information
-- M7 packet persistence
-- Existing `alerts` database model
-- Existing `alert_evidence` database model
-- Existing repositories
-- Existing configuration conventions
-
-Do not duplicate functionality from previous milestones.
+M13 is a **presentation and validation** milestone. It reads what M5–M12 built,
+validates what it is asked for, and refuses clearly when the request is wrong.
 
 ---
 
-# M11.2 — Alert Service
+# M13.1 — Review the existing API surface
 
-Create a dedicated alert service.
+Before adding anything, review and write down:
 
-Suggested component:
+1. The existing envelope and error shape — `docs/04_API_Specification.md` §5, §30.
+2. The existing pagination shape — §6 — and whether every current listing honours it.
+3. The existing filtering conventions — §7.
+4. Every current route, its parameters, its bounds, and where it returns `400`
+   versus `404`.
+5. `app/schemas/` — which response models exist and which endpoints return ad-hoc
+   dictionaries instead of a schema.
+6. `app/api/__init__.py` — how routers are registered and in what order.
+7. The thread-safety and read-only rules the earlier milestones established
+   (M11.23, M12.23) — an endpoint must not mutate what it reads.
 
-    AlertService
-
-Suggested responsibilities:
-
-    create_alert(finding)
-    get_alert(alert_id)
-    list_alerts(...)
-    update_alert(...)
-    acknowledge_alert(...)
-    resolve_alert(...)
-    dismiss_alert(...)
-    add_evidence(...)
-    deduplicate(...)
-
-Keep alert business logic out of API route handlers.
+Determine what is already consistent before changing anything. **Do not
+duplicate a schema that already exists.**
 
 ---
 
-# M11.3 — Alert Model
+# M13.2 — Consistency baseline
 
-Create/verify the normalized runtime alert representation.
+Establish, and apply to every endpoint M13 touches:
 
-Suggested fields:
+    One envelope shape for every response
+    One error shape for every failure
+    One pagination shape for every listing
+    One place that knows the valid bounds (limit, offset, time range, score range)
 
-    alert_id
-    rule_id
-    title
-    description
-    severity
-    confidence
-    status
-    created_at
-    updated_at
-    source_ip
-    destination_ip
-    source_device_id
-    destination_device_id
-    protocol
-    connection_id
-    finding_id
-    evidence_count
+Two rules carried over from earlier milestones and made API-wide:
 
-Use only information supported by the Detection Finding and existing application state.
+- **A rejected filter is never ignored.** An unknown severity, an unknown status
+  or an empty rule key returns `400`, never an empty result that looks like
+  "nothing found".
+- **Reads never mutate.** Only explicitly-writable endpoints change state.
 
-Do not add risk score yet.
+The bounds are the ones the owning milestone already documented
+(`ALERT_MAX_PAGE_SIZE`, `DEFAULT_MAX_PAGE_SIZE`, `RISK_SCORE_MIN/MAX`, the
+correlation window, the alert severity vocabulary, the incident status
+vocabulary). The API validates against those tables; it does not invent a second
+copy of them.
 
 ---
 
-# M11.4 — Alert Severity
+# M13.3 — Dashboard API
 
-Define alert severity independently from confidence.
+    GET /dashboard
+    GET /dashboard/traffic
+    GET /dashboard/protocols
+    GET /dashboard/top-talkers
+    GET /dashboard/ai-summary
 
-Initial levels:
+The dashboard is an **aggregation of what already exists** — the M6 statistics
+manager, the M8 device registry, the M9 tracker, the M11 alert store and the M12
+incident store. It computes no new metric.
 
-    low
-    medium
-    high
-    critical
-
-Severity should be determined using an explicit documented mapping from detection rules/findings.
-
-Do not allow a detector to silently invent arbitrary severity values.
-
-Do not use severity as a risk score.
-
----
-
-# M11.5 — Alert Confidence
-
-Preserve detection confidence from M10 where available.
-
-Keep:
-
-    severity
-    confidence
-
-as separate concepts.
-
-Example:
-
-    Severity: high
-    Confidence: 0.92
-
-This does NOT mean the alert has a risk score of 92.
-
-Risk scoring belongs to M12.
+`GET /dashboard/ai-summary` has no implementation to call: M12 shipped no AI or
+ML subsystem. It must return the documented "unavailable" shape with a clear
+reason, not a fabricated summary. This is the same discipline M12 applied to its
+reserved ML contribution.
 
 ---
 
-# M11.6 — Alert Status / Lifecycle
+# M13.4 — Capture API
 
-Define an explicit lifecycle.
+    GET  /capture/interfaces
+    GET  /capture/status
+    POST /capture/start
+    POST /capture/stop
 
-Initial statuses:
-
-    open
-    acknowledged
-    resolved
-    dismissed
-    false_positive
-
-Suggested flow:
-
-    open
-      ↓
-    acknowledged
-      ↓
-    resolved
-
-Alternative outcomes:
-
-    open → dismissed
-    open → false_positive
-    acknowledged → false_positive
-    acknowledged → resolved
-
-The lifecycle must be validated.
-
-Do not allow arbitrary invalid state transitions.
+Mostly present from M3/M4. M13 reviews it against §10 and closes the gaps:
+validation of the requested interface (an unknown interface is a `400`/`404`
+naming the problem, never a silent fallback), `409` on a duplicate start, a
+consistent status shape, and an error body that says *why* capture could not
+start (no admin rights, no Npcap, interface down).
 
 ---
 
-# M11.7 — Alert Creation
+# M13.5 — Packet API
 
-When a detection finding satisfies alert-generation conditions:
+    GET /packets
+    GET /packets/{packet_id}
 
-    Detection Finding
-          ↓
-      Alert Engine
-          ↓
-      Create Alert
-          ↓
-      Create Evidence
-
-The original finding should remain identifiable.
-
-Do not modify the detection result merely to create an alert.
+A read-only window onto the M7 `packets` table. Bounds (time range, protocol,
+address, limit) are validated; `payload` is never exposed, matching M7's "no
+payload storage by default" policy.
 
 ---
 
-# M11.8 — Detection-to-Alert Mapping
+# M13.6 — Device API
 
-Define which M10 findings create alerts.
+    GET /devices
+    GET /devices/{device_id}
+    GET /devices/{device_id}/traffic
+    GET /devices/{device_id}/connections
+    GET /devices/{device_id}/alerts
+    GET /devices/{device_id}/baseline
 
-Initial rule mapping should cover the implemented M10 detectors:
+The first two exist from M8; the sub-resources are new and each **composes
+existing services** — traffic from M6, connections from M9, alerts from M11.
 
-    Port Scan
-    SYN Flood
-    ICMP Flood
-    Internal Scan
-    High Bandwidth
-
-Document:
-
-    rule_id
-    alert title
-    alert description
-    severity
-    confidence source
-
-Do not create alerts for functionality that does not exist.
+`/devices/{device_id}/baseline` has no implementation to call: baselines are
+deliberately excluded from the base application (M12.19's "do not assign
+criticality levels unless the application has an actual configured
+asset-classification source" is the same principle). It returns the documented
+"unavailable" shape with a reason.
 
 ---
 
-# M11.9 — Alert Deduplication
+# M13.7 — Alert API
 
-Prevent repeated identical findings from creating an uncontrolled number of alerts.
+    GET  /alerts
+    GET  /alerts/{alert_id}
+    POST /alerts/{alert_id}/acknowledge
+    POST /alerts/{alert_id}/investigate
+    POST /alerts/{alert_id}/resolve
+    POST /alerts/{alert_id}/false-positive
 
-Define an explicit deduplication key.
+Reads exist from M11. The four state endpoints are new and map onto the M11
+lifecycle through `AlertService.set_status(...)`, which already:
 
-Possible components:
+- validates the transition against `VALID_TRANSITIONS` **before** writing,
+- raises `InvalidStatusTransition` for a forbidden move,
+- returns `None` for an unknown id.
 
-    rule_id
-    source
-    destination
-    protocol
-    related device
-    related connection
-    time window
+M13 maps those onto HTTP (`409` with the reachable states for an illegal move,
+`404` for an unknown id, `200` with the updated alert otherwise) and adds
+nothing to the lifecycle itself. A reopen stays rejected (M11).
 
-The exact key must be documented.
-
-Deduplication must not merge clearly separate incidents.
-
----
-
-# M11.10 — Deduplication Window
-
-Use a configurable deduplication interval.
-
-Example:
-
-    Same rule
-       +
-    Same source
-       +
-    Same target
-       +
-    Within configured window
-       ↓
-    Existing Alert
-
-After the deduplication window expires, a new alert may be created.
-
-Do not use an unlimited deduplication window.
+> The spec (§13) names these four actions; the M11 lifecycle also has an `open`
+> state and `AlertStatus` is the authority. Where the spec's action names and the
+> M11 state names differ, the M11 states win and the spec is corrected — one
+> vocabulary, in one place.
 
 ---
 
-# M11.11 — Alert Evidence
+# M13.8 — Alert Evidence API
 
-Create structured alert evidence.
+    GET /alerts/{alert_id}/evidence
 
-Evidence should answer:
-
-    Why was this alert created?
-
-Possible evidence types:
-
-    detection finding
-    packet reference
-    connection reference
-    traffic statistic
-    device information
-
-Each evidence record should contain only data that actually supports the alert.
-
-Do not copy entire packet payloads into evidence.
+Exists from M11; M13 reviews it against §14, adds the `evidence_type` filter
+validation (the five M11 types plus the documented-but-unused `ml`), and keeps
+the "references, never copies" shape — packet evidence returns the packet
+reference and digest, never a payload.
 
 ---
 
-# M11.12 — Evidence Model
+# M13.9 — Incident API (the M12 surface, made reachable)
 
-Review the existing `alert_evidence` database model.
+This is M13's **principal new content**. M12 built the correlation and risk
+machinery and deliberately shipped no API. M13 exposes it:
 
-Map runtime evidence to the existing schema.
+    GET  /incidents
+    GET  /incidents/{incident_id}
+    GET  /incidents/{incident_id}/alerts
+    GET  /incidents/{incident_id}/findings
+    POST /incidents/{incident_id}/status
+    GET  /incidents/summary
+    GET  /incidents/statistics
 
-Support relationships such as:
+Requirements, all of which M12 already supports internally:
 
-    Alert
-      ├── Finding evidence
-      ├── Packet evidence
-      ├── Connection evidence
-      └── Device evidence
-
-Do not redesign the database unless a genuine missing requirement is discovered.
-
----
-
-# M11.13 — Packet Evidence
-
-Where appropriate, link an alert to relevant persisted packets.
-
-Use M7 packet persistence.
-
-Do not duplicate packet records.
-
-An evidence record should reference the relevant packet rather than copying the packet into the alert.
-
----
-
-# M11.14 — Connection Evidence
-
-Where appropriate, link alerts to M9 connection information.
-
-Example:
-
-    Port Scan Finding
-         ↓
-    Relevant Connections
-         ↓
-    Alert Evidence
-
-Do not create another connection store.
+- The listing is backed by `CorrelationEngine.get_incidents(IncidentQuery(...))`
+  and therefore inherits its **bounded pages and deterministic ordering**
+  (`recent`, `oldest`, `risk`, `confidence` — every one total, ties broken on
+  `incident_id`).
+- The filters are the M12.26 ones: status, active-only, device, connection,
+  source, destination, detector rule, correlation rule, risk range, confidence
+  floor, and a time range that selects on **overlap** of the incident's extent.
+- `POST /status` maps onto `CorrelationEngine.set_status(...)`, which validates
+  against the M12.9 transition table and raises `InvalidIncidentTransition` for a
+  terminal-state reopen → `409` naming the reachable states, `404` for an
+  unknown id.
+- **The three quantities appear as three fields.** A serialized incident carries
+  `confidence` (correlation), `alert_confidence` (mean of the member alerts) and
+  `risk_score` — never a combined number (M12.16). `CorrelatedIncident.as_dict()`
+  and `.summary()` already emit exactly this split; the API reuses them rather
+  than re-mapping the model by hand.
+- **A findings-only incident is legal** (`alert_ids` is empty) and must serialize
+  without inventing an alert or a severity.
+- **Incidents are runtime state.** M12 stores them in a bounded, expiring
+  registry, not in a table. The API must say so plainly — an incident that has
+  expired is `404`, and the alerts it referenced are unaffected and still
+  reachable through `/alerts`. The docs must not imply incident persistence.
 
 ---
 
-# M11.15 — Device Association
+# M13.10 — Detection Rules API
 
-Associate alerts with devices when the M8 registry provides the required identity.
+    GET  /detection-rules
+    GET  /detection-rules/{rule_id}
+    PUT  /detection-rules/{rule_id}
+    POST /detection-rules/{rule_id}/enable
+    POST /detection-rules/{rule_id}/disable
 
-Possible associations:
+Reads come from the M2 `detection_rules` catalogue seeded in `app/database/seed.py`
+(five rules, with the `high_bandwidth` vs `bandwidth_abuse` naming noted in the
+M11/M12 verification scripts). Writes change the catalogue row and the enabled
+flag only.
 
-    Source device
-    Destination device
-
-If a device cannot be resolved:
-
-    leave association empty
-
-Do not invent devices.
-
----
-
-# M11.16 — Alert Persistence
-
-Persist alerts using the existing database architecture.
-
-Use:
-
-    AlertRepository
-    AlertEvidenceRepository
-
-where appropriate.
-
-Follow existing session/transaction patterns.
+**The write endpoints must not silently do nothing.** A rule's thresholds are
+read by the M10 detectors from `Settings` and from the detector's own
+configuration, so an update that changes a database row the engine never reads
+would be a lie. Either wire the update through to the running detector
+configuration, or report that the change requires a restart — decided in M13.1
+and documented. Do not ship a `PUT` that appears to succeed and has no effect.
 
 ---
 
-# M11.17 — Alert Repository
+# M13.11 — Analytics API
 
-Support operations such as:
+    GET /analytics/traffic
+    GET /analytics/protocols
+    GET /analytics/top-talkers
+    GET /analytics/top-ports
+    GET /analytics/threats
+    GET /analytics/packets
+    GET /analytics/connections
 
-    create
-    get_by_id
-    list
-    update_status
-    update_alert
-    count
-    find_duplicate_candidate
+These read the same sources as the dashboard but over a requested time range,
+with bounded results. `analytics/threats` aggregates the M11 alert and M12
+incident stores by severity, risk band and detector — it computes no new
+detection.
 
-Do not put detection logic into the repository.
-
----
-
-# M11.18 — Alert Queries
-
-Support queries such as:
-
-    Recent alerts
-    Open alerts
-    Alerts by severity
-    Alerts by status
-    Alerts by rule
-    Alerts by source IP
-    Alerts by destination IP
-    Alerts by device
-    Alerts by time range
-
-Use bounded results and deterministic ordering.
+M16 owns the analytics *product* (the frontend charts and the deeper trends);
+M13 owns the endpoints and the range validation.
 
 ---
 
-# M11.19 — Alert Lifecycle Validation
+# M13.12 — Settings API
 
-Define valid transitions.
+    GET  /settings
+    GET  /settings/{setting_key}
+    PUT  /settings
+    POST /settings/reset
 
-Example:
+Reads reflect `app/config/settings.py`. Writes are the delicate part and the same
+rule as M13.10 applies: **a settings update that the running system does not
+observe is not an update.** The M12 engine reads its window, thresholds, caps and
+scoring bounds at construction, so a value changed at runtime must either be
+picked up deliberately or reported as requiring a restart. Enumerate which
+settings are live and which are restart-only, and document it.
 
-    open → acknowledged
-    open → resolved
-    open → dismissed
-    open → false_positive
-
-    acknowledged → resolved
-    acknowledged → dismissed
-    acknowledged → false_positive
-
-Invalid transitions must be rejected.
-
-Example:
-
-    resolved → open
-
-should not silently succeed unless an explicit reopen operation is deliberately designed.
+Secrets and `.env` internals are never returned.
 
 ---
 
-# M11.20 — Alert Updates
+# M13.13 — System API
 
-Allow controlled status updates.
+    GET /system/status
+    GET /system/info
 
-At minimum support:
+Status composes the existing diagnostics: capture state and counters (M4), the
+pipeline's per-consumer error counters (M7–M12, including M12's
+`get_correlation_error_count()` and `CorrelationEngine.stats()`), database
+reachability, and version information. Info reports the application version,
+Python version, database path and configured (non-secret) limits.
 
-    acknowledge
-    resolve
-    dismiss
-    mark_false_positive
-
-Record:
-
-    updated_at
-
-Do not add user/authentication fields unless already supported by the project's current architecture.
+Neither endpoint mutates anything, and neither fabricates a "health score".
 
 ---
 
-# M11.21 — Finding-to-Alert Error Isolation
+# M13.14 — Reports and Notifications APIs
 
-A single alert-processing failure must not stop detection processing.
+    GET    /reports
+    GET    /reports/{report_id}
+    GET    /reports/{report_id}/download
+    GET    /notifications
+    POST   /notifications/{notification_id}/read
+    POST   /notifications/read-all
 
-Example:
+The `reports` and `notifications` tables exist from M2. M13 exposes them
+**read-first**: listings and single reads are in scope, and the read/report
+mutations are limited to what the tables support.
 
-    Finding 1 → Alert created
-    Finding 2 → Persistence error
-    Finding 3 → Alert created
-
-Failures must be:
-
-- Counted
-- Logged
-- Isolated
-
-Do not crash the capture or detection pipeline.
-
----
-
-# M11.22 — Alert Processing Pipeline
-
-Extend the architecture:
-
-    NormalizedPacket
-          ↓
-    Detection Engine
-          ↓
-    Detection Findings
-          ↓
-    Alert Engine
-          ↓
-    Alerts
-          ↓
-    Alert Evidence
-
-The alert engine consumes M10 findings.
-
-It must not independently inspect raw packets to reimplement detection logic.
+`POST /reports/generate` and `DELETE /reports/{report_id}` invoke generation that
+M17 has not built yet. They are **out of scope for M13** and must not be
+registered as endpoints that return success without doing the work. Either they
+are absent, or they return the documented "not implemented" shape — decided in
+M13.1 and stated in the API docs.
 
 ---
 
-# M11.23 — Thread Safety
+# M13.15 — Baselines, ML and AI APIs
 
-Alert processing may occur concurrently with:
+The spec (§17, §18, §19) documents baseline, ML and AI endpoints. **The base
+application implements none of those subsystems** — baselines, ML anomaly
+detection and AI analysis are explicitly excluded (roadmap §30, and M10–M12's own
+non-goals).
 
-- Detection
-- Persistence
-- Queries
-- Status updates
-
-Protect shared alert/deduplication state where necessary.
-
-Database transactions must remain safe.
-
-Avoid unnecessary global locks.
-
----
-
-# M11.24 — Alert Configuration
-
-Add configuration where appropriate.
-
-Potential settings:
-
-    ALERTS_ENABLED
-    ALERT_DEDUP_WINDOW_SECONDS
-    ALERT_MAX_EVIDENCE_PER_ALERT
-
-Use project configuration conventions.
-
-Do not hard-code operational limits unnecessarily.
+M13 must therefore decide, once and explicitly: either these routes are not
+registered at all, or they are registered and return a documented
+"unavailable / not implemented" payload naming the milestone that will implement
+them. What they must **not** do is return plausible-looking empty data that a
+frontend would render as "no anomalies found" when the truth is "nothing looks
+for anomalies yet".
 
 ---
 
-# M11.25 — Tests — Alert Model
+# M13.16 — Pagination
 
-Test:
+One pagination shape for every listing (§6): total count, page, page size, and
+the items. Rules:
 
-- Valid alert creation
-- Required fields
-- Optional fields
-- Severity values
-- Confidence values
-- Status values
-- Timestamp behavior
-- Finding association
-
----
-
-# M11.26 — Tests — Alert Creation
-
-Test:
-
-- Finding creates alert
-- Unsupported finding does not create alert
-- Correct rule mapping
-- Correct severity
-- Correct confidence
-- Correct device association
-- Correct connection association
+- `limit` and `offset` are validated against each domain's own ceiling; a value
+  above it is a `400`, not a silent clamp.
+- Deterministic ordering everywhere, with a tie-break so a page is stable across
+  identical requests.
+- The count reported to the client is the count that matches the **same filters**
+  as the listing — the M12.26 rule that a count must never disagree with its
+  listing applies to every endpoint M13 adds.
 
 ---
 
-# M11.27 — Tests — Deduplication
+# M13.17 — Validation
 
-Test:
+Validate, and reject clearly, at minimum:
 
-- Identical finding within dedup window
-- Identical finding outside window
-- Different source
-- Different destination
-- Different rule
-- Different connection
-- Multiple independent alerts
-
-Verify that legitimate separate events are not incorrectly merged.
-
----
-
-# M11.28 — Tests — Alert Lifecycle
-
-Test:
-
-    open → acknowledged
-    open → resolved
-    open → dismissed
-    open → false_positive
-    acknowledged → resolved
-    acknowledged → dismissed
-    acknowledged → false_positive
-
-Also test invalid transitions.
-
----
-
-# M11.29 — Tests — Evidence
-
-Test:
-
-- Finding evidence
-- Packet evidence
-- Connection evidence
-- Device evidence
-- Multiple evidence records
-- Missing evidence
-- Evidence count
-
-Verify that packet payloads are not duplicated.
-
----
-
-# M11.30 — Tests — Repository / Database
-
-Test:
-
-- Create alert
-- Retrieve alert
-- List alerts
-- Filter alerts
-- Update status
-- Persist evidence
-- Retrieve evidence
-- Deduplication lookup
-- Transaction rollback
-
-Use a test database.
-
----
-
-# M11.31 — Integration Tests
-
-Verify:
-
-    Detection Engine
-          ↓
-    Detection Finding
-          ↓
-    Alert Engine
-          ↓
-    Alert Repository
-          ↓
-    SQLite
-
-Use controlled findings from M10.
-
-Verify:
-
-- Correct alerts are created.
-- Severity is correct.
-- Confidence is preserved.
-- Evidence is stored.
-- Duplicate findings are handled.
-- Detection continues after alert failure.
-
----
-
-# M11.32 — Manual Verification
-
-Use controlled authorized/lab detection scenarios.
-
-Trigger the existing M10 rules using safe test conditions.
-
-For each resulting finding verify:
-
-    Detection Finding
-         ↓
-    Alert Created
-         ↓
-    Severity
-         ↓
-    Confidence
-         ↓
-    Evidence
-         ↓
-    Database Record
-
-Then verify alert lifecycle operations:
-
-    Open
-      ↓
-    Acknowledge
-      ↓
-    Resolve
-
-Also verify false-positive/dismissed workflows.
-
----
-
-# M11.33 — Performance Baseline
-
-Measure:
-
-- Findings processed per second
-- Alerts created per second
-- Deduplication lookup time
-- Database write latency
-- Evidence write overhead
-- Memory usage
-- Query response time
-
-Do not claim production-scale alert throughput.
-
----
-
-# M11 Completion Criteria
-
-M11 is complete when:
-
-- AlertService exists.
-- Runtime Alert model exists.
-- Detection-to-alert mapping exists.
-- Severity is implemented.
-- Confidence is preserved separately.
-- Alert lifecycle works.
-- Invalid lifecycle transitions are rejected.
-- Alert evidence works.
-- Packet references work where applicable.
-- Connection references work where applicable.
-- Device association works where available.
-- Alert persistence works.
-- Alert repository works.
-- Deduplication works.
-- Query/filter functionality works.
-- Alert-processing errors are isolated.
-- Thread safety is implemented where needed.
-- Unit tests pass.
-- Database tests pass.
-- Integration tests pass.
-- Manual verification succeeds.
-- Performance baseline is recorded.
-- No correlation, risk scoring, ML/AI, WebSockets, or frontend work is introduced.
-
----
-
-# Completion Record
-
-M11 is complete. The alert layer turns M10 findings into persisted alerts with a
-severity, a validated lifecycle, a deduplication identity and reference-based
-evidence. Every item in the M11 Completion Criteria above is met.
-
-| Area | Where |
+| Domain | Bound |
 | --- | --- |
-| Alert service (M11.2) | `app/alerts/service.py` (`AlertService`) |
-| Runtime alert model (M11.3) | `app/alerts/alert.py` |
-| Severity (M11.4) | `app/alerts/severity.py` |
-| Confidence handling (M11.5) | `app/alerts/persistence.py` (`confidence_to_percent`) |
-| Lifecycle + validation (M11.6/M11.19) | `app/alerts/status.py` |
-| Detection-to-alert mapping (M11.8) | `app/alerts/mapping.py` |
-| Deduplication key + window (M11.9/M11.10) | `app/alerts/dedup.py` |
-| Evidence + builder + resolvers (M11.11-M11.15) | `app/alerts/evidence.py`, `evidence_builder.py`, `resolvers.py` |
-| Persistence + repositories (M11.16/M11.17) | `app/alerts/persistence.py`, `app/repositories/alert.py`, `app/repositories/alert_evidence.py` |
-| Queries / filters (M11.18) | `app/alerts/queries.py` |
-| Error isolation + pipeline (M11.21/M11.22) | `app/alerts/engine.py`, `app/services/packet_pipeline.py` |
-| Thread safety (M11.23) | `AlertService` write lock + per-call sessions |
-| Configuration (M11.24) | `app/config/settings.py` (the `ALERT*` settings) |
-| API (M11.18/M11.19) | `app/api/v1/alerts.py` |
-| Schema upgrade (M11.6) | `app/database/upgrade.py` (`upgrade_alert_status_constraint`) |
-| Design | `docs/15_M11_Alert_Engine_Design.md` |
+| `protocol` | the normalized protocol vocabulary (M5) |
+| `severity` | the four M11 levels |
+| `status` (alert) | the M11 lifecycle vocabulary |
+| `status` (incident) | the four M12 states |
+| `risk_score` | `0..100` inclusive |
+| `confidence` | `0..1` inclusive |
+| `limit` | per-domain default and ceiling |
+| `offset` | non-negative |
+| time range | `since <= until`; an inverted range is a `400`, not an empty page |
+| `order` | the documented orderings (`recent`, `oldest`, `risk`, `confidence`) |
+| unknown filter value | `400`, never silently ignored |
 
-**Verification:** full suite **1077 passed**; pyright **0 errors, 0 warnings**; the
-M11 alert suite is **218 tests**. `scripts/verify_m11.py` sample mode passes every
-check (all five mapped rules → alerts at the mapped severity, confidence
-preserved, evidence stored with no payload copied, deduplication window honoured,
-lifecycle applied and a reopen rejected). `scripts/benchmark_m11.py` recorded the
-local baseline (documented in the design doc and `docs/TODO.md`).
-
-**Live verification:** the application boots against an isolated SQLite database
-(`uvicorn app.main:app`), `init_db` upgrades the schema, `/api/v1/health`,
-`/api/v1/alerts`, `/api/v1/alerts/summary`, `/api/v1/alerts/diagnostics`,
-`/docs` and `/openapi.json` all answer, a missing alert and an unknown severity
-return 404 and 400, and a seeded alert walked the real HTTP lifecycle
-`open → acknowledged → resolved` with the counters reporting `transitions: 2`
-before a reopen was rejected with 409.
-
-**Schema note:** the M2 `alerts.status` CHECK is widened to the M11 vocabulary
-(plus the legacy `new`/`investigating`) by rebuilding the table in
-`app/database/upgrade.py`, which `init_db` runs on startup.
+An empty filter string is a filter error, not "no filter".
 
 ---
 
-# Next Task
+# M13.18 — Error handling
 
-**M12 — Correlation + Risk Scoring (not started).**
+| Condition | Response |
+| --- | --- |
+| Unknown id | `404` |
+| Malformed / unknown filter value | `400` naming the accepted values |
+| Bound out of range (limit, risk, confidence) | `400` |
+| Inverted time range | `400` |
+| Illegal alert transition | `409` naming the reachable states; the stored alert is untouched |
+| Illegal incident transition | `409` naming the reachable states; the stored incident is untouched |
+| Duplicate capture start | `409` |
+| Capture cannot start (permissions, Npcap, interface) | `503` or `409` with a message that names the cause |
+| Unavailable subsystem (AI, ML, baselines, reports generate) | the documented "unavailable" shape with a reason |
+| Unexpected internal failure | `500` with the envelope's error shape; the message never leaks a stack trace or a secret |
 
-M12 will consume the findings (M10) and alerts (M11) already produced to
-implement correlation, risk scoring, historical context, a behavioural
-contribution and an ML contribution placeholder. M11 deliberately leaves no risk
-field anywhere; risk is M12's concern.
+An error body always carries a machine-readable code and a human-readable
+message. A `500` is never used where a `400` or `409` is the truth.
 
-Beginning M12 follows the project's usual pattern: review the M11 `Alert` and the
-M10 `DetectionFinding` first, then define the correlation window, the grouping
-rules and the risk model before implementing anything.
+---
+
+# M13.19 — Response schemas
+
+Every endpoint returns a **declared Pydantic response model** — no ad-hoc
+dictionaries, so the OpenAPI document is accurate and the frontend has one source
+of types. Where a runtime model already has a serialization view
+(`Alert`'s schema, `CorrelatedIncident.as_dict()` / `.summary()`), the schema
+mirrors it rather than re-deriving it by hand.
+
+Two fields must never be conflated in a schema: alert confidence and risk score.
+Where both appear they appear under distinct, documented names.
+
+---
+
+# M13.20 — Router registration and OpenAPI
+
+- Routers registered in a documented order, with static paths before parameterized
+  ones (`/alerts/summary` before `/alerts/{alert_id}`, `/incidents/summary` before
+  `/incidents/{incident_id}`) so a literal segment can never be parsed as an id.
+  This pattern is already used in `app/api/v1/alerts.py`; extend it consistently.
+- Tags, summaries and response descriptions set so `/docs` is a usable reference.
+- The OpenAPI document is checked to contain no unresolved `$ref` and no route
+  registered without a response model.
+
+---
+
+# M13.21 — Thread safety and read-only guarantees
+
+- Every read endpoint is safe to call while capture, detection, alerting and
+  correlation are running. Each underlying service already guarantees this
+  (M6–M12); the API must not add shared mutable state of its own.
+- The API holds no sessions. Repositories are constructed per-request through the
+  existing session factory, exactly as M11 does — a SQLAlchemy session is not
+  thread-safe and is never shared or cached.
+- A read endpoint that returns a stored object copies or serializes it; it does
+  not hand out a live mutable reference.
+- No endpoint performs work that blocks capture.
+
+---
+
+# M13.22 — Tests — endpoint contracts
+
+For every endpoint, test:
+
+- the success shape (status code, envelope, field names, types),
+- every filter, alone and combined,
+- pagination bounds — the default, the ceiling, and one past the ceiling,
+- ordering determinism — the same request twice returns the same sequence,
+- unknown ids → `404`,
+- invalid filters and out-of-range bounds → `400`,
+- read endpoints do not mutate — assert state before and after.
+
+---
+
+# M13.23 — Tests — lifecycle endpoints
+
+- Every valid alert transition through HTTP, and the invalid ones → `409`.
+- Every valid incident transition, and a terminal-state reopen → `409`.
+- A transition on an unknown id → `404`.
+- The stored object is untouched after a rejected transition — asserted, not
+  assumed.
+
+---
+
+# M13.24 — Tests — unavailable subsystems
+
+- The AI, ML, baseline and report-generate surfaces (whichever form M13.1 chose)
+  return the documented shape, and the shape distinguishes
+  "unavailable / not implemented" from "nothing found".
+
+---
+
+# M13.25 — Tests — concurrency
+
+- Concurrent reads against a live pipeline (capture running, events flowing)
+  return consistent pages.
+- A read concurrent with a write (a lifecycle transition, a capture start) never
+  observes a half-updated object.
+- No endpoint raises under concurrent access.
+
+---
+
+# M13.26 — Integration tests
+
+Verify the whole chain over HTTP:
+
+    capture → packets → statistics → devices → connections
+                                               ↓
+                                    detection → alerts
+                                               ↓
+                                    correlation → incidents
+                                               ↓
+                                       risk score
+
+with controlled M10/M11/M12 outputs, confirming that the alert endpoints and the
+incident endpoints both reference the same underlying alerts, and that the risk
+score visible on `GET /alerts/{id}` is the same value the incident carries.
+
+---
+
+# M13.27 — Manual verification
+
+`scripts/verify_m13.py`, two modes:
+
+- **sample** (default) — build controlled findings through the real M10/M11/M12
+  layers against an isolated temporary SQLite database, then exercise every
+  endpoint through `TestClient` (or a live ASGI server) and print the request,
+  the status code and the response. No admin rights and no Npcap needed.
+- **live** — start the real application against real capture for a few seconds
+  and exercise the read endpoints against live traffic. Authorized/local traffic
+  only.
+
+Must verify, at minimum:
+
+- two related alerts → one incident visible over HTTP, with both alerts still
+  listed separately by `/alerts`;
+- correlation confidence, alert confidence and risk score appear as **three**
+  fields on the incident;
+- an unrelated pair stays two incidents;
+- every filter on `/incidents` returns what it claims;
+- an illegal transition is rejected with `409` and the stored object is unchanged;
+- every unavailable subsystem says so;
+- every invalid filter yields `400`, not an empty list.
+
+---
+
+# M13.28 — Performance baseline
+
+`scripts/benchmark_m13.py` measures the API layer in isolation, against a
+populated database and a populated incident store:
+
+    Request latency per endpoint (median and p95, single client)
+    Serialization cost per response (list vs detail)
+    Listing latency at the default page size and at the ceiling
+    OpenAPI schema generation time
+    Throughput under a small number of concurrent readers
+    Error-path latency (a 400 and a 404)
+
+Measurements are single-machine and in-process. **Do not claim production
+capacity, and do not claim a concurrency level the benchmark did not run.**
+
+---
+
+# M13 Completion Criteria
+
+M13 is complete when:
+
+- The API surface in `docs/04_API_Specification.md` is implemented, or the
+  divergence is explicitly documented and the spec corrected.
+- Every existing router has been reviewed against the spec and the gaps closed.
+- One envelope, one error shape and one pagination shape are used consistently.
+- The dashboard, analytics, settings and system surfaces exist and read real data.
+- The **incident surface exists** and exposes M12's correlated incidents, their
+  reasons and their scores.
+- Alert confidence, correlation confidence and risk score remain three separate
+  fields on the wire.
+- The alert and incident lifecycle endpoints are implemented and validate
+  transitions through the existing state tables.
+- Unavailable subsystems (AI, ML, baselines, report generation) return a
+  documented "unavailable" shape rather than fabricated data.
+- Every endpoint declares a response schema, and OpenAPI resolves cleanly.
+- Pagination and validation are consistent and reject rather than clamp.
+- Reads never mutate, and no endpoint blocks capture.
+- Unit/contract tests pass.
+- Lifecycle and concurrency tests pass.
+- Integration tests pass.
+- Manual verification succeeds in sample mode, and in live mode where hardware
+  permits.
+- Performance baseline is recorded.
+- No new detectors, alert types, correlation rules, ML/AI, WebSockets, frontend
+  or automatic response functionality is introduced.
+
+---
+
+# Current Immediate Task
+
+**M13.1 — Review the existing API surface and define the consistency baseline.**
+
+Before writing any endpoint:
+
+1. Read `docs/04_API_Specification.md` §5 (response format), §6 (pagination),
+   §7 (filtering), §13 (alerts), §29–§31 (status codes, errors, validation).
+2. Inventory the eight existing routers: routes, parameters, bounds, and where
+   each returns `400` versus `404`.
+3. Inventory `app/schemas/` and identify endpoints returning ad-hoc dictionaries.
+4. Confirm how routers are registered in `app/api/__init__.py` and the ordering
+   rule for static-versus-parameterized paths.
+5. Decide, and write down, the treatment of every unavailable subsystem (AI, ML,
+   baselines, report generation) — absent route, or documented "unavailable".
+6. Decide, and write down, which detection-rule and settings writes are live and
+   which require a restart — and make the endpoint say which.
+7. Decide the incident API's exact route set and confirm every filter maps onto
+   an `IncidentQuery` field that already exists.
+8. Define the response schema for a correlated incident, keeping the three
+   quantities separate.
+9. Only then begin implementing routers, one domain at a time, with its tests.
 
 ---
 
@@ -830,12 +684,23 @@ M11 produces:
     Alerts
        └── Alert Evidence
 
-M12 will consume alerts/findings to implement:
+M12 produces:
 
-    Correlation
-    Risk Scoring
-    Historical Context
-    Behavioral Contribution
-    ML Contribution
+    Correlated Incidents
+       ├── Related Alerts
+       ├── Related Findings
+       ├── Correlation Reasons
+       ├── Correlation Confidence
+       └── Risk Score
 
-M11 itself must not implement those systems.
+M13 exposes all of the above over HTTP, and produces **no new security
+conclusions of its own**.
+
+Future milestones will consume this API for:
+
+    WebSockets (M14)
+    Frontend (M15)
+    Analytics (M16)
+    Reports (M17)
+
+M13 itself must not implement those systems.

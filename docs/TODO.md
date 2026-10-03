@@ -4,7 +4,7 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M11 — Alert Engine ✅ COMPLETE (next: M12 — Correlation + Risk Scoring)
+**Current Milestone:** M12 — Correlation + Risk Scoring ✅ COMPLETE (next: M13 — REST API)
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -415,20 +415,89 @@ API avg ~15 ms (`/alerts?limit=100`), ~3.8 ms (`/summary`), ~4.3 ms
 
 ---
 
-# M12 — Correlation + Risk Scoring
+# M12 — Correlation + Risk Scoring ✅ COMPLETE
 
-* [ ] Create correlation engine
-* [ ] Correlation time window
-* [ ] Group related events
-* [ ] Deduplicate related findings
-* [ ] Add rule contribution
-* [ ] Add behavioral contribution
-* [ ] Add ML contribution placeholder
-* [ ] Add asset context
-* [ ] Add historical context
-* [ ] Create risk scoring engine
-* [ ] Separate risk and confidence
-* [ ] Test risk boundaries
+* [x] Review the M10 `DetectionFinding`, the M11 `Alert` / `AlertEvidence`, the
+      M8 devices, the M9 connections, the M7 packets, the existing models and
+      config; define the correlation event, identity, incident and risk models
+      (M12.1) — `docs/16_M12_Correlation_Design.md`
+* [x] Correlation engine (M12.2) — `app/correlation/engine.py` (`CorrelationEngine`)
+* [x] Normalized correlation event, references rather than packet copies (M12.3) —
+      `app/correlation/event.py` (`CorrelationEvent`, `from_finding`, `from_alert`)
+* [x] Explicit correlation identity dimensions (M12.4) — `app/correlation/identity.py`
+* [x] Bounded, configurable correlation time window, inclusive edges (M12.5) —
+      `app/correlation/window.py` (`CorrelationWindow`)
+* [x] Documented relationships + which of them may anchor alone (M12.6) —
+      `app/correlation/relationship.py` (6 weights, threshold 0.55)
+* [x] Correlation confidence, separate from alert confidence and risk (M12.7) —
+      `app/correlation/confidence.py` (noisy-OR, capped at 0.999)
+* [x] Normalized `CorrelatedIncident` model, all fields derived (M12.8) —
+      `app/correlation/incident.py`
+* [x] Incident lifecycle + validated transitions, terminal states (M12.9) —
+      `app/correlation/status.py`
+* [x] Alert grouping — correlation references alerts, never replaces them (M12.10)
+* [x] Correlation deduplication, distinct from M11's (M12.11) — the registry's
+      bounded event-identity index
+* [x] Five explicit correlation rules (M12.12) — `app/correlation/rules.py`
+* [x] Risk scoring engine (M12.13) — `app/risk/engine.py` (`RiskScoringEngine`)
+* [x] Bounded 0–100 score + four documented display bands (M12.14/M12.27) —
+      `app/risk/bands.py`
+* [x] Closed risk input model, no invented facts (M12.15) — `app/risk/inputs.py`
+* [x] Risk and confidence kept structurally separate (M12.16)
+* [x] Deterministic contribution model: seven bounded terms summing to 100 (M12.17) —
+      `app/risk/contributions.py`
+* [x] ML contribution placeholder = 0 / unavailable, future-proof (M12.18)
+* [x] Asset context from M8 identity only, no invented criticality (M12.19)
+* [x] Historical context, bounded and opt-in (M12.20)
+* [x] Risk boundaries — 0 <= score <= 100 for every input including invalid (M12.21)
+* [x] Bounded correlation state + safe expiration (M12.22) —
+      `app/correlation/registry.py` (`IncidentRegistry`)
+* [x] Thread safety — one lock across the read-decide-write step (M12.23)
+* [x] Persistence onto the existing `alerts.risk_score` column, no new schema
+      (M12.24) — `app/correlation/persistence.py`, `AlertRepository.update_risk_scores`
+* [x] Pipeline integration, correlation last and failure-isolated (M12.25) —
+      `app/services/packet_pipeline.py`, `app/services/capture_manager.py`
+* [x] Internal bounded queries with deterministic ordering (M12.26)
+* [x] Tests — correlation identity (M12.28/M12.29) —
+      `tests/test_correlation_identity.py`, `tests/test_correlation_rules.py`
+* [x] Tests — correlation engine + boundaries + dedup + lifecycle —
+      `tests/test_correlation_engine.py`
+* [x] Tests — risk scoring (M12.30) — `tests/test_risk_scoring.py`
+* [x] Tests — risk/confidence separation (M12.31) — in `tests/test_risk_scoring.py`
+* [x] Integration tests (M12.32) — `tests/test_correlation_integration.py`
+* [x] Manual verification (M12.33) — `backend/scripts/verify_m12.py`
+* [x] Performance baseline (M12.34) — `backend/scripts/benchmark_m12.py`
+
+**Verification:** full suite 1271 passed; the M12 suite is 194 tests
+(`test_correlation_engine` 40, `test_risk_scoring` 40, `test_correlation_identity`
+29, `test_correlation_rules` 22, `test_correlation_persistence` 11,
+`test_correlation_integration` 10; fakes shared). `verify_m12.py` sample mode:
+two related alerts from one source formed **one** incident preserving both
+alerts, `matched:scan_sequence` plus the shared source were recorded as explicit
+reasons, same-source / same-destination / same-device / same-connection each
+correlated, unrelated sources and out-of-window events stayed separate, a repeat
+was deduplicated without growing the incident, every score was inside 0–100 and
+reached `alerts.risk_score` with M11's severity and status untouched, the
+retention sweep cleared incidents without deleting a single alert, the lifecycle
+rejected a reopen, and the ML contribution was refused.
+**Baseline (this machine, OneDrive-synced disk, defaults):** 85 distinct findings
+correlated/sec (**11,726 us per finding** — the no-match path evaluates every
+held incident, so N distinct incidents cost O(N²) evaluations and this term
+dominates correlation cost); 595 alerts/sec (~1,680 us) when a match is found
+early; deduplication 249,893/sec (4.0 us/lookup); risk calculation
+33,776 scores/sec (29.6 us/score); incident → risk inputs 3.0 us; incident
+queries 0.03–0.27 ms; 2,264 bytes of heap per held incident; the store's cap held
+under overrun (1,792 evicted) and a 256-incident retention sweep took 0.18 ms.
+Not a production-capacity claim.
+**Schema note:** no new tables and no new columns. `alerts.risk_score` — which
+M11 deliberately left at `0` for exactly this milestone, with a
+`CHECK (risk_score BETWEEN 0 AND 100)` — is the one column M12 writes.
+**Design:** `docs/16_M12_Correlation_Design.md`.
+
+> Deliberately out of scope for M12: new detectors, new alert types, behavioural
+> baselines, ML/AI anomaly detection, automatic blocking, WebSockets, frontend
+> integration, the REST API and SIEM integrations. M12 groups and prioritises;
+> it never acts.
 
 ---
 
