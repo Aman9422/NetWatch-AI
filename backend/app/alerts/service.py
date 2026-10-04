@@ -51,6 +51,8 @@ from app.models.alert import Alert as AlertRow
 from app.persistence.session_factory import SessionFactory
 from app.repositories.alert import AlertRepository
 from app.repositories.alert_evidence import AlertEvidenceRepository
+from app.websockets.events import publish_alert, publish_alert_lifecycle
+from app.websockets.publisher import EventPublisher, ensure_publisher
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,7 @@ class AlertService:
         dedup_window_seconds: float = DEFAULT_DEDUP_WINDOW_SECONDS,
         max_evidence: int = DEFAULT_MAX_EVIDENCE,
         packet_evidence_enabled: bool = True,
+        events: EventPublisher | None = None,
         enabled: bool = True,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -124,6 +127,11 @@ class AlertService:
                 Validated by :class:`~app.alerts.dedup.DeduplicationWindow`.
             max_evidence: Hard cap on an alert's evidence records (M11.12).
             packet_evidence_enabled: Whether packet references are resolved.
+            events: Optional sink for the live M14 stream. ``None`` means the
+                service publishes nothing, which is how every existing caller and
+                every existing test keeps working unchanged (M14.13). A supplied
+                publisher is used to announce an alert's creation, the fold that
+                updated it, and each lifecycle move.
             enabled: When False, findings are accepted and counted but no alert
                 is produced, which is what the master switch (M11.24) means.
             clock: Time source in epoch seconds, used for lifecycle timestamps.
@@ -141,6 +149,9 @@ class AlertService:
         self._window = DeduplicationWindow(dedup_window_seconds)
         self._max_evidence = int(max_evidence)
         self._packet_evidence_enabled = bool(packet_evidence_enabled)
+        # Resolved once, so no publish site has to test it for ``None``: with no
+        # publisher supplied this is a null sink whose ``publish`` returns False.
+        self._publisher = ensure_publisher(events)
         self._enabled = bool(enabled)
         self._clock = clock
 
@@ -197,7 +208,7 @@ class AlertService:
             # inserting must be one step, or two threads can both decide "no
             # duplicate" and both create the alert (M11.9).
             with self._write_lock:
-                return self._create_or_fold(finding, mapping)
+                outcome = self._create_or_fold(finding, mapping)
         except Exception:  # noqa: BLE001 - alerting must never stop capture
             self._increment("errors")
             logger.exception(
@@ -210,6 +221,12 @@ class AlertService:
                 error=True,
                 message="Alert creation failed",
             )
+        # Announced after the write committed and the lock was released, so a
+        # subscriber can never be told about an alert that rolled back, and a slow
+        # subscriber can never extend the window in which a second finding from
+        # the same source waits to be deduplicated (M11.9/M14.10).
+        self._publish_outcome(outcome)
+        return outcome
 
     def process_findings(self, findings: list[DetectionFinding]) -> list[AlertOutcome]:
         """Process several findings, in order, and return their outcomes."""
@@ -272,11 +289,16 @@ class AlertService:
                 current.status.value,
                 updated.status.value,
             )
-            return Alert.from_record(
+            stored = Alert.from_record(
                 row, evidence_count=evidence.count_for_alert(alert_id)
             )
         finally:
             session.close()
+        # Announced once the session is closed, so a client is never told about a
+        # move the transaction did not keep. The event carries the whole alert
+        # view, so a subscriber needs no follow-up read to render it (M14.10).
+        publish_alert_lifecycle(self._publisher, stored)
+        return stored
 
     # -- diagnostics (M11.31) --------------------------------------------
 
@@ -402,6 +424,28 @@ class AlertService:
             finding_id=finding.finding_id,
             correlation_key=key.value(),
         )
+
+    def _publish_outcome(self, outcome: AlertOutcome) -> None:
+        """Announce an alert's creation, or the fold that updated it (M14.10).
+
+        Only the two outcomes that changed a stored alert are published. An
+        unsupported rule and a contained error changed nothing about any alert, so
+        they announce nothing — an event there would be a notification that
+        something happened when nothing did.
+
+        A fold is announced as ``alert.updated`` rather than as a second
+        ``alert.created``: the alert already exists, and what moved is its evidence
+        count, which is exactly what a view of that alert needs to know.
+
+        Containment belongs to :func:`app.websockets.events.publish_alert`, so this
+        cannot raise into the capture thread (M14.14).
+        """
+        if outcome.alert is None:
+            return
+        if outcome.created:
+            publish_alert(self._publisher, outcome.alert, created=True)
+        elif outcome.duplicate:
+            publish_alert(self._publisher, outcome.alert, created=False)
 
     def _increment(self, field: str) -> None:
         """Increment one counter under the counter lock."""

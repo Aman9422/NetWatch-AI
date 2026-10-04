@@ -207,6 +207,56 @@ class Settings(BaseSettings):
     # (M12.15).
     risk_recency_seconds: float = 3600.0
 
+    # WebSockets (M14)
+    # Master switch for the real-time transport. When disabled the four
+    # endpoints still exist and still answer the keepalive, but no event is
+    # published, so the cost of the layer is zero rather than merely small
+    # (M14.33). The REST API is unaffected either way (M14.1).
+    websockets_enabled: bool = True
+    # Hard cap on simultaneously connected WebSocket clients, so a connection
+    # flood is refused instead of absorbed (M14.22).
+    websocket_max_connections: int = 32
+    # Hard cap per channel, so one channel's clients cannot crowd the others
+    # out of the process-wide budget (M14.5).
+    websocket_max_connections_per_channel: int = 16
+    # Seconds a single socket write may take before the client is treated as
+    # dead and removed. Bounds the lifetime of a stalled client (M14.14).
+    websocket_send_timeout_seconds: float = 5.0
+    # Seconds between server keepalives on each channel. Deliberately measured
+    # in tens of seconds: one message per client per interval, not per second
+    # (M14.24).
+    websocket_heartbeat_interval_seconds: float = 20.0
+    # Largest encoded event that may be queued for a client, in bytes. An
+    # oversized event is refused rather than sent (M14.22/M14.26).
+    websocket_max_event_bytes: int = 16384
+    # Largest client message accepted, in bytes. Anything larger is refused
+    # before it is parsed (M14.22).
+    websocket_max_client_message_bytes: int = 512
+    # How many invalid client messages one connection may send before it is
+    # disconnected, so a garbage flood cannot consume the server (M14.23).
+    websocket_max_invalid_messages: int = 5
+    # How often the dashboard event is sampled (M14.9). The tick is the rate
+    # limit for that channel: a dashboard wants a steady refresh rather than an
+    # event per counter movement.
+    websocket_dashboard_interval_seconds: float = 1.0
+    # Per-connection outbound queue sizes (M14.15). Each is a hard cap: a full
+    # queue drops its oldest entry rather than growing. Alerts get the largest
+    # budget because they are the security-relevant stream, and the dashboard
+    # the smallest because a stale dashboard sample is the most disposable.
+    websocket_dashboard_queue_size: int = 32
+    websocket_alert_queue_size: int = 512
+    websocket_system_queue_size: int = 128
+    # Packet streaming (M14.16). ``packet_ws_enabled`` gates the packet channel
+    # specifically, so an operator can keep the other three channels live while
+    # removing the one high-frequency stream from the hot path.
+    packet_ws_enabled: bool = True
+    # Ceiling on packet events broadcast per second, applied to the channel
+    # rather than to one connection, so adding subscribers does not multiply
+    # the work (M14.16).
+    packet_ws_max_events_per_second: float = 200.0
+    # Outbound queue size for a packet subscriber (M14.16).
+    packet_ws_queue_size: int = 256
+
 
 @lru_cache
 def get_settings() -> Settings:

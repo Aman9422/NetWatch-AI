@@ -8,6 +8,12 @@ fastapi>=0.115.0
 # ASGI server
 uvicorn>=0.30.0
 
+# WebSocket server support for uvicorn (M14). uvicorn is installed *without*
+# the ``[standard]`` extra, so it carries no WebSocket implementation of its
+# own: without this, an upgrade request to ``/ws/...`` is rejected by the
+# server before the application ever sees it.
+websockets>=12.0
+
 # Configuration
 pydantic-settings>=2.0.0
 

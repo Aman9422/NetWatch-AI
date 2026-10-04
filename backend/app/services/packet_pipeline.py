@@ -64,6 +64,8 @@ from app.devices.manager import DeviceDiscoveryManager
 from app.persistence.manager import PacketPersistence
 from app.processing.processor import PacketProcessor
 from app.statistics.manager import TrafficStatisticsManager
+from app.websockets.events import publish_packet
+from app.websockets.publisher import EventPublisher, ensure_publisher
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,7 @@ class PacketPipeline:
         detection: DetectionEngine | None = None,
         alerts: AlertEngine | None = None,
         correlation: CorrelationEngine | None = None,
+        events: EventPublisher | None = None,
     ) -> None:
         self._processor = processor or PacketProcessor()
         self._statistics = statistics or TrafficStatisticsManager()
@@ -99,6 +102,12 @@ class PacketPipeline:
         self._detection_error_count = 0
         self._alert_error_count = 0
         self._correlation_error_count = 0
+        # The M14 sink (M14.13). Resolved once so no call site tests it for
+        # ``None``: with nothing supplied it is a null publisher whose calls
+        # return False without doing anything, which is what keeps every existing
+        # pipeline test free of a socket.
+        self._publisher = ensure_publisher(events)
+        self._published_packet_count = 0
 
     def process(self, packet: Any, captured_at: Optional[float] = None) -> None:
         """Normalize a raw packet and record its statistics.
@@ -177,6 +186,14 @@ class PacketPipeline:
             except Exception:  # noqa: BLE001 - correlation must never stop capture
                 self._correlation_error_count += 1
                 logger.warning("Correlation failed; capture continues")
+        # The live stream, published *last* of all (M14.8). Every consumer has
+        # now seen this packet, so an event can never describe a packet whose
+        # statistics, device, conversation or detection state is still moving.
+        # The call contains its own failure and returns False when the layer is
+        # off, so it cannot raise into the capture thread (M14.14) and costs one
+        # boolean when M14 is disabled.
+        if publish_packet(self._publisher, normalized):
+            self._published_packet_count += 1
 
     def flush_persistence(self) -> int:
         """Write every packet still buffered for persistence (M7.7/M7.18).
@@ -242,6 +259,22 @@ class PacketPipeline:
         entirely, which the same requirement asks the pipeline to contain anyway.
         """
         return self._correlation_error_count
+
+    def get_published_packet_count(self) -> int:
+        """Return how many packets were handed to the live stream (M14.8).
+
+        Counts events the publisher *accepted*, so it is the pipeline's view of
+        how much live traffic it produced. A disabled layer, an over-rate packet
+        and a packet the manager refused for size all leave this unchanged, which
+        is what makes it usable next to the manager's own drop counters when the
+        two are compared during a baseline run (M14.33).
+        """
+        return self._published_packet_count
+
+    @property
+    def events(self) -> EventPublisher:
+        """Return the publisher this pipeline hands packets to (M14.13)."""
+        return self._publisher
 
     def flush_connections(self) -> int:
         """Write every tracked conversation with unwritten observations (M9.17).

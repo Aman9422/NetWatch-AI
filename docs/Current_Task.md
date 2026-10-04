@@ -1,982 +1,531 @@
 # NetWatch AI — Current Task
 
 **Current Phase:** Base Application Implementation
-**Current Milestone:** M13 — REST API
+**Current Milestone:** M14 — WebSockets
 **Status:** ✅ Complete — implemented, verified, tested and baselined
 
 ---
 
 # Current Objective
 
-Build and consolidate the REST API layer for NetWatch AI.
+Carry the state M3–M13 already produce to connected clients in real time.
 
-M10 provides detection findings.
-M11 provides alerts and evidence.
-M12 provides correlated incidents and risk scores.
+M13 gave the frontend a REST surface it can *pull* from. M14 adds the push half:
+a client subscribes to a channel and receives the events the backend produces as
+they happen, without polling.
 
-M13 exposes the implemented backend capabilities through a consistent, documented REST API for:
+Four channels:
 
-- Capture
-- Packets
-- Statistics
-- Devices
-- Connections
-- Detection findings
-- Alerts
-- Evidence
-- Correlated incidents
-- Baselines
-- Analytics
-- Reports
-- Settings
-- System status
-- Notifications
-- Dashboard data
+    /ws/dashboard    a periodic tick of the picture the dashboard shows
+    /ws/packets      one event per packet the pipeline processes
+    /ws/alerts       alert creation, folding and lifecycle moves
+    /ws/system       capture, service and database state changes
 
-The REST API becomes the main HTTP interface consumed later by the frontend.
+M14 produces no new knowledge. It transports what M4–M12 already produce, reading
+the same services the M13 routes read.
 
 ---
 
-# M13 Architecture
+# M14 Architecture
 
-The API layer should remain thin.
+    Producer (capture thread)
+         ↓
+    Service (M6 statistics / M8 devices / M9 connections /
+             M10 detection / M11 alerting / M12 correlation)
+         ↓
+    publish_* helper          app/websockets/events.py
+         ↓
+    EventPublisher            app/websockets/publisher.py
+         ↓
+    call_soon_threadsafe      the worker-thread → loop bridge
+         ↓
+    WebSocketManager.broadcast
+         ↓
+    per-channel registry → per-connection bounded queue
+         ↓
+    sender task → the socket
 
-Preferred flow:
+Two rules hold the design together:
 
-    HTTP Request
-         ↓
-    API Route
-         ↓
-    Request Validation
-         ↓
-    Service / Manager
-         ↓
-    Repository / Runtime State
-         ↓
-    Response Schema
-         ↓
-    HTTP Response
-
-Do not place business logic directly inside route handlers.
+* **The loop owns the queue.** A producer thread never touches a connection's
+  buffer. It hands the event to the loop, and everything after that hand-off is
+  single-threaded, so no lock protects a queue.
+* **M14 is not an API version.** The channels are mounted unversioned at `/ws/...`
+  beside `/api/v1/...`. M13.3's versioning rule is about production HTTP routes;
+  a WebSocket handshake is not a REST resource.
 
 ---
 
-# M13 Development Rule
+# M14 Development Rule
 
 Do NOT implement:
 
-- New detection logic
-- New alert logic
-- New correlation logic
-- New risk-scoring logic
-- ML
-- AI
-- WebSockets
 - Frontend code
+- New detection, alert, correlation or risk-scoring logic
+- ML / AI
 - Automatic blocking
-- External SIEM integrations
-- Authentication/RBAC unless explicitly introduced as a separate requirement
+- Authentication / RBAC
+- External SIEM or notification integrations
+- Message replay, history or backfill
+- Client-driven subscriptions beyond holding a channel open
 
-M13 exposes existing functionality.
-
-It does not redesign earlier milestones.
-
----
-
-# M13.1 — Review Existing API Surface
-
-Review all currently implemented API endpoints from:
-
-- M3
-- M4
-- M6
-- M8
-- M9
-- M10
-- M11
-- M12
-
-Identify:
-
-- Existing routes
-- Existing response envelopes
-- Existing error codes
-- Existing schemas
-- Existing duplicated routes
-- Inconsistent naming
-- Inconsistent validation
-
-Do not break working functionality unnecessarily.
+M14 transports existing functionality. It does not redesign earlier milestones.
 
 ---
 
-# M13.2 — API Structure
+# M14.1 — Review of the Existing Architecture
 
-Use a consistent structure such as:
+Review what already exists before adding anything:
 
-    app/api/v1/
-        __init__.py
-        capture.py
-        packets.py
-        statistics.py
-        devices.py
-        connections.py
-        detection.py
-        alerts.py
-        evidence.py
-        incidents.py
-        baselines.py
-        analytics.py
-        reports.py
-        settings.py
-        system.py
-        notifications.py
-        dashboard.py
+- where each event comes from (which M6–M12 service holds the fact);
+- what already exists to serialize with (the M13 Pydantic schemas);
+- the one thing that does not exist — a serializable envelope and a sink for it.
 
-The exact file organization may follow existing project conventions.
+Outcome: the M13 schemas are reused as payload sources where they fit, and one new
+envelope type is introduced for the wire. Recorded in
+`docs/18_M14_WebSocket_Design.md` §3.
 
 ---
 
-# M13.3 — API Versioning
+# M14.2 — WebSocket Manager
 
-Maintain:
+One manager owns every connection:
 
-    /api/v1/
+- accept, admit, register, broadcast, send, disconnect, shutdown;
+- a bounded registry per channel;
+- one running loop, bound at startup;
+- counters for accepted, closed, refused, dropped and delivered.
 
-as the base route.
-
-Do not introduce `/api/v2/`.
-
-Do not expose unversioned production routes unless required for health/system operation.
+Shutdown is idempotent and safe when startup never ran. A publish after shutdown is
+dropped and counted rather than raised.
 
 ---
 
-# M13.4 — Response Envelope
+# M14.3 — Endpoints
 
-Standardize successful responses.
+Four routes, mounted unversioned:
 
-Example:
+    /ws/dashboard
+    /ws/packets
+    /ws/alerts
+    /ws/system
+
+Admission enforces two caps: a process-wide maximum and a per-channel maximum. A
+refusal closes with a policy-violation code and never registers the client.
+
+---
+
+# M14.4 — Connection Lifecycle
+
+Every client has an explicit state, and every transition is one call:
+
+    accept → admit → register → sender task starts
+                                 ↓
+    send / receive → (failure, close, keepalive timeout)
+                                 ↓
+    unregister → sender task cancelled → socket closed
+
+A disconnect is idempotent: disconnecting an unknown or already-closed connection
+returns false and changes nothing.
+
+---
+
+# M14.5 — Connection Registry
+
+- one entry per channel, plus a process-wide view;
+- stable connect order for diagnostics;
+- bounded by the caps, so a flood cannot grow it without limit;
+- snapshot reads, so a broadcast never holds a lock while writing.
+
+---
+
+# M14.6 — Channel Separation
+
+One channel per data type. A packet event reaches the packet channel and no other;
+an event type outside the vocabulary is refused at construction. Separation is
+enforced by the manager's fan-out, not by the client, so a client cannot widen what
+it receives.
+
+---
+
+# M14.7 — Event Envelope
+
+One envelope for every event:
 
     {
-      "success": true,
-      "data": {...}
+      "type": "packet.observed",
+      "channel": "packets",
+      "source": "packet_pipeline",
+      "timestamp": "2026-01-01T00:00:00.000000Z",
+      "sequence": 412,
+      "schema_version": 1,
+      "data": { ... }
     }
 
-For collections:
-
-    {
-      "success": true,
-      "data": {
-        "items": [...],
-        "total": 100,
-        "limit": 50,
-        "offset": 0
-      }
-    }
-
-Use the project's existing response conventions where they already exist.
-
-Do not create multiple incompatible response formats.
+- the type vocabulary is a closed set;
+- timestamps are ISO-8601 UTC with an offset;
+- the sequence is monotonic across the process;
+- the envelope is frozen — a built event cannot be mutated before it is sent.
 
 ---
 
-# M13.5 — Error Envelope
+# M14.8 — Packet Events
 
-Standardize API errors.
+One `packet.observed` per packet the pipeline processes, projected from the
+normalized packet.
 
-Example:
-
-    {
-      "success": false,
-      "error": {
-        "code": "RESOURCE_NOT_FOUND",
-        "message": "Connection not found"
-      }
-    }
-
-Avoid exposing:
-
-- Stack traces
-- Internal filesystem paths
-- Database internals
-- Sensitive implementation details
-
-Error messages should be useful to an API consumer.
+- no packet payload, raw bytes or metadata ever appears on the wire (M7.5's policy
+  carried to the live stream);
+- a missing port stays missing rather than becoming `0`;
+- the capture interface is included so a client can attribute the flow.
 
 ---
 
-# M13.6 — HTTP Status Codes
+# M14.9 — Dashboard Events
 
-Use appropriate status codes.
-
-Examples:
-
-    200 OK
-    201 Created
-    204 No Content
-    400 Bad Request
-    404 Not Found
-    409 Conflict
-    422 Validation Error
-    500 Internal Server Error
-
-Use existing milestone-specific behavior where it is already defined.
-
-Do not arbitrarily change established error semantics without documenting the reason.
+A tick on a configurable interval, carrying the same figures the dashboard route
+serves. The tick reads the same services `/api/v1/dashboard/summary` reads; it does
+not recompute anything, and the two agree by construction.
 
 ---
 
-# M13.7 — Capture API
+# M14.10 — Alert Events
 
-Consolidate:
-
-    GET  /api/v1/capture/interfaces
-    GET  /api/v1/capture/interface
-    PUT  /api/v1/capture/interface
-    GET  /api/v1/capture/status
-    POST /api/v1/capture/start
-    POST /api/v1/capture/stop
-
-Expose:
-
-- Selected interface
-- Capture state
-- Packet count
-- Session information
-
-Do not expose raw internal objects directly.
+`alert.created` for a new alert, `alert.updated` for a finding folded into an
+existing one, and the lifecycle types (`alert.acknowledged`, `alert.resolved`,
+`alert.dismissed`, `alert.false_positive`) for a controlled status move. The
+lifecycle names are M11's status vocabulary, not a second one.
 
 ---
 
-# M13.8 — Packet API
+# M14.11 — System Events
 
-Expose persisted packet information.
+Capture state changes (`capture.started`, `capture.stopped`, `capture.error`),
+service state (`service.status`) and database reachability (`database.status`).
 
-Suggested endpoints:
-
-    GET /api/v1/packets
-    GET /api/v1/packets/{packet_id}
-
-Support filters such as:
-
-    source_ip
-    destination_ip
-    protocol
-    source_port
-    destination_port
-    interface
-    start_time
-    end_time
-
-Support pagination/limits.
-
-Do not return packet payloads unless explicitly supported.
-
-Respect M7's payload-storage policy.
+A capture error carries a fixed sentence supplied by the capture layer. The
+exception's own text can name a device or a path and never reaches the wire.
 
 ---
 
-# M13.9 — Statistics API
+# M14.12 — Incident Events
 
-Expose M6 statistics.
+`incident.created` when correlation opens an incident, `incident.updated` when an
+event joins an existing one, and `incident.status_changed` for a lifecycle move.
 
-Suggested endpoints:
-
-    GET /api/v1/statistics/traffic
-    GET /api/v1/statistics/protocols
-    GET /api/v1/statistics/top-talkers
-    GET /api/v1/statistics/ports
-
-Expose current runtime statistics.
-
-Do not recalculate statistics inside API routes.
+A duplicate event — one M12 already deduplicated — publishes nothing, because
+nothing changed.
 
 ---
 
-# M13.10 — Device API
+# M14.13 — Event Publisher
 
-Expose M8 device information.
+    publish_*  →  EventPublisher  →  WebSocketManager
 
-Suggested endpoints:
-
-    GET /api/v1/devices
-    GET /api/v1/devices/{device_id}
-
-Support filters:
-
-    status
-    ip
-    mac
-    limit
-
-Return:
-
-- Identity
-- IP addresses
-- MAC address where available
-- First seen
-- Last seen
-- Packet count
-- Byte count
-- Status
-
-Do not calculate risk here.
+Two implementations: the real publisher (which forwards to the manager) and a null
+publisher whose calls return false without doing anything. `ensure_publisher` turns
+`None` into the null publisher, so no call site tests for `None` and every existing
+pipeline remains constructible without a socket.
 
 ---
 
-# M13.11 — Connection API
+# M14.14 — Failure Isolation
 
-Consolidate M9 connection endpoints.
+Publishing can never reach the capture thread:
 
-Suggested endpoints:
+- a projection that raises is logged and refused;
+- a publisher that raises is logged and refused;
+- a manager that raises does not raise through the publisher;
+- an unbound loop, a disabled layer and a shut-down manager are all counted drops,
+  not exceptions.
 
-    GET /api/v1/connections
-    GET /api/v1/connections/active
-    GET /api/v1/connections/{connection_id}
-
-Support filters:
-
-    protocol
-    source_ip
-    destination_ip
-    source_port
-    destination_port
-    device_id
-    state
-
-Use bounded responses.
+A failing WebSocket layer cannot stop capture, processing, statistics, device
+tracking, connection tracking, detection, alerting or correlation.
 
 ---
 
-# M13.12 — Detection API
+# M14.15 — Backpressure
 
-Expose M10 detection findings.
+One bounded queue per connection:
 
-Suggested endpoints:
+- the depth comes from the channel policy (32 to 512);
+- **drop-oldest** when full, so the newest event is the one that survives;
+- the drop is counted per connection and visible;
+- the queue never grows past its cap — asserted, not assumed.
 
-    GET /api/v1/detections
-    GET /api/v1/detections/{finding_id}
-
-Support filters:
-
-    rule_id
-    source_ip
-    destination_ip
-    device_id
-    protocol
-    start_time
-    end_time
-
-Do not allow API routes to trigger detector logic directly.
+A client that drains never fills its queue. A client that stalls is retired rather
+than allowed to hold up its channel: one bad subscriber does not cost the others
+their delivery.
 
 ---
 
-# M13.13 — Alert API
+# M14.16 — Packet Rate Control
 
-Expose M11 alerts.
+The packet channel carries a token bucket (200 events/s by default) so a busy wire
+cannot flood a subscriber. The other channels are unlimited.
 
-Suggested endpoints:
+- the bucket starts full, so a burst up to its capacity is allowed;
+- it refills continuously rather than once a second;
+- it never holds more than its capacity and never refills into the past;
+- the ceiling is per channel, not per connection;
+- a rate-limited event reaches no subscriber and is counted as a drop, not as a
+  broadcast.
 
-    GET  /api/v1/alerts
-    GET  /api/v1/alerts/{alert_id}
-    POST /api/v1/alerts/{alert_id}/acknowledge
-    POST /api/v1/alerts/{alert_id}/resolve
-    POST /api/v1/alerts/{alert_id}/dismiss
-    POST /api/v1/alerts/{alert_id}/false-positive
-
-Support filters:
-
-    severity
-    status
-    rule_id
-    source_ip
-    destination_ip
-    device_id
-    start_time
-    end_time
-
-Use the existing M11 lifecycle validation.
-
-Do not duplicate lifecycle rules inside routes.
+No other channel is rate-limited: alerts are security events and suppressing one
+would be a correctness problem, not a tuning choice.
 
 ---
 
-# M13.14 — Evidence API
+# M14.17 — Serialization
 
-Expose alert evidence where appropriate.
+One encoding step per event, once, before it is queued:
 
-Suggested endpoints:
+- a compact JSON document, UTF-8, no pretty-printing;
+- the size is measured and checked against a cap before the frame is queued;
+- an event over the cap is refused and never reaches a connection;
+- the same encoded frame is handed to every subscriber of the channel, so fan-out
+  does not re-encode.
 
-    GET /api/v1/alerts/{alert_id}/evidence
-    GET /api/v1/evidence/{evidence_id}
-
-Evidence should reference the underlying resource rather than duplicating packet payloads.
-
----
-
-# M13.15 — Incident API
-
-Expose M12 correlated incidents.
-
-Suggested endpoints:
-
-    GET /api/v1/incidents
-    GET /api/v1/incidents/{incident_id}
-    GET /api/v1/incidents/open
-
-Support filters:
-
-    status
-    source
-    device_id
-    connection_id
-    rule_id
-    min_risk_score
-    max_risk_score
-    start_time
-    end_time
-
-Expose:
-
-- Incident identity
-- Member alerts/findings
-- Correlation reasons
-- Correlation confidence
-- Risk score
-- Risk band
-- Timestamps
-- Lifecycle status
-
-Do not recalculate risk in the API layer.
+An event whose `data` cannot be expressed as JSON cannot be constructed at all,
+which moves that class of mistake to build time rather than to the socket.
 
 ---
 
-# M13.16 — Incident Lifecycle API
+# M14.18 — Client Disconnect Handling
 
-Support controlled incident updates using the M12 transition rules.
+A dead client is removed, and only that client:
 
-Suggested endpoints:
+- a failed write retires the failing connection and leaves the others alone;
+- the survivors keep receiving on that channel after the failure;
+- the failure is counted and visible;
+- a client that stalls is retired rather than allowed to hold up its channel.
 
-    POST /api/v1/incidents/{incident_id}/investigate
-    POST /api/v1/incidents/{incident_id}/resolve
-    POST /api/v1/incidents/{incident_id}/dismiss
-
-Invalid transitions must return a controlled error.
-
-Do not allow routes to bypass M12 lifecycle validation.
+The manager never blocks on a slow socket, and no broadcast can fail because one
+subscriber did.
 
 ---
 
-# M13.17 — Baseline API
+# M14.19 — Reconnection
 
-The roadmap reserves a baseline API.
+A reconnect is a **new** connection:
 
-For the current base application:
-
-- Expose only functionality that actually exists.
-- If behavioral baselines are not implemented, return an appropriate unavailable/not-implemented response rather than fake data.
-
-Do not implement the behavioral baseline engine as part of M13.
-
----
-
-# M13.18 — Analytics API
-
-Expose currently available analytics/statistics.
-
-Suggested routes:
-
-    GET /api/v1/analytics/traffic
-    GET /api/v1/analytics/protocols
-    GET /api/v1/analytics/devices
-    GET /api/v1/analytics/connections
-    GET /api/v1/analytics/threats
-
-Only expose data backed by implemented services.
-
-Do not create simulated analytics.
+- a new id, fresh counters, the channel's own queue depth;
+- nothing that was missed is replayed — there is no history and no backfill;
+- the event sequence keeps climbing across the reconnect, because the sequence is a
+  property of the process and not of the connection;
+- a reconnect after shutdown is refused and counted like any other refusal, and a
+  restarted manager admits clients again.
 
 ---
 
-# M13.19 — Dashboard API
+# M14.20 — Startup and Shutdown
 
-Create a consolidated dashboard endpoint if useful.
-
-Suggested:
-
-    GET /api/v1/dashboard/summary
-
-Possible data:
-
-    capture status
-    packets observed
-    traffic rate
-    device count
-    active connections
-    open alerts
-    active incidents
-    recent detections
-
-The dashboard endpoint should aggregate existing services.
-
-It must not duplicate business logic.
+The background tasks (keepalive, dashboard tick) start and stop with the
+application lifespan. The manager binds its loop at startup, which is what makes a
+publish from a worker thread a real cross-thread publish instead of a drop to
+`dropped_no_loop`.
 
 ---
 
-# M13.20 — Reports API
+# M14.21 — Thread/Async Safety
 
-Expose report functionality only to the extent currently implemented.
+Two threads can publish — the capture thread and request handlers — and one loop
+owns the sockets.
 
-Suggested:
-
-    GET /api/v1/reports
-    GET /api/v1/reports/{report_id}
-
-Do not implement PDF/CSV generation here unless already part of the current report milestone.
-
-M17 owns report generation.
+- a publish from any thread goes through `call_soon_threadsafe` onto the manager's
+  loop;
+- the queue and the socket are touched only on that loop, so a queue needs no lock;
+- the registry is read as a snapshot, so a broadcast holds no lock while writing;
+- a publish from a worker thread never blocks.
 
 ---
 
-# M13.21 — Settings API
+# M14.22 — Security Boundary
 
-Expose safe application settings.
+M14 is a local, unauthenticated application surface by design.
 
-Suggested:
-
-    GET /api/v1/settings
-    PUT /api/v1/settings
-
-Do not expose sensitive secrets.
-
-Separate:
-
-    readable settings
-    mutable settings
-    internal-only configuration
-
-Validate all changes.
+- no secret, token, internal path or stack trace reaches the wire;
+- a capture error's text is a fixed sentence, never the exception's own message;
+- every client frame is bounded in size and validated before it is interpreted;
+- the payload policy M7 established is carried to the live stream: packet metadata
+  only, never payload bytes;
+- the local-development assumption is documented.
 
 ---
 
-# M13.22 — System API
+# M14.23 — Client Input Policy
 
-Expose system state.
+The channels are one-way by design. A client's frames are answered or refused:
 
-Suggested:
+- `ping` is answered with a matching `pong`;
+- a `pong` is accepted and counted;
+- an unknown type, a malformed document, a frame without a type and a binary frame
+  are each refused with their own reason;
+- an oversized message is refused before it is parsed;
+- a flood of invalid messages disconnects the client.
 
-    GET /api/v1/system/status
-    GET /api/v1/system/health
-    GET /api/v1/system/info
-
-Possible information:
-
-- Application version
-- Environment
-- Capture state
-- Database state
-- Service state
-- Basic runtime metrics
-
-Do not expose secrets or internal security-sensitive configuration.
+A client can never widen what it receives by asking.
 
 ---
 
-# M13.23 — Notifications API
+# M14.24 — Keepalive
 
-Expose notification records if the existing notification model/service exists.
+The manager pings on a configurable interval and retires a client that never
+answers within the timeout:
 
-Suggested:
-
-    GET /api/v1/notifications
-    GET /api/v1/notifications/{notification_id}
-
-If notification integrations are not implemented, do not fake external notifications.
-
----
-
-# M13.24 — Pagination
-
-Standardize collection pagination.
-
-At minimum support:
-
-    limit
-    offset
-
-or another consistent strategy already used by the project.
-
-Requirements:
-
-- Default page size
-- Maximum page size
-- Validation
-- Deterministic ordering
-
-Do not allow unlimited result sets by default.
+- a client that answers is kept;
+- one that does not is retired and unregistered;
+- a tick with no connections does nothing;
+- the keepalive is quiet when its interval is set beyond the run's length, which is
+  how the baseline isolates the transport.
 
 ---
 
-# M13.25 — Filtering and Validation
+# M14.25–M14.31 — Tests
 
-Validate:
+Every test that needs a socket speaks ASGI WebSocket to the real application
+through Starlette's `TestClient`, so these are integration tests of the real stack
+rather than of a mock transport.
 
-- IP addresses
-- Ports
-- Protocols
-- Enumerated states
-- Severity values
-- Time ranges
-- Risk-score ranges
-- Pagination parameters
-
-Invalid values should return controlled validation errors.
-
-Never silently convert bad values into unrelated valid values.
-
----
-
-# M13.26 — Time Handling
-
-Standardize API timestamps.
-
-Prefer a documented format such as ISO-8601 UTC for API responses.
-
-Internally existing modules may use:
-
-    epoch seconds
-    datetime
-
-Conversion should happen at the API boundary.
-
-Do not create multiple competing timestamp conventions.
+| File | Covers | Tests |
+| --- | --- | --- |
+| `tests/test_ws_manager.py` | M14.25 — connect, register, disconnect, duplicate disconnect, count, admission caps, startup/shutdown, heartbeat | 48 |
+| `tests/test_ws_event_schema.py` | M14.26 — envelope fields, the type vocabulary, ISO-8601 timestamps, size cap, JSON serialization, no payload in a packet event | 67 |
+| `tests/test_ws_broadcast.py` | M14.27 — one and many subscribers, channel isolation, failed-client removal, survivors still served | 19 |
+| `tests/test_ws_backpressure.py` | M14.28 — queue below/at/over the cap, drop-oldest, the packet token bucket, alerts never rate-limited | 33 |
+| `tests/test_ws_reconnect.py` | M14.29 — reconnect is a new connection, no replay, counters reset | 16 |
+| `tests/test_ws_pipeline_isolation.py` | M14.30 — a failing manager does not stop capture, statistics, detection, alerting or correlation | 8 |
+| `tests/test_ws_endpoints.py` | M14.31 — real ASGI WebSocket on all four channels, ping/pong, input refusal, the per-channel cap over the wire | 16 |
+| `tests/test_ws_publisher.py` | M14.13 — the publisher contract, the null publisher, the no-loop path | 17 |
 
 ---
 
-# M13.27 — OpenAPI Documentation
+# M14.32 — Manual Verification
 
-Ensure all M13 endpoints are visible in:
+`backend/scripts/verify_m14.py`, two modes mirroring `verify_m13.py`:
 
-    /docs
-    /redoc
-    /openapi.json
-
-Document:
-
-- Parameters
-- Query filters
-- Request bodies
-- Response schemas
-- Error responses
-- Status codes
-
-Use Pydantic schemas rather than arbitrary dictionaries where practical.
+- **`sample`** — drives controlled packets through the real M4→M12 pipeline over a
+  throwaway SQLite file with a client attached to every channel, then asserts the
+  packets the pipeline processed arrived as `packet.observed`, that the dashboard
+  tick reports the same counts the REST endpoint reports, that a controlled
+  detection produced an alert event, that a controlled incident produced an
+  incident event, and that the keepalive answers.
+- **`live`** — starts the application under uvicorn on a loopback port and speaks
+  real WebSocket over real HTTP to all four channels.
 
 ---
 
-# M13.28 — Dependency Injection
+# M14.33 — Performance Baseline
 
-Use FastAPI dependency injection where useful for:
+`backend/scripts/benchmark_m14.py` with `backend/scripts/m14_bench_harness.py`
+measures, per channel:
 
-- Services
-- Managers
-- Configuration
-- Database sessions
-
-Avoid creating new singleton instances inside route functions.
-
-Existing process-level services should be reused according to the current architecture.
-
----
-
-# M13.29 — API Error Isolation
-
-An API failure must not crash:
-
-- Packet capture
-- Packet processing
-- Statistics
-- Device tracking
-- Connection tracking
-- Detection
-- Alerting
-- Correlation
-
-The API should translate internal failures into controlled HTTP responses.
+- connection setup time;
+- broadcast latency (publish → the client has it) and messages/second;
+- packet event throughput with and without the packet channel connected;
+- alert event latency;
+- queue depth high-water mark and drop counts under an overrun;
+- the pipeline's own packet rate with publishing enabled against the same run with
+  it disabled;
+- process CPU and RSS across the run;
+- simultaneous test clients.
 
 ---
 
-# M13.30 — Security Boundary
+# M14 Completion Criteria
 
-M13 is currently a local application API.
+M14 is complete when:
 
-Do not add authentication/RBAC unless explicitly required.
-
-However:
-
-- Do not expose secrets.
-- Validate all input.
-- Avoid arbitrary filesystem access.
-- Avoid arbitrary SQL through query parameters.
-- Bound result sizes.
-- Avoid returning internal exception traces.
-
-Document the local-development security assumption.
-
----
-
-# M13.31 — Tests — Capture
-
-Test:
-
-    interfaces
-    selected interface
-    status
-    start
-    stop
-
-Verify:
-
-- Validation
-- HTTP status codes
-- Response schema
-- Existing M4 behavior remains intact
+- a WebSocket manager exists and owns every connection.
+- The four channels are served and separated.
+- The event envelope is one type with one vocabulary.
+- Packet, dashboard, alert, incident and system events are produced from the real
+  services, not from invented data.
+- Publishing is failure-isolated from capture.
+- Buffering is bounded and the drop policy is enforced and counted.
+- The packet channel is rate-controlled and the security channels are not.
+- Client input is answered or refused and can never widen what is sent.
+- The keepalive retires a dead peer.
+- Reconnection works without replay.
+- Startup and shutdown are clean.
+- Tests pass.
+- Manual verification succeeds in both modes.
+- The performance baseline is recorded.
 
 ---
 
-# M13.32 — Tests — Data APIs
+# M14 Completion Record
 
-Test:
-
-- Packets
-- Statistics
-- Devices
-- Connections
-- Detections
-
-Verify:
-
-- Filters
-- Pagination
-- Empty results
-- Results with data
-- Unknown resource
-- Validation
-- Response schemas
-
----
-
-# M13.33 — Tests — Alerts and Incidents
-
-Test:
-
-- Alert listing
-- Alert retrieval
-- Alert lifecycle endpoints
-- Evidence retrieval
-- Incident listing
-- Incident retrieval
-- Incident lifecycle
-- Risk score exposure
-- Correlation reasons
-- Invalid transitions
-
-Ensure API actions use the underlying service rules.
-
----
-
-# M13.34 — Tests — Common API Behavior
-
-Test:
-
-- Standard response envelope
-- Standard error envelope
-- 404 handling
-- 400 validation
-- 409 conflicts
-- 422 validation
-- 500 internal error handling
-- Pagination boundaries
-- Time-range validation
-- Deterministic ordering
-- OpenAPI generation
-
----
-
-# M13.35 — Integration Tests
-
-Verify complete HTTP flows such as:
-
-    Capture
-      ↓
-    Packet Processing
-      ↓
-    Statistics / Devices / Connections
-      ↓
-    Detection
-      ↓
-    Alert
-      ↓
-    Correlation
-      ↓
-    Incident
-      ↓
-    REST API
-
-Use controlled local/lab data.
-
----
-
-# M13.36 — Manual Verification
-
-Start the FastAPI application and verify:
-
-    /docs
-    /redoc
-    /openapi.json
-
-Then test the main API groups:
-
-    capture
-    packets
-    statistics
-    devices
-    connections
-    detections
-    alerts
-    incidents
-    dashboard
-    system
-
-Verify that responses contain real backend data rather than mock data.
-
----
-
-# M13.37 — Performance Baseline
-
-Measure:
-
-- Simple endpoint latency
-- List endpoint latency
-- Filtered query latency
-- Paginated query latency
-- Dashboard summary latency
-- JSON serialization cost
-- Database query time
-
-Test representative result sizes.
-
-Do not claim production-scale API throughput.
-
----
-
-# M13 Completion Criteria
-
-M13 is complete when:
-
-- API structure is consolidated under `/api/v1`.
-- Existing APIs follow consistent conventions.
-- Capture API works.
-- Packet API works.
-- Statistics API works.
-- Device API works.
-- Connection API works.
-- Detection API works.
-- Alert API works.
-- Evidence API works.
-- Incident API works.
-- Dashboard summary API works.
-- Analytics API exposes implemented data.
-- Reports API exposes implemented report data only.
-- Settings API is validated and does not expose secrets.
-- System API works.
-- Notifications API works where implemented.
-- Pagination is standardized.
-- Filtering is validated.
-- Time handling is consistent.
-- Error responses are standardized.
-- OpenAPI documentation is complete.
-- API failures are isolated from backend processing.
-- Unit/API tests pass.
-- Integration tests pass.
-- Manual verification succeeds.
-- Performance baseline is recorded.
-
----
-
-# M13 Completion Record
-
-M13 is complete: the consolidated `/api/v1` surface is implemented, verified,
-tested and baselined.
+M14 is complete: the WebSocket layer is implemented, verified, tested and
+baselined.
 
 **What shipped**
 
-* 16 API groups under `/api/v1` — capture, packets, statistics, devices,
-  connections, detections, alerts, evidence, incidents, baselines, analytics,
-  reports, settings, system, notifications and dashboard.
-* A shared API layer — `app/api/common/` (envelope, errors, pagination,
-  validation) — and `app/api/v1/deps.py` for dependency injection.
-* One response envelope, one error envelope, one pagination contract, one
-  validation path, and ISO-8601 UTC at the boundary.
+* `app/websockets/` — `manager` (accept, admit, register, broadcast, send,
+  disconnect, shutdown), `connection` (`ClientConnection`), `channels`, `policy`
+  (per-channel queue depth and token bucket), `event` (the envelope), `builders`
+  and `payloads` (the five payload kinds), `events` (the `publish_*` helpers),
+  `publisher` (the real and null publishers), `dashboard` (the tick),
+  `heartbeat`, `messages` (client input) and `routes`.
+* Four channels mounted unversioned — `/ws/dashboard`, `/ws/packets`, `/ws/alerts`,
+  `/ws/system` — beside the `/api/v1` REST surface.
+* The pipeline publishes `packet.observed` last of all, after every M6–M12
+  consumer has seen the packet, so an event can never describe a packet whose
+  state is still moving.
 
 **Verification**
 
-* Full suite: **1639 passed**. pyright: **0 errors, 0 warnings, 0 informations**.
-  The API suite is **534 tests**.
-* `backend/scripts/verify_m13.py` — `sample` mode drives controlled packets
-  through the real M4→M12 pipeline over a throwaway SQLite file and then serves
-  the real application. Every documented surface answered, all 16 groups appear
-  in `/openapi.json`, the success and error envelopes hold, an unknown route is a
-  404, an out-of-range page a 422, an unknown severity a 400, a malformed
-  timestamp a 400, the alert and incident lifecycle verbs reach the M11/M12 rules
-  and a terminal state refuses a further move, `/settings` withholds a seeded
-  secret key, and the unbuilt capabilities answer 501 rather than inventing data.
-  `live` mode starts the application under uvicorn and exercises the documented
-  URLs over real HTTP.
-* `backend/scripts/benchmark_m13.py` — the M13.37 baseline. The figures are
-  recorded in `docs/TODO.md`.
+* Full suite: **1863 passed**; pyright **0 errors, 0 warnings, 0 informations**
+  over **268 files**. The M14 suite is **224 tests** (48 manager, 67 event schema,
+  33 backpressure, 19 broadcast, 17 publisher, 16 reconnect, 16 endpoints,
+  8 pipeline isolation).
+* `verify_m14.py` ran green in **both** modes — `sample` (the real M4→M12 pipeline
+  with a client on every channel) and `live` (uvicorn on a loopback port answering
+  real WebSocket over real HTTP).
+* `benchmark_m14.py` produced the M14.33 baseline; the figures are recorded in
+  `docs/TODO.md`.
+
+**The measured cost**
+
+The packet ladder is the figure worth quoting, because it is a measured difference
+rather than an inference — the same 2,000-packet burst through the same M4–M12
+stack at five publishing configurations:
+
+| configuration | packets/s | µs/packet | overhead vs M14 absent |
+| --- | --- | --- | --- |
+| publish call replaced (M14 absent) | 2,947 | 339.27 | — |
+| null publisher — event built, then discarded | 2,418 | 413.59 | +74.32 µs |
+| publisher, layer disabled | 2,678 | 373.35 | +34.08 µs |
+| publisher, enabled, no subscriber | 2,304 | 434.03 | +94.75 µs |
+| publisher, enabled, one subscriber | 2,015 | 496.40 | +157.12 µs |
+
+**Building** a `packet.observed` costs roughly **74 µs/packet**; **delivering** it
+to one subscriber costs roughly **158 µs/packet** over having no layer at all. The
+M4–M12 pipeline's own ~339 µs/packet dominates both.
+
+Broadcast latency is 0.21–0.40 ms p50 depending on payload size (243–799 B). The
+packet channel's 200/s ceiling is plainly visible in the throughput run — 397/s
+delivered from 6,748/s offered — which is the throttle working, not a transport
+limit. Under an overrun the queue reached its cap on every channel and never went
+past it.
+
+**One caveat to carry forward**
+
+The smaller ladder steps are the same order as this disk's run-to-run variance: an
+earlier run of the identical ladder measured a 1,564 packets/s baseline where the
+recorded run measured 2,947, and one rung measured *cheaper* than the rung below it.
+The ladder's trend is quotable; no single step is. If the packet path is
+re-measured, run it more than once.
 
 **Boundaries held**
 
-No new detection, alert, correlation or risk-scoring logic; no ML/AI; no
-WebSockets; no frontend code; no automatic blocking; no external SIEM
-integration; no authentication/RBAC; no report generation. M13 exposed what
-M3–M12 implemented and did not redesign them.
-
-**One observation to re-measure**
-
-The filtered `/packets` measurement had `destination_port=443` costing more than
-the unfiltered page (24.4 ms against 10.8 ms over a 10,000-row store). It is
-recorded as observed rather than explained. If the store grows, that filter is
-the first thing to re-measure.
+No frontend code; no new detection, alert, correlation or risk-scoring logic; no
+ML/AI; no automatic blocking; no authentication/RBAC; no external SIEM or
+notification integration; no replay or backfill. M14 transports what M3–M13 already
+produce and does not redesign them.
 
 **Next**
 
-M14 — WebSockets, layered on this surface.
-
----
-
-# Architecture Boundary
-
-M13 exposes:
-
-    Existing NetWatch Services
-            ↓
-        REST API
-            ↓
-        HTTP Clients
-            ↓
-    Future React Frontend
-
-M13 does not implement:
-
-    WebSockets
-    Frontend
-    ML
-    AI
-    New Detection
-    New Correlation
-    Automatic Response
-
-M14 will implement WebSockets.
-M15 will connect the React frontend.
+M15 — Frontend Integration, consuming this surface from the React frontend:
+the `/api/v1` REST routes for reads and the four `/ws/...` channels for live
+updates.

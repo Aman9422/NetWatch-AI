@@ -31,8 +31,18 @@ from app.services.capture_state import (
 )
 from app.services.interface_manager import InterfaceManager, InterfaceValidationError
 from app.services.packet_pipeline import PacketPipeline
+from app.websockets.event import EventType
+from app.websockets.events import publish_capture
+from app.websockets.publisher import EventPublisher, ensure_publisher
 
 logger = logging.getLogger(__name__)
+
+#: Fixed sentences sent as the ``reason`` of a ``capture.error`` event (M14.22).
+#: The exception's own text can name a device, a filesystem path or a driver
+#: detail, so it is logged and never reaches the wire.
+START_FAILED_REASON = "Capture could not start"
+STOP_FAILED_REASON = "Capture could not stop"
+WORKER_DIED_REASON = "Capture worker stopped unexpectedly"
 
 # Statuses during which a capture session is considered active.
 _ACTIVE_STATUSES = (CaptureStatus.STARTING, CaptureStatus.RUNNING, CaptureStatus.STOPPING)
@@ -51,10 +61,15 @@ class CaptureManager:
         interface_manager: InterfaceManager,
         sniffer_factory: SnifferFactory = ScapyCaptureSniffer,
         pipeline: PacketPipeline | None = None,
+        events: EventPublisher | None = None,
     ) -> None:
         self._interface_manager = interface_manager
         self._sniffer_factory = sniffer_factory
         self._pipeline = pipeline or PacketPipeline()
+        # The M14 sink (M14.13), resolved once so no publish site tests it for
+        # ``None``. With nothing supplied this is a null sink, which is what keeps
+        # every existing capture test working without a socket.
+        self._publisher = ensure_publisher(events)
 
         self._lock = threading.RLock()
         self._status = CaptureStatus.STOPPED
@@ -81,7 +96,11 @@ class CaptureManager:
             self._status = CaptureStatus.RUNNING
 
         logger.info("Packet capture started successfully")
-        return self._snapshot()
+        # Announced after the session is genuinely running, carrying the state the
+        # manager just committed to rather than one it merely intended (M14.11).
+        started = self._snapshot()
+        publish_capture(self._publisher, EventType.CAPTURE_STARTED, started)
+        return started
 
     def stop(self) -> CaptureStatusData:
         """Stop the active capture session."""
@@ -102,6 +121,15 @@ class CaptureManager:
                 self._sniffer = None
                 self._status = CaptureStatus.ERROR
             logger.error("Packet capture failed to stop: %s", exc)
+            # A failed stop is a capture error a client should see, carrying the
+            # manager's state and a fixed sentence rather than the driver's own
+            # message, which can name a device or a path (M14.11/M14.22).
+            publish_capture(
+                self._publisher,
+                EventType.CAPTURE_ERROR,
+                self._snapshot(),
+                reason=STOP_FAILED_REASON,
+            )
             raise CaptureStopError() from exc
 
         # Capture has stopped, so no new packets can arrive: flush whatever the
@@ -116,7 +144,11 @@ class CaptureManager:
             self._status = CaptureStatus.STOPPED
 
         logger.info("Packet capture stopped (packets captured: %d)", self._packet_count)
-        return self._snapshot()
+        # Announced after the flush above, so the packet count on
+        # ``capture.stopped`` is the final count for the session (M14.11).
+        stopped = self._snapshot()
+        publish_capture(self._publisher, EventType.CAPTURE_STOPPED, stopped)
+        return stopped
 
     def get_status(self) -> CaptureStatusData:
         """Return a thread-safe snapshot of the current capture state."""
@@ -220,6 +252,14 @@ class CaptureManager:
             self._sniffer = None
             self._status = CaptureStatus.ERROR
         logger.error("Packet capture failed to start: %s", exc)
+        # Announced after the state is ERROR, so a subscriber reading the event
+        # and the manager agrees about what happened (M14.11).
+        publish_capture(
+            self._publisher,
+            EventType.CAPTURE_ERROR,
+            self._snapshot(),
+            reason=START_FAILED_REASON,
+        )
 
     def _flush_persistence(self) -> None:
         """Write pending packets after capture stops (M7.18).
@@ -273,6 +313,14 @@ class CaptureManager:
                 self._sniffer = None
                 self._status = CaptureStatus.ERROR
                 logger.error("Packet capture worker terminated unexpectedly")
+                # A worker that died on its own is the one capture change nobody
+                # asked for, so it is exactly the change worth streaming (M14.11).
+                publish_capture(
+                    self._publisher,
+                    EventType.CAPTURE_ERROR,
+                    self._snapshot(),
+                    reason=WORKER_DIED_REASON,
+                )
 
     def _snapshot(self) -> CaptureStatusData:
         """Build a status snapshot from the current state."""
@@ -307,6 +355,7 @@ def get_capture_manager() -> CaptureManager:
         from app.correlation import get_correlation_engine
         from app.detection import get_detection_engine
         from app.persistence.manager import get_packet_persistence
+        from app.websockets import get_event_publisher
 
         # The tracker is a pipeline consumer like persistence and devices, so
         # the master switch only decides whether the capture path feeds it. The
@@ -346,6 +395,12 @@ def get_capture_manager() -> CaptureManager:
             else None
         )
 
+        # The live stream (M14.13). One publisher shared by the pipeline and the
+        # capture manager, both over the same process-wide manager, so a packet
+        # event and a capture event can never end up on two registries that each
+        # believe they see everything (M14.5).
+        events = get_event_publisher()
+
         _capture_manager = CaptureManager(
             interface_manager=interface_manager,
             pipeline=PacketPipeline(
@@ -356,6 +411,8 @@ def get_capture_manager() -> CaptureManager:
                 detection=detection,
                 alerts=alerts,
                 correlation=correlation,
+                events=events,
             ),
+            events=events,
         )
     return _capture_manager
