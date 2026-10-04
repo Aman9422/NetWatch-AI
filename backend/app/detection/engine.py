@@ -276,6 +276,41 @@ class DetectionEngine:
             limit=limit,
         )
 
+    def get_finding(self, finding_id: str) -> DetectionFinding | None:
+        """Return one retained finding by identifier, or ``None`` (M13.12).
+
+        A read method on the bounded history rather than a new store: a finding
+        is an observation that M10 retains in memory and never persists, so the
+        only honest answer for an id that has aged out of the cap is that it is
+        no longer retained. The API maps that to a ``404``.
+        """
+        return self._history.get_finding(finding_id)
+
+    def count_findings(
+        self,
+        *,
+        rule_id: str | None = None,
+        source_ip: str | None = None,
+        destination_ip: str | None = None,
+        device_id: str | None = None,
+        since: float | None = None,
+        until: float | None = None,
+    ) -> int:
+        """Return how many retained findings match the supplied filters.
+
+        The total a listing reports alongside its page. It uses the same filter
+        predicate as :meth:`get_findings`, so a count can never disagree with the
+        page it accompanies (M13.24).
+        """
+        return self._history.count_matching(
+            rule_id=rule_id,
+            source_ip=source_ip,
+            destination_ip=destination_ip,
+            device_id=device_id,
+            since=since,
+            until=until,
+        )
+
     def get_retained_finding_count(self) -> int:
         """Return how many findings the bounded history currently holds."""
         return self._history.count()

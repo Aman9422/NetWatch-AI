@@ -6,11 +6,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.common import register_exception_handlers
 from app.api.v1 import api_router
 from app.config.settings import settings
 from app.database.init_db import init_db
 from app.services.capture_manager import get_capture_manager
 from app.utils.logging import configure_logging
+from app.utils.runtime import mark_process_started
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,9 @@ async def lifespan(app: FastAPI):
     and closed (M7.18), and the connection tracker writes its remaining
     aggregates and stops its cleanup sweep (M9.17/M9.18).
     """
+    # Record the start before anything else, so the uptime /system reports is the
+    # uptime of the application rather than of its first API request (M13.22).
+    mark_process_started()
     logger.info("Starting %s (%s) — environment: %s", settings.app_name, settings.app_version, settings.app_env)
     if settings.app_env == "development":
         init_db()
@@ -102,3 +107,11 @@ app.add_middleware(
 
 # Register API router under /api/v1.
 app.include_router(api_router, prefix="/api/v1")
+
+# Translate every failure into the one documented error envelope (M13.5/M13.29).
+# Registered once, after the routers, so an unrouted URL, a wrong verb and an
+# unexpected exception all answer in the shape the rest of the API uses. An
+# unexpected failure is rendered as an opaque 500: no traceback, no path and no
+# query text reaches the client, and the API fault is contained here rather than
+# left to reach the capture pipeline (M13.30).
+register_exception_handlers(app)

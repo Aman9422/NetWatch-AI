@@ -147,16 +147,23 @@ class AlertView(BaseModel):
 
 
 class AlertListData(BaseModel):
-    """Payload of the alert-collection endpoint (M11.18).
+    """Payload of the alert-collection endpoint (M11.18/M13.24).
 
     ``total`` is the number of alerts matching the filters, not the size of this
-    page, so a client can page through the whole result set.
+    page, so a client can page through the whole result set. ``has_more`` says
+    whether a further page exists, which is what the shared pagination contract
+    carries on every other collection (M13.24) — without it a client holding this
+    payload would have to compare ``offset + count`` against ``total`` itself, and
+    only this one endpoint would need that arithmetic.
     """
 
     count: int = 0
     total: int = 0
     limit: int = 100
     offset: int = 0
+    has_more: bool | None = Field(
+        default=None, description="Whether a further page may hold more alerts"
+    )
     alerts: list[AlertView] = Field(default_factory=list)
 
 
