@@ -66,7 +66,24 @@ class DeviceView(BaseModel):
 
 
 class DeviceListData(BaseModel):
-    """Payload of the device-collection endpoint."""
+    """Payload of the device-collection endpoint (M13.10/M13.24).
+
+    ``count`` is the size of this page. ``total`` is present only where the store
+    can count the match set without materialising it — the in-memory device
+    registry cannot, so it is omitted there rather than guessed at. ``has_more``
+    is what a client uses to decide whether to ask for another page, and it is
+    derived from the page being full in that case.
+    """
 
     count: int = 0
+    limit: int | None = Field(
+        default=None, description="Maximum items the page was allowed to hold"
+    )
+    offset: int = Field(default=0, description="Items skipped before this page")
+    total: int | None = Field(
+        default=None, description="Items matching overall, when countable"
+    )
+    has_more: bool | None = Field(
+        default=None, description="Whether a further page may hold more items"
+    )
     devices: list[DeviceView] = Field(default_factory=list)

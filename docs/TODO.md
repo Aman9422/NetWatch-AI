@@ -4,7 +4,7 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M12 — Correlation + Risk Scoring ✅ COMPLETE (next: M13 — REST API)
+**Current Milestone:** M13 — REST API ✅ COMPLETE (next: M14 — WebSockets)
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -501,24 +501,135 @@ M11 deliberately left at `0` for exactly this milestone, with a
 
 ---
 
-# M13 — REST API
+# M13 — REST API ✅ COMPLETE
 
-* [ ] Dashboard API
-* [ ] Capture API
-* [ ] Packet API
-* [ ] Device API
-* [ ] Alert API
-* [ ] Evidence API
-* [ ] Detection Rule API
-* [ ] Baseline API
-* [ ] Analytics API
-* [ ] Settings API
-* [ ] System API
-* [ ] Reports API
-* [ ] Notifications API
-* [ ] Input validation
-* [ ] Pagination
-* [ ] Error handling
+* [x] Audit the existing M3–M12 routes, envelopes, error codes and schemas before
+      adding anything; fold duplicates and unify naming under `/api/v1` (M13.1)
+* [x] Consolidated router layout (M13.2) — `app/api/v1/` (`capture`, `packets`,
+      `statistics`, `devices`, `connections`, `detections`, `alerts`, `evidence`,
+      `incidents`, `baselines`, `analytics`, `reports`, `settings`, `system`,
+      `notifications`, `dashboard`) over shared `app/api/common/`
+* [x] Versioned base `/api/v1`; no `/api/v2` and no unversioned production route (M13.3)
+* [x] Standard success envelope (M13.4) — `{success, message, data}` with
+      `count`/`total`/`limit`/`offset`/`has_more` for collections —
+      `app/api/common/envelope.py`
+* [x] Standard error envelope, no stack traces or filesystem paths (M13.5) —
+      `app/api/common/errors.py`
+* [x] HTTP status semantics (M13.6) — 200/201/204/400/404/409/422/500/501, with
+      409 for a conflicting state and 501 where a capability is not built
+* [x] Capture API (M13.7) — `interfaces`, `interface` (GET/PUT), `status`,
+      `start`, `stop`; selected interface, state and packet count exposed
+* [x] Packet API (M13.8) — list + detail with `source_ip`, `destination_ip`,
+      `protocol`, `source_port`, `destination_port`, `since`, `until`; no payload
+      is ever returned (M7.5)
+* [x] Statistics API (M13.9) — `traffic`, `protocols`, `top-talkers`, `ports`,
+      read from the M6 manager rather than recomputed in a route
+* [x] Device API (M13.10) — list + detail with `status`/`ip`/`mac`/`limit`; no
+      risk is calculated here
+* [x] Connection API (M13.11) — list, `active`, detail, with
+      protocol/endpoint/port/device/state filters
+* [x] Detection API (M13.12) — findings + `rules`; a route never triggers a detector
+* [x] Alert API (M13.13) — list, detail and the
+      `acknowledge`/`resolve`/`dismiss`/`false-positive` verbs, all delegating to
+      the M11 lifecycle rather than restating it
+* [x] Evidence API (M13.14) — `/alerts/{id}/evidence` and `/evidence/{id}`;
+      evidence references its resource and never duplicates a packet payload
+* [x] Incident API (M13.15) — list, detail, `open`, exposing members,
+      correlation reasons, confidence, risk score and band, never recomputed
+* [x] Incident lifecycle API (M13.16) — `investigate`/`resolve`/`dismiss` through
+      the M12 transition table; an invalid move is a controlled 409
+* [x] Baseline API (M13.17) — refuses with `501 FEATURE_NOT_IMPLEMENTED` rather
+      than returning invented data; no baseline engine was written in M13
+* [x] Analytics API (M13.18) — `traffic`, `protocols`, `devices`, `connections`,
+      `threats`, each backed by an implemented service
+* [x] Dashboard API (M13.19) — `GET /dashboard/summary` aggregating the same
+      services the individual routes read, with no duplicated business logic
+* [x] Reports API (M13.20) — stored report metadata only; generation stays in M17
+      and an unbuilt capability answers 501
+* [x] Settings API (M13.21) — readable / mutable / internal-only split, validated
+      writes, secrets withheld from every read
+* [x] System API (M13.22) — `status`, `health`, `info`, with no secret in any payload
+* [x] Notifications API (M13.23) — stored notification records only; no external
+      notification is faked
+* [x] Pagination (M13.24) — `limit`/`offset` with a documented default and
+      maximum, validated, deterministic ordering and no unbounded default —
+      `app/api/common/pagination.py`
+* [x] Filter and parameter validation (M13.25) — addresses, ports, protocols,
+      enumerations, severities, time ranges, risk ranges and paging; a bad value
+      is refused, never silently converted into a valid one —
+      `app/api/common/validation.py`
+* [x] Time handling (M13.26) — ISO-8601 UTC at the API boundary, converted at the
+      edge from the epoch seconds and `datetime`s the services hold
+* [x] OpenAPI documentation (M13.27) — every route visible in `/docs`, `/redoc`
+      and `/openapi.json` with parameters, filters, bodies, response models and
+      error responses; Pydantic schemas rather than loose dictionaries
+* [x] Dependency injection (M13.28) — services, managers, config and sessions
+      resolved through `Depends`; no singleton is constructed inside a handler —
+      `app/api/v1/deps.py`
+* [x] API error isolation (M13.29) — an API failure cannot stop capture,
+      processing, statistics, device tracking, connection tracking, detection,
+      alerting or correlation
+* [x] Security boundary (M13.30) — no secrets, all input validated, no arbitrary
+      filesystem or SQL access through query parameters, bounded result sizes and
+      no internal exception trace; the local-development assumption is documented
+* [x] Tests — capture (M13.31) — interfaces, selection, status, start, stop,
+      validation and a duplicate session's 409
+* [x] Tests — data APIs (M13.32) — packets, statistics, devices, connections,
+      detections: filters, paging, empty and populated results, unknown ids
+* [x] Tests — alerts, evidence and incidents (M13.33) — listing, detail, the
+      lifecycle verbs, evidence retrieval, risk exposure, correlation reasons and
+      invalid transitions
+* [x] Tests — common API behaviour (M13.34) — success and error envelopes, 404,
+      400, 409, 422, paging boundaries, time-range validation, deterministic
+      ordering and OpenAPI generation
+* [x] Integration tests (M13.35) — capture → processing → statistics/devices/
+      connections → detection → alert → correlation → incident → REST, over
+      controlled local lab data
+* [x] Manual verification (M13.36) — `backend/scripts/verify_m13.py`
+      (`sample` drives the real pipeline then serves the real app; `live` starts
+      the app under uvicorn and issues real HTTP requests)
+* [x] Performance baseline (M13.37) — `backend/scripts/benchmark_m13.py`
+
+**Verification:** full suite **1639 passed**; pyright **0 errors, 0 warnings,
+0 informations**. The API suite is **534 tests** (`test_api_contract`,
+`test_api_validation`, `test_api_integration`, plus one file per group: packets,
+statistics, devices, connections, detections, alerts, evidence, incidents,
+baselines, analytics, reports, settings, system, notifications, dashboard; fakes
+shared in `tests/m13_fakes.py`). `verify_m13.py` ran green in **both** modes —
+`sample` (the real M4–M12 pipeline behind the real application) and `live`
+(uvicorn on a loopback port answering real HTTP requests). Sample mode: every
+documented surface answered, all 16 groups present in the OpenAPI document,
+every response
+carried the standard envelope, an unknown route was a 404, an out-of-range page a
+422, an unknown severity a 400, a malformed timestamp a 400, an unknown protocol
+label selected nothing, `capture/start` twice was 200 then 409, capture reported
+the packets the pipeline really processed, the alert and incident lifecycle verbs
+persisted through the M11/M12 rules and a terminal state refused a further move,
+`/settings` withheld the seeded secret key, and the unbuilt capabilities
+(baselines, report generation) answered 501 instead of inventing data.
+**Baseline (this machine, OneDrive-synced disk, `--packets 10000`, 30 iterations,
+in-process client):** simple endpoints 0.85-1.77 ms (`/system/info` 0.85,
+`/system/health` 1.77, `/capture/status` 1.10, `/statistics/traffic` 1.19); list
+endpoints 4.2-10.8 ms (a 100-row `/packets` page 10.8 ms, an empty `/alerts`
+4.2 ms, an empty `/notifications` 7.1 ms); filtered `/packets` 6.6-24.4 ms (one
+address 6.6 ms, `protocol=TCP` 19.7 ms, `destination_port=443` 24.4 ms — the
+widest filter measured *slower* than the unfiltered page, which is worth a look
+if the store grows); pagination flat in the offset, 6.6 ms at `limit=10` rising
+to 44.7 ms at `limit=1000`; `/dashboard/summary` 6.2 ms; JSON rendering 0.16 ms
+for the page data and 0.08 ms for the envelope; the same list and count measured
+straight on `PacketQueryService` 2.6 ms / 0.39 ms. Across 1,000 / 5,000 / 10,000
+rows the 100-row page stayed flat at 9.9-10.9 ms, so the indexed page is
+store-size independent over this range. Not a production-capacity claim: it is
+one process, one SQLite file, with the transport replaced by a function call.
+**Security note:** M13 is a local application API with no authentication by
+design; it does not expose secrets, validates every input, offers no arbitrary
+filesystem or SQL surface and bounds every result set.
+**Design:** `docs/17_M13_REST_API_Design.md`.
+
+> Deliberately out of scope for M13: new detection, alert, correlation or
+> risk-scoring logic, ML/AI, WebSockets, frontend code, automatic blocking,
+> external SIEM integrations, authentication/RBAC, and PDF/CSV report generation
+> (M17). M13 exposes what M3–M12 already implemented; it does not redesign them.
 
 ---
 

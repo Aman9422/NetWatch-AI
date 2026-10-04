@@ -1,29 +1,38 @@
-"""Read-only connection tracking API endpoints for NetWatch AI (M9.22).
+"""Connection API endpoints for NetWatch AI (M13.11).
 
-These endpoints expose the live conversation registry maintained by the M9
-:class:`~app.connections.manager.ConnectionTracker`. M9 tracks conversations;
-it never edits, blocks or judges one, so no connection is ever mutated. The one
+Exposes the live conversation registry maintained by the M9
+:class:`~app.connections.manager.ConnectionTracker`. M9 tracks conversations; it
+never edits, blocks or judges one, so no connection is ever mutated. The one
 non-read verb is the explicit ``POST /expire`` verification helper, which runs
-the idle sweep and mutates no record itself.
+the idle sweep and mutates no record of its own.
 
-This is deliberately *not* the master REST API — that milestone is M13. These
-internal endpoints exist so the connection layer can be verified end to end
-against the running application.
+Every filter is validated by the tracker, which raises ``ValueError`` for a value
+it cannot honour; the route turns that into a ``400 INVALID_FILTER`` rather than a
+silently wider result set (M13.25). ICMP carries no ports, so a port filter
+combined with ``protocol=ICMP`` is a ``400`` rather than an empty page.
 
-Responses follow the same envelope as the rest of the API::
-
-    {"success": true,  "message": "...", "data": {...}}
-    {"success": false, "message": "...", "errors": [{"field": ..., "code": ...}]}
+Paging uses the shared ``limit``/``offset`` contract (M13.24) and ordering is
+``last_seen DESC, connection_id`` — total, so the same query returns the same
+page. The registry is in memory, so the route resolves the whole filtered set
+once and then slices it, which makes ``total`` the real match count.
 """
 
 import logging
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse
 from pydantic import BeforeValidator
 
-from app.connections.identity import PROTOCOL_ICMP, PROTOCOL_TCP, PROTOCOL_UDP
+from app.api.common import (
+    ErrorCode,
+    InvalidFilterError,
+    NotFoundError,
+    PageWindow,
+    page_meta,
+    pagination_params,
+    success_payload,
+)
+from app.connections.identity import PROTOCOL_ICMP
 from app.connections.manager import ConnectionTracker, get_connection_tracker
 from app.schemas.connection import ConnectionListData, ConnectionView
 
@@ -35,9 +44,9 @@ router = APIRouter()
 def _canonical_protocol(value: str) -> str:
     """Fold a protocol query value to its canonical label before validation.
 
-    The tracker's own protocol filter is case- and whitespace-insensitive, so
-    the API layer must not be stricter than the service behind it: ``tcp`` is
-    accepted and validated as ``TCP``. An unknown value still fails with a 422.
+    The tracker's own protocol filter is case- and whitespace-insensitive, so the
+    API layer must not be stricter than the service behind it: ``tcp`` is accepted
+    and validated as ``TCP``. An unknown value still fails with a 422.
     """
     return value.strip().upper()
 
@@ -48,9 +57,8 @@ def _canonical_state(value: str) -> str:
 
 
 # Tracked transport protocols, mirrored from the M9 identity rules. The Literal
-# keeps the OpenAPI schema honest and lets FastAPI reject an unknown protocol
-# with a 422 before the handler runs, so a typo can never look like "no
-# conversations". The validator folds case, so the API agrees with the tracker.
+# keeps the OpenAPI schema honest and lets FastAPI reject an unknown protocol with
+# a 422 before the handler runs, so a typo can never look like "no conversations".
 ProtocolParam = Annotated[
     Literal["TCP", "UDP", "ICMP"],
     BeforeValidator(_canonical_protocol),
@@ -70,45 +78,52 @@ StateParam = Annotated[
     BeforeValidator(_canonical_state),
 ]
 
-# Bounds for the ``limit`` query parameter, so a response stays bounded even
-# when thousands of conversations are being tracked.
-_MIN_LIMIT = 1
-_MAX_LIMIT = 1000
-DEFAULT_CONNECTION_LIMIT = 100
-
-# Error code returned when a connection id is unknown.
-_CODE_CONNECTION_NOT_FOUND = "CONNECTION_NOT_FOUND"
-# Error code returned when a filter value is unusable.
-_CODE_INVALID_FILTER = "INVALID_FILTER"
-
 # Protocols whose conversations have no ports at all.
 _PORTLESS_PROTOCOLS = frozenset({PROTOCOL_ICMP})
 
-_TRACKED_PROTOCOLS = (PROTOCOL_TCP, PROTOCOL_UDP, PROTOCOL_ICMP)
 
+def _matching_views(
+    tracker: ConnectionTracker,
+    *,
+    protocol: str | None,
+    source_ip: str | None,
+    destination_ip: str | None,
+    source_port: int | None,
+    destination_port: int | None,
+    device_id: str | None,
+    state: str | None,
+    active_only: bool,
+) -> list[ConnectionView]:
+    """Return every conversation matching the filters, unresized.
 
-def _error_response(
-    status_code: int, message: str, field: str, code: str
-) -> JSONResponse:
-    """Build the standard error envelope used across the API."""
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "success": False,
-            "message": message,
-            "errors": [{"field": field, "code": code}],
-        },
-    )
+    The tracker is the authority on which filters are usable, so this helper only
+    performs the translation of a rejected filter into a ``400``. An unusable
+    filter must fail loudly rather than be silently dropped, so a typo never turns
+    into a request that returns every conversation.
 
-
-def _invalid_filter(exc: ValueError, field: str) -> JSONResponse:
-    """Turn a tracker filter rejection into a 400 response.
-
-    A filter that cannot be honoured must fail loudly rather than be silently
-    ignored, so a typo never turns into a request that returns every
-    conversation.
+    The set is resolved without a limit because the route pages it in memory: that
+    is what makes the reported ``total`` the true match count rather than the size
+    of whichever page happened to be requested.
     """
-    return _error_response(400, str(exc), field, _CODE_INVALID_FILTER)
+    if protocol is not None and protocol in _PORTLESS_PROTOCOLS and (
+        source_port is not None or destination_port is not None
+    ):
+        raise InvalidFilterError(
+            f"{protocol} conversations have no ports", field="source_port"
+        )
+    try:
+        return tracker.list_connection_views(
+            protocol=protocol,
+            source_ip=source_ip,
+            destination_ip=destination_ip,
+            source_port=source_port,
+            destination_port=destination_port,
+            device_id=device_id,
+            state=state,
+            active_only=active_only,
+        )
+    except ValueError as exc:
+        raise InvalidFilterError(str(exc), field="filter") from exc
 
 
 @router.get("", response_model=None)
@@ -146,76 +161,58 @@ def list_connections(
         default=True,
         description="When True, only conversations still being observed",
     ),
-    limit: int = Query(
-        default=DEFAULT_CONNECTION_LIMIT,
-        ge=_MIN_LIMIT,
-        le=_MAX_LIMIT,
-        description="Maximum number of connections to return",
-    ),
+    window: PageWindow = Depends(pagination_params),
     tracker: ConnectionTracker = Depends(get_connection_tracker),
-) -> dict | JSONResponse:
+) -> dict:
     """Return tracked conversations, most recently seen first (M9.21).
 
     Active conversations are returned by default; pass ``active_only=false`` to
     include retired ones. An unusable filter is rejected with 400.
     """
-    if protocol is not None and protocol in _PORTLESS_PROTOCOLS and (
-        source_port is not None or destination_port is not None
-    ):
-        return _error_response(
-            400,
-            f"{protocol} conversations have no ports",
-            "source_port",
-            _CODE_INVALID_FILTER,
-        )
-
-    try:
-        views: list[ConnectionView] = tracker.list_connection_views(
-            protocol=protocol,
-            source_ip=source_ip,
-            destination_ip=destination_ip,
-            source_port=source_port,
-            destination_port=destination_port,
-            device_id=device_id,
-            state=state,
-            active_only=active_only,
-            limit=limit,
-        )
-    except ValueError as exc:
-        return _invalid_filter(exc, "filter")
-
-    payload = ConnectionListData(count=len(views), connections=views)
-    logger.info("Returning %d connection(s) via API", payload.count)
-    return {
-        "success": True,
-        "message": "Connections retrieved",
-        "data": payload.model_dump(mode="json"),
-    }
+    matched = _matching_views(
+        tracker,
+        protocol=protocol,
+        source_ip=source_ip,
+        destination_ip=destination_ip,
+        source_port=source_port,
+        destination_port=destination_port,
+        device_id=device_id,
+        state=state,
+        active_only=active_only,
+    )
+    page = window.slice(matched)
+    payload = ConnectionListData(
+        **page_meta(len(page), window, total=len(matched)),
+        connections=page,
+    )
+    logger.info(
+        "Returning %d of %d connection(s) via API", payload.count, len(matched)
+    )
+    return success_payload("Connections retrieved", payload.model_dump(mode="json"))
 
 
 @router.get("/active", response_model=None)
 def list_active_connections(
-    limit: int = Query(
-        default=DEFAULT_CONNECTION_LIMIT,
-        ge=_MIN_LIMIT,
-        le=_MAX_LIMIT,
-        description="Maximum number of connections to return",
-    ),
+    window: PageWindow = Depends(pagination_params),
     tracker: ConnectionTracker = Depends(get_connection_tracker),
 ) -> dict:
     """Return only the conversations still being observed (M9.21).
 
-    Registered before the catch-all id route so ``active`` can never be
-    mistaken for a connection id.
+    Registered before the catch-all id route so ``active`` can never be mistaken
+    for a connection id.
     """
-    views: list[ConnectionView] = tracker.get_active_connection_views(limit=limit)
-    payload = ConnectionListData(count=len(views), connections=views)
-    logger.info("Returning %d active connection(s) via API", payload.count)
-    return {
-        "success": True,
-        "message": "Active connections retrieved",
-        "data": payload.model_dump(mode="json"),
-    }
+    active: list[ConnectionView] = tracker.get_active_connection_views()
+    page = window.slice(active)
+    payload = ConnectionListData(
+        **page_meta(len(page), window, total=len(active)),
+        connections=page,
+    )
+    logger.info(
+        "Returning %d of %d active connection(s) via API", payload.count, len(active)
+    )
+    return success_payload(
+        "Active connections retrieved", payload.model_dump(mode="json")
+    )
 
 
 @router.post("/expire", response_model=None)
@@ -230,23 +227,22 @@ def expire_connections(
     """
     expired = tracker.expire_connections()
     logger.info("Connection sweep retired %d conversation(s)", expired)
-    return {
-        "success": True,
-        "message": "Idle connections expired",
-        "data": {
+    return success_payload(
+        "Idle connections expired",
+        {
             "expired": expired,
             "active": tracker.get_active_count(),
             "historical": tracker.get_historical_count(),
         },
-    }
+    )
 
 
 @router.get("/{connection_id:path}", response_model=None)
 def get_connection(
     connection_id: str,
     tracker: ConnectionTracker = Depends(get_connection_tracker),
-) -> dict | JSONResponse:
-    """Return one tracked conversation, or 404 when the id is unknown.
+) -> dict:
+    """Return one tracked conversation, or ``404`` when the id is unknown.
 
     The id may contain ``|`` and ``:`` (it renders a 5-tuple), so the path is
     captured as a path segment rather than parsed as routing syntax.
@@ -254,14 +250,9 @@ def get_connection(
     view = tracker.get_connection_view(connection_id)
     if view is None:
         logger.info("Connection lookup failed for id %r", connection_id)
-        return _error_response(
-            404,
+        raise NotFoundError(
             "Connection not found",
-            "connection_id",
-            _CODE_CONNECTION_NOT_FOUND,
+            code=ErrorCode.CONNECTION_NOT_FOUND,
+            field="connection_id",
         )
-    return {
-        "success": True,
-        "message": "Connection retrieved",
-        "data": view.model_dump(mode="json"),
-    }
+    return success_payload("Connection retrieved", view.model_dump(mode="json"))

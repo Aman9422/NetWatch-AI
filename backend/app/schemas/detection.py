@@ -65,10 +65,40 @@ class DetectionFindingView(BaseModel):
 
 
 class DetectionFindingListData(BaseModel):
-    """Payload of the detection-findings collection endpoint."""
+    """Payload of the detection-findings collection endpoint (M13.12/M13.24).
+
+    ``count`` is the size of this page. ``total`` is available here because the
+    finding history can count matches without building views, so a client can
+    page through the whole retained set rather than only the last page.
+    """
 
     count: int = 0
+    total: int = 0
+    limit: int | None = Field(
+        default=None, description="Maximum items the page was allowed to hold"
+    )
+    offset: int = Field(default=0, description="Items skipped before this page")
+    has_more: bool | None = Field(
+        default=None, description="Whether a further page may hold more items"
+    )
     findings: list[DetectionFindingView] = Field(default_factory=list)
+
+
+class DetectionDiagnostics(BaseModel):
+    """Execution diagnostics for the detection engine (M10.6/M10.17).
+
+    Declared before the rule listing so the listing can hold one directly: a
+    name that is only forward-declared would work, but only until the module
+    import order changed, and the diagnostics are part of what the rule endpoint
+    answers with rather than an afterthought.
+    """
+
+    evaluations: int = 0
+    findings: int = 0
+    errors: int = 0
+    enabled_rules: int = 0
+    registered_rules: int = 0
+    retained_findings: int = 0
 
 
 class DetectionRuleView(BaseModel):
@@ -87,18 +117,16 @@ class DetectionRuleView(BaseModel):
 
 
 class DetectionRuleListData(BaseModel):
-    """Payload of the detection-rules endpoint."""
+    """Payload of the detection-rules endpoint.
+
+    The engine diagnostics ride along with the rule table because a caller that
+    enumerates the detectors almost always wants to know whether they are
+    actually being evaluated, and reading that from a second request would show
+    a different instant (M10.6/M10.17).
+    """
 
     count: int = 0
     rules: list[DetectionRuleView] = Field(default_factory=list)
-
-
-class DetectionDiagnostics(BaseModel):
-    """Execution diagnostics for the detection engine (M10.6/M10.17)."""
-
-    evaluations: int = 0
-    findings: int = 0
-    errors: int = 0
-    enabled_rules: int = 0
-    registered_rules: int = 0
-    retained_findings: int = 0
+    diagnostics: DetectionDiagnostics = Field(
+        default_factory=DetectionDiagnostics
+    )

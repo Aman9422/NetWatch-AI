@@ -56,6 +56,56 @@ class FindingHistory:
         with self._lock:
             return len(self._findings)
 
+    def get_finding(self, finding_id: str) -> DetectionFinding | None:
+        """Return one retained finding by id, or ``None`` when it is gone.
+
+        A finding lives in a *bounded* history (M10.19), so "not found" has two
+        legitimate meanings: the id was never issued, or the finding aged out of
+        the cap. Both are reported the same way by the API, because either way
+        the observation is no longer retained (M13.12). Reading is a snapshot
+        under the lock, so a finding cannot be half-returned while the capture
+        thread appends to the deque.
+        """
+        key = str(finding_id)
+        with self._lock:
+            for finding in reversed(self._findings):
+                if finding.finding_id == key:
+                    return finding
+        return None
+
+    def count_matching(
+        self,
+        *,
+        rule_id: str | None = None,
+        source_ip: str | None = None,
+        destination_ip: str | None = None,
+        device_id: str | None = None,
+        since: float | None = None,
+        until: float | None = None,
+    ) -> int:
+        """Return how many retained findings match the supplied filters.
+
+        Applies exactly the filters :meth:`query` applies — both go through
+        :func:`_matches` — so a reported total can never disagree with the page
+        it accompanies (M13.24). Counting without building views keeps the cost
+        of a total proportional to the retained findings, not to their size.
+        """
+        with self._lock:
+            snapshot = list(self._findings)
+        return sum(
+            1
+            for finding in snapshot
+            if _matches(
+                finding,
+                rule_id=rule_id,
+                source_ip=source_ip,
+                destination_ip=destination_ip,
+                device_id=device_id,
+                since=since,
+                until=until,
+            )
+        )
+
     def query(
         self,
         *,

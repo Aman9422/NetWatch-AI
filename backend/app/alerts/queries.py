@@ -153,6 +153,20 @@ class AlertDetail:
     evidence_by_type: dict[str, int] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class EvidenceRecord:
+    """One evidence row together with the alert that owns it (M13.14).
+
+    Attributes:
+        evidence: The stored evidence row.
+        alert_id: The alert the evidence supports, so a client holding an
+            evidence reference can navigate to the alert without searching.
+    """
+
+    evidence: AlertEvidence
+    alert_id: int
+
+
 class AlertQueries:
     """Read-only queries over stored alerts (M11.18)."""
 
@@ -239,6 +253,25 @@ class AlertQueries:
         finally:
             session.close()
 
+    def get_evidence_record(self, evidence_id: int) -> EvidenceRecord | None:
+        """Return one evidence row with the alert it belongs to (M13.14).
+
+        The standalone evidence endpoint has to answer "which alert does this
+        evidence support?", so the owning ``alert_id`` is returned beside the row
+        rather than left for a client to discover by walking every alert.
+
+        Returns:
+            The record, or ``None`` when the id is unknown.
+        """
+        session = self._session_factory()
+        try:
+            row = AlertEvidenceRepository(session).get(int(evidence_id))
+            if row is None:
+                return None
+            return EvidenceRecord(evidence=row, alert_id=int(row.alert_id))
+        finally:
+            session.close()
+
     # -- aggregations (M11.18) -------------------------------------------
 
     def count_by_severity(self) -> dict[str, int]:
@@ -320,5 +353,6 @@ __all__ = [
     "AlertQueries",
     "AlertQuery",
     "AlertSummary",
+    "EvidenceRecord",
     "to_iso_timestamp",
 ]

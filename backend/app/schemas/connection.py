@@ -87,7 +87,22 @@ class ConnectionView(BaseModel):
 
 
 class ConnectionListData(BaseModel):
-    """Payload of the connection-collection endpoint."""
+    """Payload of the connection-collection endpoint (M13.11/M13.24).
+
+    ``count`` is the size of this page. The tracker cannot count a *filtered*
+    match set without materialising it, so ``total`` is omitted rather than
+    guessed at; ``has_more`` reports whether the page was full.
+    """
 
     count: int = 0
+    limit: int | None = Field(
+        default=None, description="Maximum items the page was allowed to hold"
+    )
+    offset: int = Field(default=0, description="Items skipped before this page")
+    total: int | None = Field(
+        default=None, description="Items matching overall, when countable"
+    )
+    has_more: bool | None = Field(
+        default=None, description="Whether a further page may hold more items"
+    )
     connections: list[ConnectionView] = Field(default_factory=list)

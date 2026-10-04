@@ -1,39 +1,54 @@
-"""Alert API endpoints for NetWatch AI (M11.18/M11.19).
+"""Alert API endpoints for NetWatch AI (M11.18/M11.19, consolidated by M13.13).
 
-These endpoints expose the alerts M11 stores: a filtered, pageable listing, one
-alert with its evidence, its evidence alone, the lifecycle transition, and the
-aggregation/diagnostics view. They are deliberately *not* the complete public
-API — that is M13 — but they are the full alert surface, and they exist so the
-alert layer can be verified end to end against a running application.
+The read surface, the lifecycle surface and the aggregation surface for M11's
+stored alerts. Two properties are the whole point of the module:
 
-Two rules the endpoints keep:
+* **Reads never mutate.** The only verbs that change anything are the lifecycle
+  actions, and every one of them goes through
+  :meth:`~app.alerts.service.AlertService.set_status`, which validates the move
+  against :data:`app.alerts.status.VALID_TRANSITIONS`. No transition rule is
+  written here. An illegal move — or any move out of a terminal state — is a
+  ``409 INVALID_TRANSITION`` naming the states that *are* reachable, and the
+  stored alert is left exactly as it was (M11.19).
+* **A rejected filter is never ignored.** An unknown severity, an unknown
+  status, a blank rule key or an unparseable timestamp is a ``400`` rather than a
+  silently wider result set, so a typo can never look like "no alerts".
 
-* **Reads never mutate.** Only ``POST /alerts/{id}/status`` changes anything, and
-  it changes only the lifecycle, through the validated transition table (M11.19).
-* **A rejected filter is never ignored.** An unknown severity or an empty rule
-  key returns 400 rather than a silently wider result set, so a typo can never
-  look like "no alerts".
+M13.13 asks for named lifecycle routes (``acknowledge``/``resolve``/``dismiss``/
+``false-positive``) beside the body-carrying ``POST /{id}/status`` M11 already
+shipped. Both spellings are served and both delegate to the same validated
+transition table, so there is one rule set and two ways to express the same
+request rather than two implementations of it.
 
-Responses follow the same envelope as the rest of the API::
-
-    {"success": true,  "message": "...", "data": {...}}
-    {"success": false, "message": "...", "errors": [{"field": ..., "code": ...}]}
+The field name in a filter error stays ``filter`` rather than the individual
+parameter: that is the contract M11 already published, and M13.4/M13.6 say to
+keep established semantics rather than rename a working one.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse
 
 from app.alerts import get_alert_engine
 from app.alerts.engine import AlertEngine
 from app.alerts.queries import AlertQueries, AlertQuery
 from app.alerts.status import InvalidStatusTransition
+from app.api.common import (
+    ErrorCode,
+    ConflictError,
+    InvalidFilterError,
+    NotFoundError,
+    PageWindow,
+    page_meta,
+    success_payload,
+    parse_epoch_filter,
+    validate_choice,
+    validate_time_range,
+)
+from app.api.v1.deps import get_alert_queries
 from app.config.settings import settings
-from app.persistence.session_factory import app_session_factory
 from app.schemas.alert import (
     AlertDetailData,
     AlertDiagnosticsData,
@@ -47,93 +62,120 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Error codes returned in the error envelope.
-_CODE_INVALID_FILTER = "INVALID_FILTER"
-_CODE_ALERT_NOT_FOUND = "ALERT_NOT_FOUND"
-_CODE_INVALID_TRANSITION = "INVALID_TRANSITION"
-_CODE_INVALID_LIFECYCLE = "INVALID_LIFECYCLE"
+# Severities accepted by the filter, ordered least to most serious.
+SEVERITIES: tuple[str, ...] = ("low", "medium", "high", "critical")
 
-# Severities accepted by the filter, ordered least to most serious. The list is a
-# literal here for the same reason the repository's is: the API layer must be
-# able to reject a bad value before it reaches the query.
-_SEVERITIES = ("low", "medium", "high", "critical")
-
-# Lifecycle states accepted by the transition endpoint (M11.6).
-_STATUSES = ("open", "acknowledged", "resolved", "dismissed", "false_positive")
+# Lifecycle states accepted by the transition endpoints (M11.6).
+STATUSES: tuple[str, ...] = (
+    "open",
+    "acknowledged",
+    "resolved",
+    "dismissed",
+    "false_positive",
+)
 
 # Evidence types a caller may filter by (M11.11).
-_EVIDENCE_TYPES = ("rule", "behavioral", "packet", "connection", "device")
-
-# Shared query service. It holds no session, so it is safe to reuse across
-# requests; a session is opened per call inside it.
-_alert_queries: AlertQueries | None = None
-
-
-def get_alert_queries() -> AlertQueries:
-    """FastAPI dependency returning the shared alert query service."""
-    global _alert_queries
-    if _alert_queries is None:
-        _alert_queries = AlertQueries(session_factory=app_session_factory)
-    return _alert_queries
+EVIDENCE_TYPES: tuple[str, ...] = (
+    "rule",
+    "behavioral",
+    "packet",
+    "connection",
+    "device",
+)
 
 
-def _error_response(
-    status_code: int, message: str, field: str, code: str
-) -> JSONResponse:
-    """Build the standard error envelope used across the API."""
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "success": False,
-            "message": message,
-            "errors": [{"field": field, "code": code}],
-        },
+def _list_page(
+    queries: AlertQueries,
+    *,
+    severity: str | None,
+    min_severity: str | None,
+    status: list[str] | None,
+    rule_id: int | None,
+    rule_key: str | None,
+    source_ip: str | None,
+    destination_ip: str | None,
+    since: str | None,
+    until: str | None,
+    limit: int | None,
+    offset: int,
+):
+    """Validate the filters, then run the listing.
+
+    The validation is what turns a typo into a ``400``: the query service is the
+    authority on what it can honour, and this helper only translates its
+    ``ValueError`` into the documented error. Every message a validator produces
+    already names the parameter it rejected.
+    """
+    severity_value = validate_choice(severity, SEVERITIES, "severity")
+    min_severity_value = validate_choice(min_severity, SEVERITIES, "min_severity")
+    statuses = tuple(
+        value
+        for value in (
+            validate_choice(entry, STATUSES, "status") for entry in (status or [])
+        )
+        if value is not None
+    )
+    since_value = parse_epoch_filter(since, "since")
+    until_value = parse_epoch_filter(until, "until")
+    validate_time_range(since_value, until_value)
+    return queries.list_alerts(
+        AlertQuery(
+            severity=severity_value,
+            min_severity=min_severity_value,
+            statuses=statuses or None,
+            rule_id=rule_id,
+            rule_key=rule_key,
+            source_ip=source_ip,
+            destination_ip=destination_ip,
+            since=since_value,
+            until=until_value,
+            limit=limit if limit is not None else settings.alert_default_page_size,
+            offset=offset,
+        )
     )
 
 
-def _parse_timestamp(value: str | None, field: str) -> float | None:
-    """Parse an ISO-8601 query timestamp into epoch seconds.
+def _transition(
+    engine: AlertEngine, alert_id: int, status: str
+):
+    """Apply one lifecycle move, translating the service's refusals (M11.19).
 
-    The API speaks ISO-8601 while an alert filter is expressed in epoch seconds
-    (to match M10's findings), so the conversion happens here — the one place
-    that owns the boundary.
+    The transition table belongs to :mod:`app.alerts.status`; this helper only
+    maps its two refusal modes onto the documented responses:
+
+    * a move the table forbids → ``409 INVALID_TRANSITION``;
+    * an id the store does not hold → ``404 ALERT_NOT_FOUND``;
+    * a value that is not a state at all → ``400 INVALID_LIFECYCLE``.
+
+    Args:
+        engine: The alert engine, whose ``service`` owns the write path.
+        alert_id: The alert to move.
+        status: The target state, as validated by ``AlertStatus``.
+
+    Returns:
+        The updated alert.
 
     Raises:
-        ValueError: If ``value`` is present but not a usable timestamp. A typo
-            must fail loudly rather than silently widening the window.
+        ConflictError: If the transition is not allowed.
+        NotFoundError: If no such alert exists.
+        InvalidFilterError: If the target is not a lifecycle state.
     """
-    if value is None:
-        return None
-    text = value.strip()
-    if not text:
-        raise ValueError(f"{field} must not be empty")
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError(
-            f"'{value}' is not a valid ISO-8601 timestamp for {field}"
+        updated = engine.service.set_status(alert_id, status)
+    except InvalidStatusTransition as exc:
+        logger.info("Rejected alert %d transition: %s", alert_id, exc)
+        raise ConflictError(
+            str(exc), code=ErrorCode.INVALID_TRANSITION, field="status"
         ) from exc
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.timestamp()
-
-
-def _validate_choice(value: str | None, allowed: tuple[str, ...], field: str) -> str | None:
-    """Fold and validate a closed-vocabulary query value.
-
-    Raises:
-        ValueError: If ``value`` is not one of ``allowed``. Returning the folded
-            value means the caller may spell it in any case and still get the
-            canonical form the query expects.
-    """
-    if value is None:
-        return None
-    text = str(value).strip().lower()
-    if text not in allowed:
-        raise ValueError(
-            f"'{value}' is not a valid {field} (expected one of: {', '.join(allowed)})"
+    except ValueError as exc:
+        raise InvalidFilterError(
+            str(exc), code=ErrorCode.INVALID_LIFECYCLE, field="status"
+        ) from exc
+    if updated is None:
+        raise NotFoundError(
+            "Alert not found", code=ErrorCode.ALERT_NOT_FOUND, field="alert_id"
         )
-    return text
+    return updated
 
 
 @router.get("", response_model=None)
@@ -165,7 +207,7 @@ def list_alerts(
     until: str | None = Query(
         default=None, description="Keep only alerts observed strictly before this time"
     ),
-    limit: int = Query(
+    limit: int | None = Query(
         default=None,
         ge=1,
         le=settings.alert_max_page_size,
@@ -173,7 +215,7 @@ def list_alerts(
     ),
     offset: int = Query(default=0, ge=0, description="Number of alerts to skip"),
     queries: AlertQueries = Depends(get_alert_queries),
-) -> dict | JSONResponse:
+) -> dict:
     """Return stored alerts, newest first (M11.18).
 
     Filters combine with AND. ``since`` is inclusive and ``until`` exclusive, so a
@@ -182,57 +224,40 @@ def list_alerts(
     makes a detector with no catalogue row still queryable.
     """
     try:
-        severity_value = _validate_choice(severity, _SEVERITIES, "severity")
-        min_severity_value = _validate_choice(min_severity, _SEVERITIES, "min_severity")
-        statuses = tuple(
-            status_value
-            for status_value in (
-                _validate_choice(entry, _STATUSES, "status") for entry in (status or [])
-            )
-            if status_value is not None
-        )
-        since_value = _parse_timestamp(since, "since")
-        until_value = _parse_timestamp(until, "until")
-        page = queries.list_alerts(
-            AlertQuery(
-                severity=severity_value,
-                min_severity=min_severity_value,
-                statuses=statuses or None,
-                rule_id=rule_id,
-                rule_key=rule_key,
-                source_ip=source_ip,
-                destination_ip=destination_ip,
-                since=since_value,
-                until=until_value,
-                limit=limit if limit is not None else settings.alert_default_page_size,
-                offset=offset,
-            )
+        page = _list_page(
+            queries,
+            severity=severity,
+            min_severity=min_severity,
+            status=status,
+            rule_id=rule_id,
+            rule_key=rule_key,
+            source_ip=source_ip,
+            destination_ip=destination_ip,
+            since=since,
+            until=until,
+            limit=limit,
+            offset=offset,
         )
     except ValueError as exc:
-        return _error_response(400, str(exc), "filter", _CODE_INVALID_FILTER)
+        raise InvalidFilterError(str(exc), field="filter") from exc
 
     views = [AlertView.from_alert(alert) for alert in page.alerts]
+    # The page block comes from the shared helper rather than being written out
+    # here, so this collection reports the same window fields — including
+    # ``has_more`` — as every other paginated route (M13.24).
     payload = AlertListData(
-        count=len(views),
-        total=page.total,
-        limit=page.limit,
-        offset=page.offset,
+        **page_meta(
+            len(views), PageWindow(page.limit, page.offset), total=page.total
+        ),
         alerts=views,
     )
     logger.info("Returning %d alert(s) of %d via API", payload.count, payload.total)
-    return {
-        "success": True,
-        "message": "Alerts retrieved",
-        "data": payload.model_dump(mode="json"),
-    }
+    return success_payload("Alerts retrieved", payload.model_dump(mode="json"))
 
 
 @router.get("/summary", response_model=None)
 def alert_summary(
     queries: AlertQueries = Depends(get_alert_queries),
-    engine_enabled: bool = Query(
-        default=True, description="Reported as the engine's enable state"
-    ),
 ) -> dict:
     """Return alert counts by severity and status (M11.18).
 
@@ -242,11 +267,7 @@ def alert_summary(
     """
     summary = queries.summary()
     logger.info("Returning alert summary via API")
-    return {
-        "success": True,
-        "message": "Alert summary retrieved",
-        "data": summary,
-    }
+    return success_payload("Alert summary retrieved", summary)
 
 
 @router.get("/diagnostics", response_model=None)
@@ -275,24 +296,22 @@ def alert_diagnostics(
         by_severity=stored["by_severity"],
         by_status=stored["by_status"],
     )
-    return {
-        "success": True,
-        "message": "Alert diagnostics retrieved",
-        "data": payload.model_dump(mode="json"),
-    }
+    return success_payload(
+        "Alert diagnostics retrieved", payload.model_dump(mode="json")
+    )
 
 
 @router.get("/{alert_id}", response_model=None)
 def get_alert(
     alert_id: int,
     queries: AlertQueries = Depends(get_alert_queries),
-) -> dict | JSONResponse:
+) -> dict:
     """Return one alert with its evidence, or 404 when it does not exist."""
     detail = queries.get_detail(alert_id)
     if detail is None:
         logger.info("Alert lookup failed for id %d", alert_id)
-        return _error_response(
-            404, "Alert not found", "alert_id", _CODE_ALERT_NOT_FOUND
+        raise NotFoundError(
+            "Alert not found", code=ErrorCode.ALERT_NOT_FOUND, field="alert_id"
         )
     payload = AlertDetailData(
         alert=AlertView.from_alert(detail.alert),
@@ -301,11 +320,7 @@ def get_alert(
         ],
         evidence_by_type=detail.evidence_by_type,
     )
-    return {
-        "success": True,
-        "message": "Alert retrieved",
-        "data": payload.model_dump(mode="json"),
-    }
+    return success_payload("Alert retrieved", payload.model_dump(mode="json"))
 
 
 @router.get("/{alert_id}/evidence", response_model=None)
@@ -315,7 +330,7 @@ def get_alert_evidence(
         default=None, description="Keep only evidence of this kind"
     ),
     queries: AlertQueries = Depends(get_alert_queries),
-) -> dict | JSONResponse:
+) -> dict:
     """Return one alert's evidence, optionally filtered by type (M11.18).
 
     A missing alert is a 404 rather than an empty list, so a caller can tell
@@ -323,30 +338,32 @@ def get_alert_evidence(
     alert".
     """
     try:
-        type_value = _validate_choice(evidence_type, _EVIDENCE_TYPES, "evidence_type")
+        type_value = validate_choice(evidence_type, EVIDENCE_TYPES, "evidence_type")
     except ValueError as exc:
-        return _error_response(400, str(exc), "evidence_type", _CODE_INVALID_FILTER)
+        raise InvalidFilterError(str(exc), field="evidence_type") from exc
 
     if queries.get_alert(alert_id) is None:
-        return _error_response(
-            404, "Alert not found", "alert_id", _CODE_ALERT_NOT_FOUND
+        raise NotFoundError(
+            "Alert not found", code=ErrorCode.ALERT_NOT_FOUND, field="alert_id"
         )
     records = queries.get_evidence(alert_id, evidence_type=type_value)
     views = [AlertEvidenceView.from_record(record) for record in records]
-    return {
-        "success": True,
-        "message": "Alert evidence retrieved",
-        "data": {"count": len(views), "evidence": [view.model_dump(mode="json") for view in views]},
-    }
+    return success_payload(
+        "Alert evidence retrieved",
+        {
+            "alert_id": alert_id,
+            "count": len(views),
+            "evidence": [view.model_dump(mode="json") for view in views],
+        },
+    )
 
 
 @router.post("/{alert_id}/status", response_model=None)
 def set_alert_status(
     alert_id: int,
     body: AlertLifecycleRequest,
-    queries: AlertQueries = Depends(get_alert_queries),
     engine: AlertEngine = Depends(get_alert_engine),
-) -> dict | JSONResponse:
+) -> dict:
     """Move an alert to another lifecycle state (M11.19).
 
     The move is validated against the lifecycle table, so an illegal transition
@@ -354,22 +371,66 @@ def set_alert_status(
     reachable, and the stored alert is left untouched. A move to the state it is
     already in is accepted as a no-op.
     """
-    try:
-        updated = engine.service.set_status(alert_id, body.status)
-    except InvalidStatusTransition as exc:
-        logger.info("Rejected alert %d transition: %s", alert_id, exc)
-        return _error_response(
-            409, str(exc), "status", _CODE_INVALID_TRANSITION
-        )
-    except ValueError as exc:
-        return _error_response(400, str(exc), "status", _CODE_INVALID_LIFECYCLE)
+    updated = _transition(engine, alert_id, body.status)
+    return success_payload(
+        "Alert status updated", AlertView.from_alert(updated).model_dump(mode="json")
+    )
 
-    if updated is None:
-        return _error_response(
-            404, "Alert not found", "alert_id", _CODE_ALERT_NOT_FOUND
-        )
-    return {
-        "success": True,
-        "message": "Alert status updated",
-        "data": AlertView.from_alert(updated).model_dump(mode="json"),
-    }
+
+@router.post("/{alert_id}/acknowledge", response_model=None)
+def acknowledge_alert(
+    alert_id: int,
+    engine: AlertEngine = Depends(get_alert_engine),
+) -> dict:
+    """Mark an alert as acknowledged (M13.13).
+
+    A named spelling of ``POST /{id}/status {"status": "acknowledged"}``. It
+    delegates to the same validated transition table, so it cannot accept a move
+    the status endpoint would refuse.
+    """
+    updated = _transition(engine, alert_id, "acknowledged")
+    return success_payload(
+        "Alert acknowledged", AlertView.from_alert(updated).model_dump(mode="json")
+    )
+
+
+@router.post("/{alert_id}/resolve", response_model=None)
+def resolve_alert(
+    alert_id: int,
+    engine: AlertEngine = Depends(get_alert_engine),
+) -> dict:
+    """Mark an alert as resolved (M13.13)."""
+    updated = _transition(engine, alert_id, "resolved")
+    return success_payload(
+        "Alert resolved", AlertView.from_alert(updated).model_dump(mode="json")
+    )
+
+
+@router.post("/{alert_id}/dismiss", response_model=None)
+def dismiss_alert(
+    alert_id: int,
+    engine: AlertEngine = Depends(get_alert_engine),
+) -> dict:
+    """Dismiss an alert (M13.13)."""
+    updated = _transition(engine, alert_id, "dismissed")
+    return success_payload(
+        "Alert dismissed", AlertView.from_alert(updated).model_dump(mode="json")
+    )
+
+
+@router.post("/{alert_id}/false-positive", response_model=None)
+def mark_alert_false_positive(
+    alert_id: int,
+    engine: AlertEngine = Depends(get_alert_engine),
+) -> dict:
+    """Mark an alert as a false positive (M13.13).
+
+    A terminal state like ``resolved`` and ``dismissed``: M11.19 deliberately
+    offers no reopen, because reopening means editing a conclusion already
+    recorded. The route reports that refusal as a 409 rather than inventing one.
+    """
+    updated = _transition(engine, alert_id, "false_positive")
+    return success_payload(
+        "Alert marked as false positive",
+        AlertView.from_alert(updated).model_dump(mode="json"),
+    )
