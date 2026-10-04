@@ -68,6 +68,11 @@ from app.correlation.rules import evaluate_rules
 from app.correlation.status import IncidentStatus
 from app.correlation.window import CorrelationWindow
 from app.risk.engine import RiskResult, RiskScoringEngine
+from app.websockets.events import (
+    publish_correlation_outcome,
+    publish_incident_status,
+)
+from app.websockets.publisher import EventPublisher, ensure_publisher
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids an eager import
     from app.alerts.alert import Alert
@@ -126,6 +131,7 @@ class CorrelationEngine:
         anchor_threshold: float = DEFAULT_ANCHOR_THRESHOLD,
         min_confidence: float = DEFAULT_MIN_CONFIDENCE,
         risk_persistence: RiskPersistence | None = None,
+        events: EventPublisher | None = None,
         enabled: bool = True,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -142,6 +148,10 @@ class CorrelationEngine:
         self._anchor_threshold = float(anchor_threshold)
         self._min_confidence = float(min_confidence)
         self._risk_persistence = risk_persistence
+        # Resolved once (M14.13), so no publish site tests it for ``None``. With no
+        # publisher supplied this is a null sink, which is what keeps every
+        # existing correlation test working unchanged.
+        self._publisher = ensure_publisher(events)
         self._enabled = bool(enabled)
         self._clock = clock
         self._errors = 0
@@ -154,6 +164,7 @@ class CorrelationEngine:
         settings: Settings,
         *,
         risk_persistence: RiskPersistence | None = None,
+        events: EventPublisher | None = None,
         clock: Callable[[], float] = time.time,
     ) -> CorrelationEngine:
         """Build an engine from application settings (M12 configuration).
@@ -162,6 +173,10 @@ class CorrelationEngine:
         the correlation model, the rule set and the scoring formula each stay
         free of configuration coupling. The registry and the engine share one
         clock, so an injected clock governs both retention and scoring.
+
+        ``events`` is passed through rather than built here, for the same reason
+        ``risk_persistence`` is: this classmethod configures the engine, it does
+        not decide what the process's transport layer is (M14.13).
         """
         window_seconds = float(settings.correlation_window_seconds)
         return cls(
@@ -181,6 +196,7 @@ class CorrelationEngine:
             anchor_threshold=settings.correlation_min_anchor_strength,
             min_confidence=settings.correlation_min_confidence,
             risk_persistence=risk_persistence,
+            events=events,
             enabled=settings.correlation_enabled,
             clock=clock,
         )
@@ -257,6 +273,11 @@ class CorrelationEngine:
             )
         if outcome.ok and not outcome.duplicate:
             self._persist_incident(outcome.incident)
+        # Announced after the registry's lock was released, like the risk write
+        # above. The helper publishes only for a step that opened an incident or
+        # joined one: a duplicate (M12.11) and a contained error changed nothing,
+        # and announcing them would be a notification about no change (M14.12).
+        publish_correlation_outcome(self._publisher, outcome)
         return outcome
 
     def correlate_finding(
@@ -453,9 +474,15 @@ class CorrelationEngine:
             InvalidIncidentTransition: If the move is not allowed. A terminal
                 incident stays terminal — M12 asks for no reopen.
         """
-        return self._registry.set_status(
+        updated = self._registry.set_status(
             incident_id, status, updated_at=updated_at
         )
+        if updated is not None:
+            # Announced after the registry accepted the move, so a client is never
+            # told about a transition that was refused. An unknown id returns
+            # ``None`` and announces nothing (M14.12).
+            publish_incident_status(self._publisher, updated)
+        return updated
 
     def rescore(self, incident_id: str) -> CorrelatedIncident | None:
         """Recompute and store one incident's risk score (M12.13).

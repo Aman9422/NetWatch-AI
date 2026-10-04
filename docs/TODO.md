@@ -4,7 +4,7 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M13 — REST API ✅ COMPLETE (next: M14 — WebSockets)
+**Current Milestone:** M14 — WebSockets ✅ COMPLETE (next: M15 — Frontend Integration)
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -633,18 +633,142 @@ filesystem or SQL surface and bounds every result set.
 
 ---
 
-# M14 — WebSockets
+# M14 — WebSockets ✅ COMPLETE
 
-* [ ] WebSocket manager
-* [ ] `/ws/dashboard`
-* [ ] `/ws/packets`
-* [ ] `/ws/alerts`
-* [ ] `/ws/system`
-* [ ] Connection handling
-* [ ] Disconnect handling
-* [ ] Reconnection support
-* [ ] Event schemas
-* [ ] WebSocket tests
+* [x] Review M13's REST surface, the M6–M12 data each event needs and what already
+      exists to serialize with (M14.1) — `docs/18_M14_WebSocket_Design.md` §3
+* [x] `WebSocketManager` — accept, admit, register, broadcast, disconnect,
+      shutdown (M14.2) — `app/websockets/manager.py`
+* [x] Four endpoints, mounted unversioned at `/ws/dashboard`, `/ws/packets`,
+      `/ws/alerts` and `/ws/system` (M14.3) — `app/websockets/routes.py`
+* [x] Connection lifecycle with an explicit per-client state (M14.4) —
+      `app/websockets/connection.py` (`ClientConnection`)
+* [x] Connection registry — a bounded set per channel, one lock, snapshot reads
+      (M14.5) — `app/websockets/manager.py`
+* [x] Channel separation — one channel per data type, isolated fan-out (M14.6) —
+      `app/websockets/channels.py`
+* [x] Event envelope — a single `WebSocketEvent` for every event, ISO-8601 UTC,
+      monotonic sequence, closed type vocabulary (M14.7) —
+      `app/websockets/event.py`
+* [x] Packet events, projected with no packet payload on the wire (M14.8) —
+      `app/websockets/builders.py`, `app/websockets/payloads.py`
+* [x] Dashboard events on a tick, read from the same services the REST route reads
+      (M14.9) — `app/websockets/dashboard.py`
+* [x] Alert events — created, updated and lifecycle (M14.10) —
+      `app/websockets/events.py`
+* [x] System events — capture, service and database state (M14.11)
+* [x] Incident events — created, updated and lifecycle (M14.12)
+* [x] Event publisher with `enabled` and a null publisher, so an unwired pipeline
+      costs one boolean (M14.13) — `app/websockets/publisher.py`
+* [x] Failure isolation — publishing never raises into the capture thread (M14.14)
+* [x] Backpressure — one bounded queue per connection, drop-oldest, counted (M14.15)
+* [x] Packet rate control — a per-channel token bucket so a busy wire cannot flood
+      a subscriber (M14.16) — `app/websockets/policy.py`
+* [x] Serialization — encoded once per event, size-checked before it is queued
+      (M14.17)
+* [x] Disconnect handling — a dead client is unregistered and the others keep
+      being served (M14.18)
+* [x] Reconnection — a reconnect is a new connection with fresh counters and no
+      history replay (M14.19)
+* [x] Startup and shutdown — background tasks started and cancelled with the app
+      lifespan (M14.20) — `app/main.py`
+* [x] Thread/async safety — one `call_soon_threadsafe` bridge from the capture
+      thread onto the event loop, and the queue touched only on the loop (M14.21)
+* [x] Security boundary — no client input trusted, no secret or internal path on
+      the wire (M14.22)
+* [x] Client input policy — client frames are answered or refused, never used to
+      widen what the server sends (M14.23)
+* [x] Heartbeat — keepalive ping with a dead-peer timeout (M14.24) —
+      `app/websockets/heartbeat.py`
+* [x] Tests — manager (M14.25) — `tests/test_ws_manager.py` (48)
+* [x] Tests — event schema (M14.26) — `tests/test_ws_event_schema.py` (67)
+* [x] Tests — broadcast and channel isolation (M14.27) —
+      `tests/test_ws_broadcast.py` (19)
+* [x] Tests — backpressure and rate control (M14.28) —
+      `tests/test_ws_backpressure.py` (33)
+* [x] Tests — reconnection (M14.29) — `tests/test_ws_reconnect.py` (16)
+* [x] Tests — pipeline isolation (M14.30) —
+      `tests/test_ws_pipeline_isolation.py` (8)
+* [x] Tests — endpoints over real ASGI WebSocket (M14.31) —
+      `tests/test_ws_endpoints.py` (16)
+* [x] Tests — the publisher contract (M14.13) —
+      `tests/test_ws_publisher.py` (17)
+* [x] Manual verification (M14.32) — `backend/scripts/verify_m14.py`; `sample`
+      attaches a client to every channel while controlled packets go through the
+      real M4→M12 pipeline, `live` serves uvicorn and speaks real WebSocket
+* [x] Performance baseline (M14.33) — `backend/scripts/benchmark_m14.py` with
+      `backend/scripts/m14_bench_harness.py`
+
+**Verification:** full suite **1863 passed** (the M14 suite is **224 tests** across
+the files above — 1639 + 224 = 1863); pyright **0 errors, 0 warnings,
+0 informations** over **268 files**. Both `verify_m14.py` modes ran green: `sample`
+drove the real M4→M12 pipeline with a client on every channel and saw the packet,
+dashboard, alert, incident and keepalive events it expected; `live` spoke real
+WebSocket over real HTTP to all four channels under uvicorn.
+
+**Baseline (this machine, OneDrive-synced disk, in-process client,
+`--packets 2000 --iterations 50 --clients 4 --window 1.0`):**
+
+*Connection setup* — one socket opened and closed: `/ws/alerts` 0.93 ms p50,
+`/ws/system` 0.94, `/ws/packets` 0.96, `/ws/dashboard` 1.11 (824–1,053 handshakes/s).
+
+*Packet path ladder* — the same 2,000-packet burst through the same M4–M12 stack at
+five publishing configurations, so each step is a measured difference rather than an
+inference. This is the figure M14.33 asks for:
+
+| configuration | packets/s | µs/packet | overhead vs M14 absent |
+| --- | --- | --- | --- |
+| 1. publish call replaced (M14 absent) | 2,947 | 339.27 | — |
+| 2. null publisher — event built, then discarded | 2,418 | 413.59 | +74.32 µs |
+| 3. publisher, layer disabled | 2,678 | 373.35 | +34.08 µs |
+| 4. publisher, enabled, no subscriber | 2,304 | 434.03 | +94.75 µs |
+| 5. publisher, enabled, one subscriber | 2,015 | 496.40 | +157.12 µs |
+
+The two halves deserve reading separately: **building** a `packet.observed` for every
+packet on the wire costs roughly **74 µs/packet**, and **delivering** it to one
+subscriber costs roughly **158 µs/packet** over having no layer at all. Rung 3
+measured *cheaper* than rung 2, which is not a finding — a step of a few tens of
+microseconds is the same order as this disk's run-to-run variance (an earlier run of
+the identical ladder measured a 1,564 packets/s baseline where the recorded run
+measured 2,947), so the ladder's trend is quotable and no single step is. The M4–M12
+work dominates either way: ~339 µs/packet with M14 absent, against ~481 µs/packet of
+CPU measured across the whole ladder.
+
+*Broadcast latency* (publish → the client has it; p50 / payload size): `/ws/dashboard`
+0.213 ms / 395 B, `/ws/system` 0.218 ms / 243 B, `/ws/alerts` 0.235 ms / 799 B,
+`/ws/packets` 0.395 ms / 443 B.
+
+*Channel throughput* (unthrottled publisher, one client, 1 s window): alerts
+delivered 5,289/s; system 8,914/s delivered from 10,991/s offered, the 2,077
+difference being its 128-slot queue under a publisher that outran the sender;
+dashboard 1,047/s, where the limit is the publisher rather than the channel because
+the tick's own sampler is the cost; and packets 397/s delivered from 6,748/s offered
+against its **200/s ceiling** — the token bucket working as designed, not a transport
+limit.
+
+*Bounded queue under an overrun* (2,000 events at a client that never drains): depth
+peaked at 32/32 (dashboard), 204/256 (packets), 512/512 (alerts) and 128/128 (system)
+— at the cap and never past it, with drop-oldest counted. The benchmark asserts this
+rather than printing it.
+
+*Simultaneous clients* — 16 held at once (4 per channel), every one served: connect
+2.07–2.69 ms p50, fan-out to all four 0.89–1.43 ms p50.
+
+*Process* — RSS 134.4 → 166.3 MiB (+31.9) across the ladder; CPU 4.81 s for 10,000
+packets (481 µs/packet, the whole M4–M12 stack plus M14).
+
+Not a production-capacity claim: one process, one event loop, with the socket
+replaced by an in-process transport, so the absolute numbers are far better than a
+deployed service would see. What they are good for is comparing channels against each
+other, comparing the layer against having no layer, and re-measuring after a change —
+the packet pool is generated, so two runs of the script are comparable.
+
+**Design:** `docs/18_M14_WebSocket_Design.md`.
+
+> Deliberately out of scope for M14: frontend code, new detection, alert, correlation
+> or risk-scoring logic, ML/AI, automatic blocking, authentication/RBAC, and external
+> SIEM or notification integrations. M14 carries what M3–M13 already produce; it does
+> not redesign them. M15 consumes this surface from the React frontend.
 
 ---
 

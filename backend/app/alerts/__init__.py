@@ -106,6 +106,7 @@ def _build_default_engine() -> AlertEngine:
     from app.connections.manager import get_connection_tracker
     from app.persistence.session_factory import app_session_factory
     from app.alerts.resolvers import SessionPacketSource, SessionRuleSource
+    from app.websockets import get_event_publisher
 
     resolvers = FindingResolvers(
         packet_source=SessionPacketSource(app_session_factory),
@@ -123,6 +124,11 @@ def _build_default_engine() -> AlertEngine:
         dedup_window_seconds=settings.alert_dedup_window_seconds,
         max_evidence=settings.alert_max_evidence_per_alert,
         packet_evidence_enabled=settings.alert_packet_evidence_enabled,
+        # The live stream (M14.13). Injected rather than reached for, so a test
+        # can build a service with no publisher and observe exactly that. The
+        # publish calls cannot raise and do nothing when the layer is disabled
+        # (M14.14), so this changes no existing behaviour.
+        events=get_event_publisher(),
     )
     return AlertEngine(service, enabled=settings.alerts_enabled)
 

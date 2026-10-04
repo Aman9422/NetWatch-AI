@@ -199,11 +199,20 @@ def _build_default_engine() -> CorrelationEngine:
     """
     from app.config.settings import settings
     from app.persistence.session_factory import app_session_factory
+    from app.websockets import get_event_publisher
 
     writer: IncidentRiskWriter | None = None
     if settings.correlation_risk_persistence_enabled:
         writer = IncidentRiskWriter(app_session_factory)
-    return CorrelationEngine.from_settings(settings, risk_persistence=writer)
+    return CorrelationEngine.from_settings(
+        settings,
+        risk_persistence=writer,
+        # The live stream (M14.13). Injected rather than reached for, so the
+        # engine stays constructible with no publisher at all in a test. Every
+        # publish call is contained and does nothing while the layer is disabled
+        # (M14.14), so no existing behaviour changes.
+        events=get_event_publisher(),
+    )
 
 
 def get_correlation_engine() -> CorrelationEngine:

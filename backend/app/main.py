@@ -13,6 +13,7 @@ from app.database.init_db import init_db
 from app.services.capture_manager import get_capture_manager
 from app.utils.logging import configure_logging
 from app.utils.runtime import mark_process_started
+from app.websockets import shutdown_websockets, start_websockets, websocket_router
 
 logger = logging.getLogger(__name__)
 
@@ -80,11 +81,19 @@ async def lifespan(app: FastAPI):
     logger.info("Starting %s (%s) — environment: %s", settings.app_name, settings.app_version, settings.app_env)
     if settings.app_env == "development":
         init_db()
+    # The real-time layer (M14.20). Started after the schema exists and before
+    # the application accepts traffic, so the loop is bound and the heartbeat and
+    # dashboard tasks exist before the first client can dial in.
+    await start_websockets()
     yield
     logger.info("Shutting down %s", settings.app_name)
     _stop_active_capture()
     _shutdown_persistence()
     _shutdown_connections()
+    # The WebSocket layer is torn down *last* (M14.20): stopping capture publishes
+    # the final capture.stopped event and the flushes above publish nothing, so
+    # tearing the transport down first would lose the last events of the session.
+    await shutdown_websockets()
 
 
 app = FastAPI(
@@ -107,6 +116,12 @@ app.add_middleware(
 
 # Register API router under /api/v1.
 app.include_router(api_router, prefix="/api/v1")
+
+# Register the real-time channels (M14.3) at /ws/{channel}. Unversioned on
+# purpose: /api/v1 is the versioned *resource* surface (M13.3), and a channel is
+# neither a resource nor a versioned API — it is one of four named streams whose
+# paths are declared once, in app.websockets.channels.
+app.include_router(websocket_router)
 
 # Translate every failure into the one documented error envelope (M13.5/M13.29).
 # Registered once, after the routers, so an unrouted URL, a wrong verb and an
