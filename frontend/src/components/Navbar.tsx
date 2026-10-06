@@ -1,146 +1,134 @@
-import { useState } from 'react'
-import { Menu, Bell, Search, ChevronDown, Shield, AlertTriangle, CheckCircle, Info } from 'lucide-react'
-import type { Page, ToastMsg } from '../App'
+/**
+ * The header bar (M15.35).
+ *
+ * The mock-era header carried four things that were not real: three notifications
+ * with fixed text and "2 min ago" stamps, a "Capture Running" pill that was not
+ * reading anything, a search field for a search endpoint that does not exist, and
+ * a signed-in profile for an application with no user model. All four are gone
+ * rather than restyled — a control that cannot do what it says is worse than no
+ * control (M15.31).
+ *
+ * What remains is what the shell can honestly show at all times:
+ *
+ * * the page's own name, and a clock that actually ticks;
+ * * the configured backend endpoint, which is **public by design** — every
+ *   `VITE_*` value is client-visible (M15.37) — and is the fastest way for an
+ *   operator to see which backend a browser is talking to;
+ * * a link to Notifications with no invented count. A real unread tally exists,
+ *   but reading it here would issue a request on every page for a badge, and
+ *   M15.34 rules out polling that is not needed; the notifications page carries
+ *   its own authoritative count instead.
+ *
+ * This component deliberately opens **no** WebSocket subscription. It is mounted
+ * on every route, so a channel opened here would be a second connection beside
+ * the page's own — exactly the duplication M15.28 and M15.35 forbid.
+ */
 
-const TITLES: Record<Page, string> = {
-  'dashboard':    'Dashboard',
+import { useEffect, useState } from 'react'
+import { Bell, Menu, Server } from 'lucide-react'
+import { environment } from '../config/env'
+import { C } from '../lib/tokens'
+import type { Page } from '../App'
+
+/** The heading shown for each route. */
+const TITLES: Readonly<Record<Page, string>> = {
+  'dashboard': 'Dashboard',
   'live-traffic': 'Live Traffic',
-  'devices':      'Devices',
-  'alerts':       'Alerts',
-  'analytics':    'Analytics',
-  'reports':      'Reports',
-  'settings':     'Settings',
+  'devices': 'Devices',
+  'connections': 'Connections',
+  'detections': 'Detections',
+  'alerts': 'Alerts',
+  'incidents': 'Incidents',
+  'analytics': 'Analytics',
+  'reports': 'Reports',
+  'notifications': 'Notifications',
+  'system': 'System',
+  'settings': 'Settings',
 }
 
-const NOTIFS = [
-  { id: 1, icon: AlertTriangle, color: '#EF4444', label: 'High', msg: 'Port scan detected on 192.168.1.20', time: '2 min ago' },
-  { id: 2, icon: Info,          color: '#38BDF8', label: 'Info', msg: 'Capture started on interface eth0', time: '15 min ago' },
-  { id: 3, icon: CheckCircle,   color: '#22C55E', label: 'OK',   msg: 'Network report generated successfully', time: '1 hr ago' },
-]
+/** How often the clock re-renders, so it does not show a stale minute. */
+const CLOCK_TICK_MS = 30_000
 
 interface Props {
   onMenuToggle: () => void
   currentPage: Page
-  showToast: (msg: string, type?: ToastMsg['type']) => void
+  onNavigate: (page: Page) => void
 }
 
-export default function Navbar({ onMenuToggle, currentPage, showToast: _showToast }: Props) {
-  const [notifOpen, setNotifOpen] = useState(false)
-  const now = new Date()
-  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
-  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+export default function Navbar({ onMenuToggle, currentPage, onNavigate }: Props) {
+  const [now, setNow] = useState(() => new Date())
+
+  // A real clock, updated on a timer and cleaned up on unmount — the one timer in
+  // this shell that is not simulating anything.
+  useEffect(() => {
+    const handle = window.setInterval(() => setNow(new Date()), CLOCK_TICK_MS)
+    return () => window.clearInterval(handle)
+  }, [])
+
+  const dateText = now.toLocaleDateString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric',
+  })
+  const timeText = now.toLocaleTimeString(undefined, {
+    hour: '2-digit', minute: '2-digit',
+  })
 
   return (
     <header
       className="flex items-center px-6 gap-4 border-b flex-shrink-0 relative z-30"
-      style={{ height: '72px', backgroundColor: '#0F172A', borderColor: '#1E293B' }}
-    >
+      style={{ height: '72px', backgroundColor: C.panel, borderColor: C.card }}>
       <button
         onClick={onMenuToggle}
+        aria-label="Toggle navigation"
         className="p-2 rounded-xl transition-colors"
-        style={{ color: '#94A3B8' }}
+        style={{ color: C.muted }}
         onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)')}
-        onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-      >
+        onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
         <Menu size={18} />
       </button>
 
       <div className="min-w-0">
         <h1 className="text-base font-semibold text-white">{TITLES[currentPage]}</h1>
-        <p className="text-xs" style={{ color: '#64748B' }}>{dateStr} · {timeStr}</p>
-      </div>
-
-      {/* Live badge */}
-      <div
-        className="flex items-center gap-2 px-3 py-1.5 rounded-full border"
-        style={{ backgroundColor: 'rgba(34,197,94,0.08)', borderColor: 'rgba(34,197,94,0.25)' }}
-      >
-        <span className="relative flex h-1.5 w-1.5">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: '#22C55E' }} />
-          <span className="relative inline-flex rounded-full h-1.5 w-1.5" style={{ backgroundColor: '#22C55E' }} />
-        </span>
-        <span className="text-xs font-medium" style={{ color: '#22C55E' }}>Capture Running</span>
+        <p className="text-xs" style={{ color: C.faint }}>{dateText} · {timeText}</p>
       </div>
 
       <div className="flex-1" />
 
-      {/* Search */}
-      <button
-        className="flex items-center gap-2 px-3 py-2 rounded-xl border text-xs"
-        style={{ backgroundColor: '#1E293B', borderColor: '#334155', color: '#64748B', width: '220px' }}
-      >
-        <Search size={13} />
-        <span className="flex-1 text-left">Search packets, IPs, alerts…</span>
-        <span
-          className="px-1.5 py-0.5 rounded border mono text-xs"
-          style={{ borderColor: '#334155', color: '#475569' }}
-        >
-          ⌘K
+      {/* Which backend this browser is talking to. Public configuration, shown
+          because knowing it is what makes a failed request diagnosable. */}
+      <div
+        className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl border max-w-[340px]"
+        style={{ backgroundColor: C.card, borderColor: C.border }}
+        title={`REST API base URL: ${environment.apiBaseUrl} — a Vite environment value, so it is visible to the browser by design.`}>
+        <Server size={12} style={{ color: C.faint, flexShrink: 0 }} />
+        <span className="mono text-xs truncate" style={{ color: C.muted }}>
+          {environment.apiBaseUrl}
         </span>
-      </button>
-
-      {/* Notifications */}
-      <div className="relative">
-        <button
-          onClick={() => setNotifOpen(o => !o)}
-          className="relative p-2 rounded-xl transition-colors"
-          style={{ color: '#94A3B8' }}
-          onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)')}
-          onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-        >
-          <Bell size={18} />
-          <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#EF4444' }} />
-        </button>
-
-        {notifOpen && (
-          <div
-            className="absolute right-0 top-14 w-80 rounded-2xl border shadow-2xl z-50 overflow-hidden fade-in-up"
-            style={{ backgroundColor: '#1E293B', borderColor: '#334155' }}
-          >
-            <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: '#334155' }}>
-              <span className="text-sm font-semibold text-white">Notifications</span>
-              <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#EF4444' }}>
-                3 new
-              </span>
-            </div>
-            {NOTIFS.map(({ id, icon: Icon, color, label, msg, time }) => (
-              <div key={id} className="flex items-start gap-3 px-4 py-3 border-b" style={{ borderColor: '#1E293B' }}>
-                <div className="p-1.5 rounded-lg flex-shrink-0" style={{ backgroundColor: `${color}18` }}>
-                  <Icon size={13} style={{ color }} />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs text-white leading-snug">{msg}</p>
-                  <p className="text-xs mt-1" style={{ color: '#64748B' }}>{time}</p>
-                </div>
-              </div>
-            ))}
-            <div className="px-4 py-2.5">
-              <button className="text-xs font-medium w-full text-center" style={{ color: '#38BDF8' }}>
-                View all notifications
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Profile */}
       <button
-        className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl border transition-colors"
-        style={{ borderColor: '#334155', backgroundColor: 'transparent' }}
-        onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)')}
-        onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-      >
-        <div
-          className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-          style={{ background: 'linear-gradient(135deg, #38BDF8, #0EA5E9)', color: '#0F172A' }}
-        >
-          JD
-        </div>
-        <div className="text-left hidden lg:block">
-          <div className="text-xs font-medium text-white">John Doe</div>
-          <div className="text-xs" style={{ color: '#64748B' }}>Admin</div>
-        </div>
-        <ChevronDown size={12} style={{ color: '#64748B' }} />
+        onClick={() => onNavigate('notifications')}
+        className="flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium transition-colors"
+        style={{
+          backgroundColor: currentPage === 'notifications' ? 'rgba(56,189,248,0.12)' : C.card,
+          borderColor: currentPage === 'notifications' ? C.accent : C.border,
+          color: currentPage === 'notifications' ? C.accent : C.muted,
+        }}
+        title="Stored notifications. The page reads the backend's own unread count — this button shows no count of its own.">
+        <Bell size={14} />
+        Notifications
+      </button>
+
+      <button
+        onClick={() => onNavigate('system')}
+        className="flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium transition-colors"
+        style={{
+          backgroundColor: currentPage === 'system' ? 'rgba(56,189,248,0.12)' : C.card,
+          borderColor: currentPage === 'system' ? C.accent : C.border,
+          color: currentPage === 'system' ? C.accent : C.muted,
+        }}
+        title="Process, database and pipeline status, as the backend reports it.">
+        <Server size={14} />
+        System
       </button>
     </header>
   )

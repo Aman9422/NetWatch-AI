@@ -1,323 +1,489 @@
-import { useState } from 'react'
+/**
+ * Reports — stored metadata, and an honest statement that generation does not
+ * exist yet (M15.22).
+ *
+ * The page this replaces was fabricated end to end: a six-row history with dates,
+ * sizes and a `failed` status that no table held; a "live preview" of KPIs, a
+ * traffic chart, a severity breakdown and a MITRE-attributed event list, none of
+ * which any endpoint returns; and three export buttons that waited 1.4 seconds
+ * and then toasted about a file that was never produced. M15.22 forbids exactly
+ * that, so all of it is removed rather than re-pointed at real data (M15.31).
+ *
+ * What M13 actually exposes is **metadata**: `GET /reports` and
+ * `GET /reports/{id}` describe reports that exist — name, type, format, who
+ * produced them and when. Two consequences shape this page:
+ *
+ * * **There is nothing to download.** No model carries a location
+ *   (`app/schemas/report.py` withholds `file_path`, M13.30), so no control on this
+ *   page offers a file. The row action is *details*, not *download*.
+ * * **Generation refuses, and the page says so.** `POST /reports/generate`
+ *   answers `501 FEATURE_NOT_IMPLEMENTED`; M17 owns the writer. The control is
+ *   therefore offered so the refusal can be *shown* — an "unavailable until a
+ *   later milestone" state, deliberately distinct from a red failure, because a
+ *   milestone that has not been built yet is not an error.
+ *
+ * Reports publish no WebSocket channel, so the listing is read and refreshed
+ * explicitly (M15.34).
+ */
+
+import { useMemo, useState } from 'react'
 import {
-  FileText, Download, RefreshCw, Calendar, CheckCircle,
-  BarChart2, Clock, AlertTriangle,
+  AlertTriangle, CalendarClock, Clock, FileText, RefreshCw, Search, User,
 } from 'lucide-react'
+import { AsyncSection, EmptyState, RefreshFailureBanner, Spinner } from '@/components/AsyncState'
+import { useAsyncResource, useReports } from '@/hooks'
+import { DEFAULT_PAGE_LIMIT, fetchReport } from '@/services'
+import { C, tint } from '@/lib/tokens'
 import {
-  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-} from 'recharts'
+  UNKNOWN_TEXT, formatCount, formatElapsed, formatEpochRelative, formatTimestamp,
+} from '@/lib/format'
+import type { Report } from '@/types'
 import type { ToastMsg } from '../App'
 
-const C = {
-  accent: '#38BDF8', success: '#22C55E', warning: '#F59E0B',
-  danger: '#EF4444', info: '#06B6D4', purple: '#818CF8',
-  card: '#1E293B', panel: '#0F172A', border: '#334155',
-  text: '#F8FAFC', muted: '#94A3B8', faint: '#64748B', dim: '#475569',
-}
-const TIP = { backgroundColor: C.panel, border: `1px solid ${C.border}`, borderRadius: '10px', fontSize: '12px', fontFamily: 'Inter', color: C.text }
+/** How many reports one page shows. */
+const PAGE_SIZE = DEFAULT_PAGE_LIMIT
 
-type ReportType = 'daily' | 'weekly' | 'monthly' | 'custom'
-type ExportFmt  = 'pdf' | 'csv' | 'json'
-
-const REPORT_TYPES: { id: ReportType; label: string; desc: string }[] = [
-  { id: 'daily',   label: 'Daily Report',   desc: 'Last 24 hours of activity' },
-  { id: 'weekly',  label: 'Weekly Report',  desc: 'Rolling 7-day summary' },
-  { id: 'monthly', label: 'Monthly Report', desc: '30-day executive overview' },
-  { id: 'custom',  label: 'Custom Range',   desc: 'Define your own date range' },
-]
-
-const HISTORY = [
-  { id: 'RPT-2024-0318', type: 'Daily',   date: '2024-03-18', size: '1.4 MB', status: 'ready',  fmt: 'PDF' },
-  { id: 'RPT-2024-0317', type: 'Weekly',  date: '2024-03-17', size: '3.2 MB', status: 'ready',  fmt: 'PDF' },
-  { id: 'RPT-2024-0315', type: 'Monthly', date: '2024-03-15', size: '8.6 MB', status: 'ready',  fmt: 'PDF' },
-  { id: 'RPT-2024-0314', type: 'Daily',   date: '2024-03-14', size: '1.2 MB', status: 'ready',  fmt: 'CSV' },
-  { id: 'RPT-2024-0310', type: 'Custom',  date: '2024-03-10', size: '2.9 MB', status: 'ready',  fmt: 'JSON'},
-  { id: 'RPT-2024-0308', type: 'Daily',   date: '2024-03-08', size: '-',      status: 'failed', fmt: 'PDF' },
-]
-
-function make24h() {
-  return Array.from({ length: 24 }, (_, i) => ({
-    h: `${String(i).padStart(2,'0')}:00`,
-    traffic: Math.round(200 + Math.sin(i * 0.5) * 150 + Math.random() * 80),
-  }))
-}
-
-const data24h = make24h()
-const protoPreview = [
-  { name: 'TCP', value: 52, color: C.accent }, { name: 'UDP', value: 22, color: C.info },
-  { name: 'HTTPS', value: 14, color: C.purple }, { name: 'Other', value: 12, color: C.dim },
-]
-const sevBar = [
-  { sev: 'Critical', count: 3, color: C.danger }, { sev: 'High', count: 8, color: C.warning },
-  { sev: 'Medium', count: 21, color: C.info }, { sev: 'Low', count: 42, color: C.success },
-]
-
-function ReportPreview({ type }: { type: ReportType }) {
-  const date = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
-  const period = type === 'daily' ? 'Past 24 Hours' : type === 'weekly' ? 'Past 7 Days' : type === 'monthly' ? 'Past 30 Days' : 'Custom Period'
-
-  const KPI = [
-    { label: 'Total Packets',    value: '1.24M',   color: C.accent  },
-    { label: 'Data Transferred', value: '42.8 GB', color: C.info    },
-    { label: 'Active Devices',   value: '11',      color: C.success },
-    { label: 'Threats Detected', value: '74',      color: C.danger  },
-    { label: 'Alerts Fired',     value: '6',       color: C.warning },
-    { label: 'Mean TDR',         value: '4.2 min', color: C.purple  },
-  ]
-
+/** One labelled value in the detail panel. */
+function MetaField({ label, value, mono = false, icon }: {
+  label: string
+  value: string
+  mono?: boolean
+  icon?: React.ReactNode
+}) {
   return (
-    <div className="h-full overflow-y-auto" style={{ backgroundColor: '#0A1628' }}>
-      <div className="px-8 py-6 border-b" style={{ borderColor: C.border }}>
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-6 h-6 rounded flex items-center justify-center" style={{ backgroundColor: C.accent }}>
-                <BarChart2 size={12} style={{ color: '#0F172A' }} />
-              </div>
-              <span className="text-xs font-bold tracking-widest" style={{ color: C.accent }}>NETWATCH AI</span>
-            </div>
-            <h1 className="text-xl font-bold text-white mb-1">
-              {type.charAt(0).toUpperCase() + type.slice(1)} Security Report
-            </h1>
-            <div className="text-xs" style={{ color: C.faint }}>{period} · Generated {date}</div>
-          </div>
-          <div className="text-right">
-            <div className="text-xs font-semibold" style={{ color: C.muted }}>Report ID</div>
-            <div className="mono text-xs mt-0.5" style={{ color: C.dim }}>RPT-{Date.now().toString().slice(-8)}</div>
-          </div>
-        </div>
+    <div className="min-w-0">
+      <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: C.faint }}>
+        {icon}
+        {label}
       </div>
-
-      <div className="px-8 py-6 space-y-6">
-        <div className="grid grid-cols-6 gap-3">
-          {KPI.map(k => (
-            <div key={k.label} className="rounded-xl p-3" style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}>
-              <div className="text-lg font-bold" style={{ color: k.color }}>{k.value}</div>
-              <div className="text-xs mt-0.5" style={{ color: C.faint }}>{k.label}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="rounded-xl p-4" style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}>
-          <h3 className="text-xs font-semibold text-white mb-3">Network Traffic Volume</h3>
-          <ResponsiveContainer width="100%" height={120}>
-            <AreaChart data={data24h} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-              <defs>
-                <linearGradient id="rg1" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={C.accent} stopOpacity={0.3}/>
-                  <stop offset="100%" stopColor={C.accent} stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="2 5" stroke="#1a2744" vertical={false}/>
-              <XAxis dataKey="h" tick={{ fill: C.dim, fontSize: 8, fontFamily: 'JetBrains Mono' }} tickLine={false} axisLine={false} interval={5}/>
-              <YAxis tick={{ fill: C.dim, fontSize: 8 }} tickLine={false} axisLine={false}/>
-              <Tooltip contentStyle={TIP}/>
-              <Area type="monotone" dataKey="traffic" name="Traffic" stroke={C.accent} strokeWidth={2} fill="url(#rg1)" dot={false}/>
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="rounded-xl p-4" style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}>
-            <h3 className="text-xs font-semibold text-white mb-3">Alert Severity Breakdown</h3>
-            <ResponsiveContainer width="100%" height={100}>
-              <BarChart data={sevBar} margin={{ top: 4, right: 4, left: -20, bottom: 0 }} barSize={20}>
-                <XAxis dataKey="sev" tick={{ fill: C.dim, fontSize: 8 }} tickLine={false} axisLine={false}/>
-                <YAxis tick={{ fill: C.dim, fontSize: 8 }} tickLine={false} axisLine={false}/>
-                <Tooltip contentStyle={TIP}/>
-                <Bar dataKey="count" name="Alerts" radius={[3,3,0,0]}>
-                  {sevBar.map((e, i) => <Cell key={i} fill={e.color}/>)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="rounded-xl p-4" style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}>
-            <h3 className="text-xs font-semibold text-white mb-3">Protocol Mix</h3>
-            <div className="flex items-center gap-4">
-              <ResponsiveContainer width={100} height={100}>
-                <PieChart>
-                  <Pie data={protoPreview} dataKey="value" innerRadius={28} outerRadius={45} strokeWidth={0} paddingAngle={2}>
-                    {protoPreview.map((e, i) => <Cell key={i} fill={e.color}/>)}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-1.5">
-                {protoPreview.map(p => (
-                  <div key={p.name} className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: p.color }}/>
-                    <span className="text-xs" style={{ color: C.muted }}>{p.name}</span>
-                    <span className="text-xs font-bold mono ml-1" style={{ color: p.color }}>{p.value}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl p-4" style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}>
-          <h3 className="text-xs font-semibold text-white mb-3">Top Security Events</h3>
-          <table className="w-full">
-            <thead>
-              <tr>
-                {['Severity','Event','Source','MITRE','Status'].map(h => (
-                  <th key={h} className="text-left text-xs pb-2 font-medium" style={{ color: C.dim }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {([
-                ['Critical', 'Port Scan',        '192.168.1.20', 'T1046',     'Active'],
-                ['High',     'DNS Tunneling',     '10.0.0.22',    'T1071.004', 'Investigating'],
-                ['High',     'Brute Force (SSH)', '192.168.1.45', 'T1110',     'Acknowledged'],
-                ['Medium',   'ARP Spoofing',      '192.168.1.100','T1557',     'Resolved'],
-              ] as const).map(([sev, evt, src, mid, sta]) => {
-                const cc = sev === 'Critical' ? C.danger : sev === 'High' ? C.warning : C.info
-                return (
-                  <tr key={evt} className="border-t" style={{ borderColor: '#1a2744' }}>
-                    <td className="py-1.5 pr-4"><span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: `${cc}15`, color: cc }}>{sev}</span></td>
-                    <td className="py-1.5 pr-4 text-xs text-white">{evt}</td>
-                    <td className="py-1.5 pr-4 mono text-xs" style={{ color: C.accent }}>{src}</td>
-                    <td className="py-1.5 pr-4 mono text-xs" style={{ color: C.faint }}>{mid}</td>
-                    <td className="py-1.5 text-xs" style={{ color: C.muted }}>{sta}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+      <div className={`text-sm font-semibold text-white ${mono ? 'mono' : ''} break-words`}>
+        {value}
       </div>
     </div>
   )
 }
 
-interface Props { showToast: (msg: string, type?: ToastMsg['type']) => void }
+/**
+ * The generation refusal, rendered as "not built yet" rather than as a fault.
+ *
+ * A `not_implemented` answer is the backend stating that a later milestone owns
+ * this feature. Colouring it red would tell an operator the application is broken
+ * when it is simply incomplete, so the two cases render differently and the
+ * refusal carries the backend's own sentence (M15.22).
+ */
+function GenerationOutcome({ error, onRetry }: {
+  error: import('@/services').ApiError
+  onRetry: () => void
+}) {
+  const isUnavailable = error.kind === 'not_implemented'
+  const color = isUnavailable ? C.info : C.danger
+  return (
+    <div className="rounded-2xl border p-4 flex items-start gap-3"
+      style={{ backgroundColor: tint(color, 0.06), borderColor: tint(color, 0.25) }}>
+      <div className="p-2 rounded-xl flex-shrink-0" style={{ backgroundColor: tint(color, 0.12) }}>
+        {isUnavailable
+          ? <CalendarClock size={16} style={{ color }} />
+          : <AlertTriangle size={16} style={{ color }} />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold" style={{ color }}>
+          {isUnavailable ? 'Report generation is not available yet' : 'Generation request failed'}
+        </p>
+        <p className="text-xs mt-1" style={{ color: C.muted }}>{error.userMessage}</p>
+        {isUnavailable && (
+          <p className="text-xs mt-1.5" style={{ color: C.faint }}>
+            The backend answered {error.status ?? 501}
+            {error.code === undefined ? '' : ` (${error.code})`} because no report writer exists
+            in this milestone. Report generation is owned by a later milestone, so this page shows
+            stored metadata only and produces no file.
+          </p>
+        )}
+      </div>
+      {!isUnavailable && (
+        <button onClick={onRetry} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold flex-shrink-0"
+          style={{ backgroundColor: tint(color, 0.15), color }}>
+          <RefreshCw size={11} /> Retry
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** One stored report's metadata in full, read from `GET /reports/{id}`. */
+function ReportDetailPanel({ reportId, fallback, onBack }: {
+  reportId: number
+  fallback: Report | null
+  onBack: () => void
+}) {
+  const resource = useAsyncResource(
+    (signal) => fetchReport(reportId, signal),
+    [reportId],
+  )
+  const report = resource.data ?? fallback
+
+  return (
+    <div className="space-y-4 fade-in-up">
+      <button onClick={onBack}
+        className="flex items-center gap-2 text-sm font-medium transition-colors"
+        style={{ color: C.muted }}
+        onMouseEnter={e => (e.currentTarget.style.color = C.accent)}
+        onMouseLeave={e => (e.currentTarget.style.color = C.muted)}>
+        ← Back to Reports
+      </button>
+
+      {resource.blockingError !== null && report === null && (
+        <div className="rounded-2xl border" style={{ backgroundColor: C.card, borderColor: C.border }}>
+          <AsyncSection isInitialLoading={false} error={resource.blockingError} isEmpty={false}
+            errorTitle="Unable to load this report" onRetry={resource.reload} minHeight={200}>
+            <span />
+          </AsyncSection>
+        </div>
+      )}
+
+      {report === null && resource.isInitialLoading && (
+        <div className="rounded-2xl border" style={{ backgroundColor: C.card, borderColor: C.border }}>
+          <div className="flex items-center justify-center gap-3 py-16">
+            <Spinner size={18} />
+            <span className="text-xs" style={{ color: C.faint }}>Loading report…</span>
+          </div>
+        </div>
+      )}
+
+      {report !== null && (
+        <>
+          <div className="rounded-2xl border p-6" style={{ backgroundColor: C.card, borderColor: C.border }}>
+            <div className="flex items-start gap-4">
+              <div className="p-3 rounded-2xl flex-shrink-0" style={{ backgroundColor: tint(C.accent, 0.1) }}>
+                <FileText size={24} style={{ color: C.accent }} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base font-bold text-white break-words">{report.name}</h2>
+                <div className="flex items-center gap-2 flex-wrap mt-2">
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full capitalize"
+                    style={{ backgroundColor: tint(C.purple, 0.12), color: C.purple }}>
+                    {report.report_type === '' ? 'type not recorded' : report.report_type}
+                  </span>
+                  <span className="mono text-xs px-2 py-0.5 rounded-full"
+                    style={{ backgroundColor: tint(C.info, 0.12), color: C.info }}>
+                    {report.format === '' ? 'format not recorded' : report.format}
+                  </span>
+                  <span className="mono text-xs" style={{ color: C.faint }}>
+                    #{report.report_id}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 gap-4 mt-6 pt-6 border-t" style={{ borderColor: C.border }}>
+              <MetaField label="Generated at" value={formatTimestamp(report.generated_at)}
+                icon={<Clock size={11} />} />
+              <MetaField label="Age"
+                value={formatEpochRelative(report.generated_at_epoch)}
+                icon={<Clock size={11} />} />
+              <MetaField label="Produced by"
+                value={report.generated_by === null ? UNKNOWN_TEXT : `user ${report.generated_by}`}
+                mono={report.generated_by !== null} icon={<User size={11} />} />
+              <MetaField label="Stored type" value={report.report_type === '' ? UNKNOWN_TEXT : report.report_type}
+                mono />
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl border text-xs"
+            style={{ backgroundColor: C.panel, borderColor: C.border, color: C.muted }}>
+            <FileText size={13} style={{ color: C.faint, flexShrink: 0, marginTop: 1 }} />
+            <span>
+              These are the stored details for this report, and they are all M13 exposes. The
+              backend does not return the file's location, and no report writer exists in this
+              milestone, so there is no file for this page to link to or download.
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** One row of the report listing. Metadata only — no size, status or download. */
+function ReportRow({ report, onOpen }: { report: Report; onOpen: () => void }) {
+  const ageSeconds = report.generated_at_epoch === null
+    ? null
+    : Date.now() / 1000 - report.generated_at_epoch
+  return (
+    <tr onClick={onOpen}
+      className="border-b transition-all duration-150 cursor-pointer align-middle"
+      style={{ borderColor: '#1a2744' }}
+      onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.025)')}
+      onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
+      <td className="pl-5 py-3 pr-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-xl flex-shrink-0" style={{ backgroundColor: tint(C.accent, 0.08) }}>
+            <FileText size={14} style={{ color: C.accent }} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs font-semibold text-white truncate max-w-[280px]" title={report.name}>
+              {report.name}
+            </div>
+            <div className="mono text-xs mt-0.5" style={{ color: C.faint }}>#{report.report_id}</div>
+          </div>
+        </div>
+      </td>
+      <td className="py-3 pr-4">
+        <span className="text-xs font-medium capitalize px-2 py-0.5 rounded-full whitespace-nowrap"
+          style={{
+            backgroundColor: tint(C.purple, 0.12),
+            color: C.purple,
+          }}>
+          {report.report_type === '' ? UNKNOWN_TEXT : report.report_type}
+        </span>
+      </td>
+      <td className="py-3 pr-4">
+        <span className="mono text-xs px-2 py-0.5 rounded-full whitespace-nowrap"
+          style={{ backgroundColor: tint(C.info, 0.12), color: C.info }}>
+          {report.format === '' ? UNKNOWN_TEXT : report.format}
+        </span>
+      </td>
+      <td className="py-3 pr-4 text-xs whitespace-nowrap" style={{ color: C.muted }}>
+        {formatTimestamp(report.generated_at)}
+      </td>
+      <td className="py-3 pr-5 text-xs whitespace-nowrap" style={{ color: C.faint }}>
+        {ageSeconds === null ? UNKNOWN_TEXT : formatElapsed(ageSeconds)}
+      </td>
+    </tr>
+  )
+}
+// ─── Page ────────────────────────────────────────────────────────────────────
+
+interface Props {
+  showToast: (msg: string, type?: ToastMsg['type']) => void
+}
 
 export default function Reports({ showToast }: Props) {
-  const [reportType, setReportType] = useState<ReportType>('daily')
-  const [generating, setGenerating] = useState(false)
-  const [customFrom, setCustomFrom] = useState('2024-03-01')
-  const [customTo, setCustomTo] = useState('2024-03-18')
+  const [selected, setSelected] = useState<Report | null>(null)
+  const [typeInput, setTypeInput] = useState('')
+  const [formatInput, setFormatInput] = useState('')
+  const [appliedType, setAppliedType] = useState('')
+  const [appliedFormat, setAppliedFormat] = useState('')
+  const [offset, setOffset] = useState(0)
 
-  const handleGenerate = (fmt: ExportFmt) => {
-    setGenerating(true)
-    setTimeout(() => {
-      setGenerating(false)
-      showToast(`${reportType.charAt(0).toUpperCase() + reportType.slice(1)} report exported as ${fmt.toUpperCase()}`, 'success')
-    }, 1400)
+  // Filtering is by *exact stored value* (M13.20), so the inputs are free text
+  // rather than a dropdown of guessed values: offering a list of types this
+  // client invented would invite a filter that matches nothing.
+  const query = useMemo(() => {
+    const built: { report_type?: string; format?: string } = {}
+    if (appliedType !== '') built.report_type = appliedType
+    if (appliedFormat !== '') built.format = appliedFormat
+    return built
+  }, [appliedType, appliedFormat])
+
+  const window = useMemo(() => ({ limit: PAGE_SIZE, offset }), [offset])
+  const resource = useReports({ query, window })
+
+  if (selected !== null) {
+    return (
+      <ReportDetailPanel
+        reportId={selected.report_id}
+        fallback={selected}
+        onBack={() => setSelected(null)}
+      />
+    )
+  }
+
+  const reports = resource.reports
+  const isFiltered = appliedType !== '' || appliedFormat !== ''
+
+  const applyFilters = () => {
+    setAppliedType(typeInput.trim())
+    setAppliedFormat(formatInput.trim())
+    setOffset(0)
+  }
+
+  const clearFilters = () => {
+    setTypeInput('')
+    setFormatInput('')
+    setAppliedType('')
+    setAppliedFormat('')
+    setOffset(0)
+  }
+
+  const requestGeneration = () => {
+    void resource.generate().then(failure => {
+      // A `501` is the expected answer in this milestone, so it is reported as
+      // information rather than as a failure. The panel below carries the detail;
+      // the toast only confirms the request went out and came back.
+      if (failure === null) {
+        showToast('Generation request returned without a refusal', 'info')
+        return
+      }
+      showToast(
+        failure.kind === 'not_implemented'
+          ? 'Report generation is not available yet — it is owned by a later milestone'
+          : failure.userMessage,
+        failure.kind === 'not_implemented' ? 'info' : 'error',
+      )
+    })
   }
 
   return (
-    <div className="flex gap-4" style={{ height: 'calc(100vh - 200px)', minHeight: 0 }}>
-      {/* Left: controls */}
-      <div className="w-72 flex-shrink-0 space-y-4 overflow-y-auto">
-        <div className="rounded-2xl border overflow-hidden" style={{ backgroundColor: C.card, borderColor: C.border }}>
-          <div className="px-4 py-4 border-b" style={{ borderColor: C.border }}>
-            <h2 className="text-sm font-semibold text-white">Report Type</h2>
+    <div className="space-y-4">
+      {/* What this page is, and what it deliberately is not. */}
+      <div className="rounded-2xl border p-5" style={{ backgroundColor: C.card, borderColor: C.border }}>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-1.5">
+              <FileText size={15} style={{ color: C.accent }} />
+              <h1 className="text-sm font-semibold text-white">Reports</h1>
+            </div>
+            <p className="text-xs max-w-2xl" style={{ color: C.muted }}>
+              Stored report <span className="font-semibold text-white">metadata</span> — name, type,
+              format, who produced it and when. A report is described here, never served: the API
+              returns no file location, and no report writer exists in this milestone.
+            </p>
           </div>
-          <div className="p-2 space-y-1">
-            {REPORT_TYPES.map(r => (
-              <button key={r.id} onClick={() => setReportType(r.id)}
-                className="w-full text-left px-3 py-3 rounded-xl transition-all"
-                style={{ backgroundColor: reportType === r.id ? `${C.accent}10` : 'transparent', border: `1px solid ${reportType === r.id ? `${C.accent}30` : 'transparent'}` }}>
-                <div className="text-xs font-semibold" style={{ color: reportType === r.id ? C.accent : C.muted }}>{r.label}</div>
-                <div className="text-xs mt-0.5" style={{ color: C.faint }}>{r.desc}</div>
-              </button>
-            ))}
-          </div>
+          <button
+            onClick={requestGeneration}
+            disabled={resource.isGenerating}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border disabled:opacity-50 flex-shrink-0"
+            style={{
+              borderColor: tint(C.info, 0.4),
+              color: C.info,
+              backgroundColor: tint(C.info, 0.06),
+            }}
+            title="Asks the backend to generate a report. No report writer exists yet, so the request is refused — this control exists so that refusal can be shown.">
+            <RefreshCw size={12} className={resource.isGenerating ? 'animate-spin' : undefined} />
+            {resource.isGenerating ? 'Requesting…' : 'Request generation'}
+          </button>
         </div>
+      </div>
 
-        {reportType === 'custom' && (
-          <div className="rounded-2xl border p-4 space-y-3" style={{ backgroundColor: C.card, borderColor: C.border }}>
-            <h3 className="text-xs font-semibold text-white flex items-center gap-1.5">
-              <Calendar size={12} style={{ color: C.accent }}/> Date Range
-            </h3>
-            {(['From', 'To'] as const).map(label => {
-              const val = label === 'From' ? customFrom : customTo
-              const setter = label === 'From' ? setCustomFrom : setCustomTo
-              return (
-                <div key={label}>
-                  <label className="text-xs" style={{ color: C.faint }}>{label}</label>
-                  <input type="date" value={val} onChange={e => setter(e.target.value)}
-                    className="w-full mt-1 px-3 py-2 rounded-xl text-xs border"
-                    style={{ backgroundColor: C.panel, borderColor: C.border, color: C.text, outline: 'none' }} />
-                </div>
-              )
-            })}
-          </div>
+      {resource.generationError !== null && (
+        <GenerationOutcome error={resource.generationError} onRetry={requestGeneration} />
+      )}
+
+      {/* Filters — exact stored values. */}
+      <form className="flex items-center gap-2 flex-wrap"
+        onSubmit={event => { event.preventDefault(); applyFilters() }}>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-[180px]"
+          style={{ backgroundColor: C.card, borderColor: C.border }}>
+          <Search size={12} style={{ color: C.faint }} />
+          <input value={typeInput} onChange={e => setTypeInput(e.target.value)}
+            placeholder="Exact report type…"
+            className="bg-transparent text-xs flex-1"
+            style={{ color: C.text, outline: 'none' }} />
+        </div>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-[160px]"
+          style={{ backgroundColor: C.card, borderColor: C.border }}>
+          <Search size={12} style={{ color: C.faint }} />
+          <input value={formatInput} onChange={e => setFormatInput(e.target.value)}
+            placeholder="Exact format…"
+            className="bg-transparent text-xs flex-1"
+            style={{ color: C.text, outline: 'none' }} />
+        </div>
+        <button type="submit"
+          className="px-3 py-2 rounded-xl text-xs font-medium border"
+          style={{ borderColor: C.border, color: C.muted, backgroundColor: C.card }}>
+          Apply
+        </button>
+        {isFiltered && (
+          <button type="button" onClick={clearFilters}
+            className="px-3 py-2 rounded-xl text-xs font-medium border"
+            style={{ borderColor: C.border, color: C.muted, backgroundColor: C.card }}>
+            Clear
+          </button>
         )}
+        <button type="button" onClick={resource.reload} disabled={resource.isLoading}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border"
+          style={{ borderColor: C.border, color: C.muted, backgroundColor: C.card }}>
+          <RefreshCw size={12} className={resource.isLoading ? 'animate-spin' : undefined} /> Refresh
+        </button>
+        <span className="text-xs ml-auto" style={{ color: C.faint }}>
+          Filters match stored values exactly, so an unrecognised value selects nothing.
+        </span>
+      </form>
 
-        <div className="rounded-2xl border p-4 space-y-2" style={{ backgroundColor: C.card, borderColor: C.border }}>
-          <h3 className="text-xs font-semibold text-white mb-3">Export Format</h3>
-          {(['pdf', 'csv', 'json'] as ExportFmt[]).map(fmt => {
-            const cfg = {
-              pdf:  { icon: <FileText size={13}/>,  label: 'Export PDF',  color: C.danger  },
-              csv:  { icon: <Download size={13}/>,  label: 'Export CSV',  color: C.success },
-              json: { icon: <BarChart2 size={13}/>, label: 'Export JSON', color: C.accent  },
-            }[fmt]
-            return (
-              <button key={fmt} onClick={() => handleGenerate(fmt)} disabled={generating}
-                className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all"
-                style={{ backgroundColor: `${cfg.color}12`, color: cfg.color, opacity: generating ? 0.5 : 1 }}>
-                {generating ? <RefreshCw size={12} className="animate-spin"/> : cfg.icon}
-                {generating ? 'Generating...' : cfg.label}
-              </button>
-            )
-          })}
-        </div>
+      {resource.error !== null && reports.length > 0 && (
+        <RefreshFailureBanner error={resource.error} onRetry={resource.reload} />
+      )}
 
-        <div className="rounded-2xl border overflow-hidden" style={{ backgroundColor: C.card, borderColor: C.border }}>
-          <div className="px-4 py-3 border-b" style={{ borderColor: C.border }}>
-            <h3 className="text-xs font-semibold text-white">Report History</h3>
-          </div>
+      <div className="rounded-2xl border overflow-hidden"
+        style={{ backgroundColor: C.card, borderColor: C.border, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: C.border }}>
           <div>
-            {HISTORY.map(h => (
-              <div key={h.id} className="flex items-center justify-between px-4 py-3 border-b group transition-colors cursor-pointer"
-                style={{ borderColor: '#1a2744' }}
-                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.025)')}
-                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    {h.status === 'ready'
-                      ? <CheckCircle size={10} style={{ color: C.success }}/>
-                      : <AlertTriangle size={10} style={{ color: C.danger }}/>}
-                    <span className="text-xs font-semibold text-white">{h.type}</span>
-                    <span className="text-xs px-1.5 py-0.5 rounded mono" style={{ backgroundColor: C.panel, color: C.faint, fontSize: '9px' }}>{h.fmt}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <Clock size={9} style={{ color: C.faint }}/>
-                    <span className="text-xs" style={{ color: C.faint }}>{h.date} · {h.size}</span>
-                  </div>
-                </div>
-                {h.status === 'ready' && (
-                  <button onClick={() => showToast(`Downloading ${h.id}`, 'info')}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg"
-                    style={{ backgroundColor: `${C.accent}15` }}>
-                    <Download size={11} style={{ color: C.accent }}/>
-                  </button>
-                )}
-              </div>
-            ))}
+            <h2 className="text-sm font-semibold text-white">Stored reports</h2>
+            <p className="text-xs mt-0.5" style={{ color: C.faint }}>
+              {reports.length} loaded
+              {resource.total === null ? '' : ` of ${formatCount(resource.total)} matching`}
+              {` · rows ${offset + 1}–${offset + reports.length}`}
+            </p>
           </div>
+          <span className="text-xs" style={{ color: C.faint }}>
+            Metadata only — no file is served
+          </span>
+        </div>
+
+        <AsyncSection
+          isInitialLoading={resource.isInitialLoading}
+          error={resource.blockingError}
+          isEmpty={false}
+          loadingLabel="Loading report metadata…"
+          errorTitle="Unable to load reports"
+          onRetry={resource.reload}
+          minHeight={240}
+        >
+          {reports.length === 0 ? (
+            <EmptyState
+              title={isFiltered ? 'No reports match the filter' : 'No reports stored'}
+              hint={isFiltered
+                ? 'Filters match stored values exactly. Clear them to see everything recorded.'
+                : 'Report generation is owned by a later milestone, so nothing has been recorded yet.'}
+              icon={isFiltered ? <Search size={28} /> : <FileText size={28} />}
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b" style={{ borderColor: C.border }}>
+                    <th className="text-left pl-5 py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Report</th>
+                    <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Type</th>
+                    <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Format</th>
+                    <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Generated at</th>
+                    <th className="text-left py-2.5 pr-5 text-xs font-medium" style={{ color: C.dim }}>Age</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reports.map(report => (
+                    <ReportRow key={report.report_id} report={report}
+                      onOpen={() => setSelected(report)} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </AsyncSection>
+
+        <div className="flex items-center justify-between px-5 py-3 border-t" style={{ borderColor: C.border }}>
+          <button onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+            disabled={offset === 0 || resource.isLoading}
+            className="px-3 py-1.5 rounded-xl text-xs font-medium border disabled:opacity-40"
+            style={{ borderColor: C.border, color: C.muted, backgroundColor: C.panel }}>
+            Previous
+          </button>
+          <span className="text-xs" style={{ color: C.faint }}>
+            {offset === 0 && !resource.hasMore ? 'All matching reports' : `Offset ${offset}`}
+          </span>
+          <button onClick={() => setOffset(offset + PAGE_SIZE)}
+            disabled={!resource.hasMore || resource.isLoading}
+            className="px-3 py-1.5 rounded-xl text-xs font-medium border disabled:opacity-40"
+            style={{ borderColor: C.border, color: C.muted, backgroundColor: C.panel }}>
+            Next
+          </button>
         </div>
       </div>
 
-      {/* Right: preview */}
-      <div className="flex-1 min-w-0 rounded-2xl border overflow-hidden" style={{ backgroundColor: '#0A1628', borderColor: C.border }}>
-        <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: C.border, backgroundColor: C.card }}>
-          <div className="flex items-center gap-2">
-            <FileText size={13} style={{ color: C.accent }}/>
-            <span className="text-xs font-semibold text-white">Report Preview</span>
-            <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: `${C.accent}15`, color: C.accent }}>
-              {reportType.charAt(0).toUpperCase() + reportType.slice(1)}
-            </span>
-          </div>
-          <span className="text-xs" style={{ color: C.faint }}>Live preview</span>
-        </div>
-        <div style={{ height: 'calc(100% - 48px)', overflow: 'hidden' }}>
-          <ReportPreview type={reportType}/>
-        </div>
-      </div>
+      <p className="text-xs px-1" style={{ color: C.faint }}>
+        Selecting a row reads that report's own metadata record. A value of {UNKNOWN_TEXT} means the
+        backend recorded nothing for that field — a report produced before this instance was
+        started, for instance, has no recorded producer.
+      </p>
     </div>
   )
 }

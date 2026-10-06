@@ -1,470 +1,414 @@
-import { useState } from 'react'
+/**
+ * Alerts — the M11 alert listing (M15.14).
+ *
+ * What this page replaced invented its alert corpus: a static array with MITRE
+ * mappings, indicator-of-compromise lists and an "AI analysis" paragraph per row.
+ * None of that exists behind the API. What exists is an alert with a severity, a
+ * lifecycle state, an evidence strength and a set of references, and that is what
+ * is rendered.
+ *
+ * The listing is `GET /alerts`; `/ws/alerts` keeps it current. The two are joined
+ * by {@link useAlerts}, which makes one distinction this page must not blur: an
+ * update to a row **already on screen** replaces that row, while a *new* alert is
+ * collected in `pendingNew` rather than inserted. Deciding whether a new alert
+ * belongs in the current filtered, paginated page would mean re-implementing the
+ * backend's filter and ordering in React, so the page offers a refresh instead and
+ * says how many are waiting (M15.14).
+ *
+ * Nothing here re-derives a lifecycle rule. The buttons come from
+ * {@link ALERT_TRANSITIONS} so the UI avoids offering a move that is guaranteed to
+ * be refused; the backend still decides, and a refusal is displayed (M15.15).
+ */
+
+import { useMemo, useState } from 'react'
 import {
-  Search, Filter, Download, ArrowLeft, Shield, AlertTriangle,
-  Brain, CheckCircle, FileText, Clock, Target,
+  Search, ShieldAlert, RefreshCw, Bell, Inbox, Hash, FileText, Server,
 } from 'lucide-react'
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid,
-} from 'recharts'
+  AsyncSection, EmptyState, RefreshFailureBanner,
+} from '@/components/AsyncState'
+import { useAlerts } from '@/hooks'
+import { DEFAULT_PAGE_LIMIT } from '@/services'
+import type { ApiError } from '@/services'
+import { C, tint, SEVERITY_COLORS, ALERT_STATUS_COLORS } from '@/lib/tokens'
+import {
+  UNKNOWN_TEXT, formatConfidence, formatCount, formatRelative, formatTimeOfDay,
+} from '@/lib/format'
+import { ALERT_SEVERITY_ORDER } from '@/types'
+import type { Alert, AlertSeverity, AlertStatus } from '@/types'
 import type { ToastMsg } from '../App'
+import { AlertDetailPanel } from '@/components/alerts/AlertDetailPanel'
 
-// ─── Tokens ──────────────────────────────────────────────────────────────────
-const C = {
-  accent: '#38BDF8', success: '#22C55E', warning: '#F59E0B',
-  danger: '#EF4444', info: '#06B6D4', purple: '#818CF8', orange: '#F97316',
-  card: '#1E293B', panel: '#0F172A', border: '#334155',
-  text: '#F8FAFC', muted: '#94A3B8', faint: '#64748B', dim: '#475569',
-}
-const TIP = { backgroundColor: C.panel, border: `1px solid ${C.border}`, borderRadius: '10px', fontSize: '12px', fontFamily: 'Inter' }
+/** How many alerts one page shows. */
+const PAGE_SIZE = DEFAULT_PAGE_LIMIT
 
-const SEV_CFG: Record<string, { color: string; bg: string; label: string; border: string }> = {
-  critical: { color: C.danger,  bg: 'rgba(239,68,68,0.12)',   label: 'Critical', border: 'rgba(239,68,68,0.3)'   },
-  high:     { color: C.orange,  bg: 'rgba(249,115,22,0.12)',  label: 'High',     border: 'rgba(249,115,22,0.3)'  },
-  medium:   { color: C.warning, bg: 'rgba(245,158,11,0.12)',  label: 'Medium',   border: 'rgba(245,158,11,0.3)'  },
-  low:      { color: C.info,    bg: 'rgba(6,182,212,0.12)',   label: 'Low',      border: 'rgba(6,182,212,0.3)'   },
-}
-const STATUS_CFG: Record<string, { color: string; bg: string }> = {
-  active:        { color: C.danger,  bg: 'rgba(239,68,68,0.12)'  },
-  investigating: { color: C.warning, bg: 'rgba(245,158,11,0.12)' },
-  acknowledged:  { color: C.info,    bg: 'rgba(6,182,212,0.12)'  },
-  resolved:      { color: C.success, bg: 'rgba(34,197,94,0.12)'  },
-}
-
-// ─── Data ─────────────────────────────────────────────────────────────────────
-interface Alert {
-  id: number; sev: string; type: string; src: string; dst: string
-  srcDevice: string; confidence: number; mitre: string; mitreId: string
-  status: string; time: string; proto: string; desc: string
-  recommendation: string; iocs: string[]
-  evidence: { type: string; value: string }[]
-}
-
-const ALERTS: Alert[] = [
-  {
-    id:1, sev:'critical', type:'Port Scan',        src:'192.168.1.20', dst:'192.168.1.0/24',
-    srcDevice:'UNKNOWN-C001',  confidence:91, mitre:'Network Service Scanning', mitreId:'T1046',
-    status:'active',        time:'12:21:08', proto:'TCP',  desc:'Systematic SYN scan detected across 1,024 ports. Source is performing network reconnaissance against the internal subnet.',
-    recommendation:'Immediately block 192.168.1.20 at the firewall. Enable IPS blocking rule. Isolate device and perform forensic investigation.',
-    iocs:['192.168.1.20 scanning 1,024 ports','SYN packets with no ACK responses','Source port randomization pattern detected'],
-    evidence:[{type:'IP',value:'192.168.1.20'},{type:'Port Range',value:'1–1024'},{type:'Packets',value:'8,420 SYN pkts/min'},{type:'Duration',value:'4 min 32s'}],
-  },
-  {
-    id:2, sev:'high',     type:'DNS Tunneling',   src:'10.0.0.22',    dst:'8.8.8.8',
-    srcDevice:'IOT-ESP32-01',  confidence:84, mitre:'Application Layer Protocol: DNS', mitreId:'T1071.004',
-    status:'investigating', time:'12:15:33', proto:'DNS', desc:'Encoded data detected in DNS TXT query payloads. Payload exceeds normal DNS response size by 4x and contains base64-encoded content.',
-    recommendation:'Quarantine IoT device. Block DNS to external resolvers. Review all DNS traffic from 10.0.0.22 over last 48 hours.',
-    iocs:['DNS TXT records >512 bytes','Base64 encoded subdomains','Query rate: 240/min vs baseline 12/min'],
-    evidence:[{type:'IP',value:'10.0.0.22'},{type:'Domain',value:'c2.attacker.io'},{type:'Payload',value:'Encoded 4.2KB'},{type:'Queries',value:'240/min'}],
-  },
-  {
-    id:3, sev:'high',     type:'Brute Force',     src:'192.168.1.45', dst:'192.168.1.5',
-    srcDevice:'iPhone-15-Pro', confidence:78, mitre:'Brute Force',  mitreId:'T1110',
-    status:'acknowledged',  time:'11:58:14', proto:'SSH', desc:'420 failed SSH authentication attempts detected in 60 seconds against NAS server. Credential stuffing attack pattern.',
-    recommendation:'Lock SSH account after 5 failed attempts. Implement 2FA for SSH. Consider whitelisting SSH source IPs.',
-    iocs:['420 failed auth attempts in 60s','Multiple username variants tried','Sequential user enumeration pattern'],
-    evidence:[{type:'Target',value:'192.168.1.5:22'},{type:'Attempts',value:'420 in 60s'},{type:'Usernames',value:'28 variants'},{type:'Source',value:'192.168.1.45'}],
-  },
-  {
-    id:4, sev:'medium',   type:'ARP Spoofing',    src:'192.168.1.100',dst:'192.168.1.0/24',
-    srcDevice:'SAMSUNG-TV',    confidence:72, mitre:'Adversary-in-the-Middle', mitreId:'T1557',
-    status:'acknowledged',  time:'11:42:55', proto:'ARP', desc:'Gratuitous ARP replies detected from Samsung TV. Host may be attempting to poison the ARP cache of neighboring devices.',
-    recommendation:'Enable Dynamic ARP Inspection on managed switches. Monitor for man-in-the-middle indicators.',
-    iocs:['Unsolicited ARP replies','MAC spoofing attempt','Gateway ARP entry modification'],
-    evidence:[{type:'Source',value:'192.168.1.100'},{type:'Target MAC',value:'Broadcast'},{type:'Rate',value:'120 ARP/min'},{type:'Duration',value:'8 min'}],
-  },
-  {
-    id:5, sev:'medium',   type:'Data Exfiltration',src:'192.168.1.25',dst:'104.21.45.2',
-    srcDevice:'UNKNOWN-FF00',  confidence:68, mitre:'Exfiltration Over C2',mitreId:'T1041',
-    status:'investigating', time:'11:20:02', proto:'HTTPS',desc:'Large encrypted data transfer detected to unknown external host. Volume 3.2GB over 12 minutes is anomalous for this device.',
-    recommendation:'Block outbound connection to 104.21.45.2. Perform memory forensics on device. Check for installed backdoors.',
-    iocs:['3.2GB upload in 12 minutes','Connection to uncategorized IP','Encrypted channel to unknown host'],
-    evidence:[{type:'Dst IP',value:'104.21.45.2'},{type:'Volume',value:'3.2 GB upload'},{type:'Duration',value:'12 min'},{type:'Encryption',value:'TLS 1.3'}],
-  },
-  {
-    id:6, sev:'low',      type:'ICMP Flood',      src:'192.168.1.55', dst:'192.168.1.1',
-    srcDevice:'RASPI-4B',      confidence:45, mitre:'Network Denial of Service',mitreId:'T1498',
-    status:'resolved',      time:'10:55:18', proto:'ICMP',desc:'High-rate ICMP echo requests detected against the gateway. Could indicate DoS attempt or automated network testing.',
-    recommendation:'Rate-limit ICMP at perimeter. Investigate if device is running unauthorized network tools.',
-    iocs:['1,200 ICMP/s against gateway','Packet size 65,507 bytes (max ICMP)','Continuous for 3 minutes'],
-    evidence:[{type:'Target',value:'192.168.1.1'},{type:'Rate',value:'1,200 pkts/s'},{type:'Size',value:'65,507 bytes'},{type:'Duration',value:'3 min'}],
-  },
+/** The five lifecycle states, in the order the filter offers them. */
+const ALERT_STATUS_ORDER: readonly AlertStatus[] = [
+  'open',
+  'acknowledged',
+  'resolved',
+  'dismissed',
+  'false_positive',
 ]
 
-// ─── Threat Gauge (mini) ─────────────────────────────────────────────────────
-function MiniGauge({ score, color }: { score: number; color: string }) {
-  const r = 36, sw = 7, W = 100, H = 62, cx = W/2, cy = H - 4
-  const angle = Math.PI * (1 - score / 100)
-  const nx = +(cx + r * Math.cos(angle)).toFixed(2)
-  const ny = +(cy - r * Math.sin(angle)).toFixed(2)
-  const bg  = `M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${cx+r} ${cy}`
-  const fill = score > 0 ? `M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${nx} ${ny}` : null
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ overflow: 'visible' }}>
-      <path d={bg} fill="none" stroke={C.panel} strokeWidth={sw-2} strokeLinecap="round" />
-      {fill && <path d={fill} fill="none" stroke={color} strokeWidth={sw-2} strokeLinecap="round" />}
-      <circle cx={nx} cy={ny} r={4} fill={color} />
-      <text x={cx} y={cy-10} textAnchor="middle" fill={C.text} fontSize={18} fontWeight="700" fontFamily="Inter">{score}</text>
-      <text x={cx} y={cy+2}  textAnchor="middle" fill={color} fontSize={8} fontWeight="600" fontFamily="Inter">RISK SCORE</text>
-    </svg>
-  )
+/** A readable label for a lifecycle state. */
+function statusLabel(status: AlertStatus): string {
+  return status === 'false_positive'
+    ? 'False positive'
+    : status.charAt(0).toUpperCase() + status.slice(1)
 }
 
-// ─── Alert Investigation ──────────────────────────────────────────────────────
-function AlertInvestigation({ alert, onBack, showToast }: {
-  alert: Alert; onBack: () => void; showToast: (m: string, t?: ToastMsg['type']) => void
-}) {
-  const sev  = SEV_CFG[alert.sev]
-  const stat = STATUS_CFG[alert.status]
-  const riskScore = alert.sev === 'critical' ? 94 : alert.sev === 'high' ? 72 : alert.sev === 'medium' ? 48 : 22
+/** A readable label for a severity. */
+function severityLabel(severity: AlertSeverity): string {
+  return severity.charAt(0).toUpperCase() + severity.slice(1)
+}
 
-  const timelineData = Array.from({ length: 12 }, (_, i) => ({
-    t: `${String(12 - i).padStart(2,'0')}:${String(i * 5).padStart(2,'0')}`,
-    events: Math.floor(Math.random() * (alert.sev === 'critical' ? 40 : 20)),
-  }))
+// ─── Summary tiles ───────────────────────────────────────────────────────────
 
+/**
+ * One count, straight from `GET /alerts/summary`.
+ *
+ * The counts are the backend's tallies over the whole alert store, not a count of
+ * the rows on screen — the caption says so, because "open: 3" meaning "3 open
+ * alerts in this page" and "3 open alerts in the system" are very different
+ * statements.
+ */
+function SummaryTile({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <div className="space-y-4 fade-in-up">
-      <button onClick={onBack}
-        className="flex items-center gap-2 text-sm font-medium transition-colors"
-        style={{ color: C.muted }}
-        onMouseEnter={e => (e.currentTarget.style.color = C.accent)}
-        onMouseLeave={e => (e.currentTarget.style.color = C.muted)}>
-        <ArrowLeft size={15}/> Back to Alerts
-      </button>
-
-      {/* Header */}
-      <div className="rounded-2xl border p-6" style={{ backgroundColor: C.card, borderColor: sev.border }}>
-        <div className="flex items-start justify-between gap-6">
-          <div className="flex-1">
-            <div className="flex items-center gap-3 mb-2 flex-wrap">
-              <span className="text-xs px-2.5 py-1 rounded-full font-semibold"
-                style={{ backgroundColor: sev.bg, color: sev.color }}>{sev.label}</span>
-              <span className="text-xs px-2.5 py-1 rounded-full font-medium capitalize"
-                style={{ backgroundColor: stat.bg, color: stat.color }}>{alert.status}</span>
-              <span className="text-xs px-2 py-0.5 rounded mono"
-                style={{ backgroundColor: C.panel, color: C.muted }}>{alert.proto}</span>
-              <span className="mono text-xs ml-auto" style={{ color: C.faint }}>{alert.time}</span>
-            </div>
-            <h1 className="text-xl font-bold text-white mb-1">{alert.type}</h1>
-            <div className="mono text-sm mb-3" style={{ color: C.accent }}>{alert.mitreId} — {alert.mitre}</div>
-            <p className="text-sm leading-relaxed" style={{ color: C.muted }}>{alert.desc}</p>
-          </div>
-          <div className="flex flex-col items-center flex-shrink-0">
-            <MiniGauge score={riskScore} color={sev.color} />
-          </div>
-        </div>
-
-        {/* Evidence grid */}
-        <div className="grid grid-cols-4 gap-3 mt-5 pt-5 border-t" style={{ borderColor: C.border }}>
-          {alert.evidence.map(ev => (
-            <div key={ev.type} className="p-3 rounded-xl" style={{ backgroundColor: C.panel }}>
-              <div className="text-xs mb-1" style={{ color: C.faint }}>{ev.type}</div>
-              <div className="mono text-xs font-semibold text-white">{ev.value}</div>
-            </div>
-          ))}
-        </div>
+    <div className="rounded-2xl border px-4 py-3"
+      style={{ backgroundColor: C.card, borderColor: C.border }}>
+      <div className="flex items-center gap-2">
+        <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: color }} />
+        <span className="text-xs font-medium" style={{ color: C.muted }}>{label}</span>
       </div>
-
-      {/* Actions */}
-      <div className="flex gap-3">
-        <button onClick={() => showToast(`Alert #${alert.id} acknowledged`, 'info')}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold"
-          style={{ backgroundColor: `${C.info}15`, color: C.info }}>
-          <CheckCircle size={14}/> Acknowledge
-        </button>
-        <button onClick={() => showToast(`Alert #${alert.id} resolved`, 'success')}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold"
-          style={{ backgroundColor: `${C.success}15`, color: C.success }}>
-          <Shield size={14}/> Resolve
-        </button>
-        <button onClick={() => showToast('Alert report exported', 'success')}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border"
-          style={{ borderColor: C.border, color: C.muted, backgroundColor: C.card }}>
-          <Download size={14}/> Export
-        </button>
-      </div>
-
-      {/* Main content grid */}
-      <div className="grid grid-cols-12 gap-4">
-        {/* Left col (8) */}
-        <div className="col-span-8 space-y-4">
-          {/* Packet timeline */}
-          <div className="rounded-2xl border p-5" style={{ backgroundColor: C.card, borderColor: C.border }}>
-            <h3 className="text-sm font-semibold text-white mb-1">Attack Timeline</h3>
-            <p className="text-xs mb-4" style={{ color: C.faint }}>Event frequency over last 60 minutes</p>
-            <ResponsiveContainer width="100%" height={150}>
-              <BarChart data={timelineData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }} barSize={12}>
-                <CartesianGrid strokeDasharray="2 5" stroke="#1a2744" vertical={false} />
-                <XAxis dataKey="t" tick={{ fill: C.dim, fontSize: 9, fontFamily: 'JetBrains Mono' }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fill: C.dim, fontSize: 9 }} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={TIP} />
-                <Bar dataKey="events" name="Events" fill={sev.color} radius={[3,3,0,0]} opacity={0.9} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* MITRE ATT&CK */}
-          <div className="rounded-2xl border p-5" style={{ backgroundColor: C.card, borderColor: C.border }}>
-            <div className="flex items-center gap-2 mb-4">
-              <Target size={14} style={{ color: C.accent }} />
-              <h3 className="text-sm font-semibold text-white">MITRE ATT&CK Mapping</h3>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { phase: 'Reconnaissance',    technique: alert.mitreId, name: alert.mitre, active: true },
-                { phase: 'Initial Access',    technique: '—',           name: 'No mapping', active: false },
-                { phase: 'Execution',         technique: '—',           name: 'No mapping', active: false },
-                { phase: 'Persistence',       technique: '—',           name: 'No mapping', active: false },
-                { phase: 'Lateral Movement',  technique: alert.sev === 'critical' ? 'T1021' : '—', name: alert.sev === 'critical' ? 'Remote Services' : 'No mapping', active: alert.sev === 'critical' },
-                { phase: 'Exfiltration',      technique: alert.type.includes('Exfil') ? 'T1041' : '—', name: alert.type.includes('Exfil') ? 'C2 Channel' : 'No mapping', active: alert.type.includes('Exfil') },
-              ].map(m => (
-                <div key={m.phase} className="p-3 rounded-xl border transition-all"
-                  style={{ backgroundColor: m.active ? `${C.accent}08` : C.panel, borderColor: m.active ? `${C.accent}30` : C.border }}>
-                  <div className="text-xs font-semibold mb-1" style={{ color: m.active ? C.accent : C.dim }}>{m.phase}</div>
-                  <div className="mono text-xs font-bold text-white">{m.technique}</div>
-                  <div className="text-xs mt-0.5" style={{ color: C.faint }}>{m.name}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* IOCs */}
-          <div className="rounded-2xl border p-5" style={{ backgroundColor: C.card, borderColor: C.border }}>
-            <h3 className="text-sm font-semibold text-white mb-4">Indicators of Compromise</h3>
-            <div className="space-y-2">
-              {alert.iocs.map((ioc, i) => (
-                <div key={i} className="flex items-center gap-3 p-3 rounded-xl"
-                  style={{ backgroundColor: C.panel }}>
-                  <AlertTriangle size={12} style={{ color: sev.color, flexShrink: 0 }} />
-                  <span className="text-xs" style={{ color: C.muted }}>{ioc}</span>
-                  <span className="ml-auto text-xs px-2 py-0.5 rounded-full font-medium"
-                    style={{ backgroundColor: sev.bg, color: sev.color }}>IOC</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Right col (4) */}
-        <div className="col-span-4 space-y-4">
-          {/* AI Analysis */}
-          <div className="rounded-2xl border overflow-hidden relative"
-            style={{ backgroundColor: C.card, borderColor: C.border }}>
-            <div className="absolute top-0 right-0 w-28 h-28 opacity-[0.04] pointer-events-none"
-              style={{ background: `radial-gradient(circle, ${C.accent}, transparent 70%)` }} />
-            <div className="flex items-center gap-2 px-5 py-4 border-b" style={{ borderColor: C.border }}>
-              <Brain size={13} style={{ color: C.accent }} />
-              <h3 className="text-sm font-semibold text-white">AI Analysis</h3>
-            </div>
-            <div className="p-5 space-y-3">
-              <p className="text-xs leading-relaxed" style={{ color: C.muted }}>
-                This alert matches the behavioral signature of an automated {alert.type.toLowerCase()} tool
-                with {alert.confidence}% confidence. The attack pattern aligns with known threat actor TTPs
-                targeting internal network infrastructure.
-              </p>
-              <div className="flex justify-between text-xs">
-                <span style={{ color: C.faint }}>Model Confidence</span>
-                <span className="font-bold" style={{ color: sev.color }}>{alert.confidence}%</span>
-              </div>
-              <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: C.panel }}>
-                <div className="h-full rounded-full" style={{ width: `${alert.confidence}%`, backgroundColor: sev.color }} />
-              </div>
-            </div>
-          </div>
-
-          {/* Affected device */}
-          <div className="rounded-2xl border p-5" style={{ backgroundColor: C.card, borderColor: C.border }}>
-            <h3 className="text-sm font-semibold text-white mb-3">Affected Device</h3>
-            <div className="space-y-2">
-              {[['Hostname', alert.srcDevice], ['Source IP', alert.src], ['Destination', alert.dst], ['Protocol', alert.proto]].map(([k, v]) => (
-                <div key={k} className="flex justify-between items-center py-1.5 border-b" style={{ borderColor: '#1a2744' }}>
-                  <span className="text-xs" style={{ color: C.faint }}>{k}</span>
-                  <span className="mono text-xs font-medium" style={{ color: C.muted }}>{v}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Recommendations */}
-          <div className="rounded-2xl border p-5" style={{ backgroundColor: C.card, borderColor: C.border }}>
-            <h3 className="text-sm font-semibold text-white mb-3">Recommended Actions</h3>
-            <p className="text-xs leading-relaxed" style={{ color: C.muted }}>{alert.recommendation}</p>
-            <div className="mt-4 space-y-2">
-              <button onClick={() => showToast(`Blocking ${alert.src}`, 'info')}
-                className="w-full py-2 rounded-xl text-xs font-semibold"
-                style={{ backgroundColor: `${C.danger}15`, color: C.danger }}>
-                Block Source IP
-              </button>
-              <button onClick={() => showToast('Creating firewall rule', 'success')}
-                className="w-full py-2 rounded-xl text-xs font-semibold border"
-                style={{ borderColor: C.border, color: C.muted }}>
-                Create Firewall Rule
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <div className="text-2xl font-bold text-white mt-1 leading-none">{formatCount(value)}</div>
     </div>
   )
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
-interface Props { showToast: (msg: string, type?: ToastMsg['type']) => void }
+// ─── Table row ───────────────────────────────────────────────────────────────
+
+function AlertRow({ alert, onOpen }: { alert: Alert; onOpen: () => void }) {
+  const severityColor = SEVERITY_COLORS[alert.severity] ?? C.warning
+  const statusColor = ALERT_STATUS_COLORS[alert.status] ?? C.muted
+  return (
+    <tr onClick={onOpen}
+      className="border-b transition-all duration-150 cursor-pointer"
+      style={{ borderColor: '#1a2744' }}
+      onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.025)')}
+      onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
+      <td className="pl-5 py-3 pr-3">
+        <span className="text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
+          style={{ backgroundColor: tint(severityColor, 0.12), color: severityColor }}>
+          {severityLabel(alert.severity)}
+        </span>
+      </td>
+      <td className="py-3 pr-4 max-w-[320px]">
+        <div className="text-xs font-semibold text-white truncate" title={alert.title}>{alert.title}</div>
+        <div className="text-xs mt-0.5 truncate" style={{ color: C.faint }} title={alert.description}>
+          {alert.description}
+        </div>
+      </td>
+      <td className="py-3 pr-4">
+        <span className="text-xs font-medium capitalize whitespace-nowrap" style={{ color: statusColor }}>
+          {statusLabel(alert.status)}
+        </span>
+      </td>
+      <td className="py-3 pr-4 mono text-xs whitespace-nowrap" style={{ color: C.accent }}>
+        {alert.source_ip ?? UNKNOWN_TEXT}
+        <span style={{ color: C.dim }}> → </span>
+        {alert.destination_ip ?? UNKNOWN_TEXT}
+      </td>
+      <td className="py-3 pr-4">
+        <div className="flex items-center gap-2">
+          <div className="w-10 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: C.panel }}>
+            <div className="h-full rounded-full"
+              style={{ width: `${Math.round(alert.confidence * 100)}%`, backgroundColor: C.info }} />
+          </div>
+          <span className="mono text-xs" style={{ color: C.muted }}>{formatConfidence(alert.confidence)}</span>
+        </div>
+      </td>
+      <td className="py-3 pr-4 mono text-xs whitespace-nowrap" style={{ color: C.faint }}>
+        {alert.protocol ?? UNKNOWN_TEXT}
+      </td>
+      <td className="py-3 pr-4">
+        <span className="flex items-center gap-1 text-xs whitespace-nowrap" style={{ color: C.faint }}>
+          <FileText size={11} />
+          {alert.evidence_count}
+        </span>
+      </td>
+      <td className="py-3 pr-5 text-xs whitespace-nowrap" style={{ color: C.muted }}
+        title={alert.created_at ?? undefined}>
+        {formatRelative(alert.created_at)}
+      </td>
+    </tr>
+  )
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────────
+
+interface Props {
+  showToast: (msg: string, type?: ToastMsg['type']) => void
+}
 
 export default function Alerts({ showToast }: Props) {
-  const [selected, setSelected] = useState<Alert | null>(null)
-  const [search, setSearch] = useState('')
-  const [sevFilter, setSevFilter] = useState('ALL')
-  const [statusFilter, setStatusFilter] = useState('ALL')
-  const [protoFilter, setProtoFilter] = useState('ALL')
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [severityFilter, setSeverityFilter] = useState<AlertSeverity | 'ALL'>('ALL')
+  const [statusFilter, setStatusFilter] = useState<AlertStatus | 'ALL'>('ALL')
+  // The address box is an *applied* backend filter, not a live client-side one.
+  // Free-text narrowing of the loaded page would silently search only the current
+  // page, which is the mistake the Devices page names explicitly; here the query
+  // is the server's, so the result is the whole matching set.
+  const [addressInput, setAddressInput] = useState('')
+  const [appliedAddress, setAppliedAddress] = useState('')
+  const [offset, setOffset] = useState(0)
 
-  if (selected) return <AlertInvestigation alert={selected} onBack={() => setSelected(null)} showToast={showToast} />
+  const query = useMemo(() => {
+    const built: {
+      severity?: AlertSeverity
+      status?: readonly AlertStatus[]
+      source_ip?: string
+    } = {}
+    if (severityFilter !== 'ALL') built.severity = severityFilter
+    if (statusFilter !== 'ALL') built.status = [statusFilter]
+    if (appliedAddress !== '') built.source_ip = appliedAddress
+    return built
+  }, [severityFilter, statusFilter, appliedAddress])
 
-  const counts = { critical: ALERTS.filter(a => a.sev === 'critical').length, high: ALERTS.filter(a => a.sev === 'high').length, medium: ALERTS.filter(a => a.sev === 'medium').length, low: ALERTS.filter(a => a.sev === 'low').length }
+  const window = useMemo(() => ({ limit: PAGE_SIZE, offset }), [offset])
+  const resource = useAlerts({ query, window })
 
-  const filtered = ALERTS.filter(a => {
-    if (sevFilter !== 'ALL' && a.sev !== sevFilter) return false
-    if (statusFilter !== 'ALL' && a.status !== statusFilter) return false
-    if (protoFilter !== 'ALL' && a.proto !== protoFilter) return false
-    if (search && !a.type.toLowerCase().includes(search.toLowerCase()) && !a.src.includes(search) && !a.srcDevice.toLowerCase().includes(search.toLowerCase()) && !a.mitreId.includes(search)) return false
-    return true
-  })
+  // Opening a row clears any transition refusal left over from the previous one.
+  const openAlert = (alertId: number) => {
+    setSelectedId(alertId)
+  }
+
+  if (selectedId !== null) {
+    return (
+      <AlertDetailPanel
+        alertId={selectedId}
+        onBack={() => setSelectedId(null)}
+        transition={resource.transition}
+      />
+    )
+  }
+
+  const summary = resource.summary
+  const isFiltered = severityFilter !== 'ALL' || statusFilter !== 'ALL' || appliedAddress !== ''
+
+  const applyAddress = () => {
+    setAppliedAddress(addressInput.trim())
+    setOffset(0)
+  }
+
+  const refreshNew = () => {
+    showToast(
+      `Reloading — ${resource.pendingNew.length} alert${resource.pendingNew.length === 1 ? '' : 's'} arrived live`,
+      'info',
+    )
+    resource.reload()
+  }
 
   return (
     <div className="space-y-4">
-      {/* Stat cards */}
+      {/* Live counts from the backend, over the whole alert store */}
       <div className="grid grid-cols-4 gap-4">
-        {([['critical', C.danger], ['high', C.orange], ['medium', C.warning], ['low', C.info]] as const).map(([sev, color]) => (
-          <button key={sev} onClick={() => setSevFilter(sevFilter === sev ? 'ALL' : sev)}
-            className="rounded-2xl border p-4 flex items-center justify-between transition-all text-left"
-            style={{ backgroundColor: sevFilter === sev ? `${color}10` : C.card, borderColor: sevFilter === sev ? `${color}40` : C.border, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
-            <div>
-              <div className="text-2xl font-bold" style={{ color }}>{counts[sev]}</div>
-              <div className="text-xs font-medium capitalize mt-0.5" style={{ color: C.muted }}>{sev} Severity</div>
-            </div>
-            <div className="p-2.5 rounded-xl" style={{ backgroundColor: `${color}15` }}>
-              <AlertTriangle size={16} style={{ color }} />
-            </div>
-          </button>
+        {ALERT_SEVERITY_ORDER.map(severity => (
+          <SummaryTile key={severity} label={`${severityLabel(severity)} (all time)`}
+            value={summary?.by_severity[severity] ?? 0}
+            color={SEVERITY_COLORS[severity] ?? C.muted} />
         ))}
       </div>
 
-      {/* Filters */}
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border flex-1"
-          style={{ backgroundColor: C.card, borderColor: C.border }}>
-          <Search size={13} style={{ color: C.faint }} />
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search alerts, IPs, MITRE ID, devices…"
-            className="bg-transparent text-xs flex-1 placeholder-slate-600"
-            style={{ color: C.text, outline: 'none' }} />
+      <div className="rounded-2xl border px-4 py-3"
+        style={{ backgroundColor: C.card, borderColor: C.border }}>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-4 flex-wrap">
+            <span className="text-xs font-medium" style={{ color: C.muted }}>
+              Total alerts: <span className="text-white mono">{formatCount(summary?.total ?? null)}</span>
+            </span>
+            {ALERT_STATUS_ORDER.map(status => (
+              <span key={status} className="flex items-center gap-1.5 text-xs">
+                <span className="w-1.5 h-1.5 rounded-full"
+                  style={{ backgroundColor: ALERT_STATUS_COLORS[status] ?? C.muted }} />
+                <span style={{ color: C.faint }}>{statusLabel(status)}</span>
+                <span className="mono" style={{ color: C.muted }}>
+                  {formatCount(summary?.by_status[status] ?? null)}
+                </span>
+              </span>
+            ))}
+          </div>
+
+          <span className="flex items-center gap-1.5 text-xs"
+            style={{ color: resource.isConnected ? C.success : C.dim }}>
+            <span className="w-1.5 h-1.5 rounded-full"
+              style={{ backgroundColor: resource.isConnected ? C.success : C.dim }} />
+            {resource.isConnected
+              ? `live${resource.lastEventAt !== null ? '' : ' — awaiting first event'}`
+              : 'live stream disconnected'}
+          </span>
         </div>
-        {['ALL','critical','high','medium','low'].map(s => {
-          const color = s === 'ALL' ? C.faint : { critical: C.danger, high: C.orange, medium: C.warning, low: C.info }[s]!
-          return (
-            <button key={s} onClick={() => setSevFilter(s)}
-              className="px-3 py-2 rounded-xl text-xs font-medium capitalize transition-all"
-              style={{ backgroundColor: sevFilter === s ? `${color}15` : C.card, color: sevFilter === s ? color : C.faint, border: `1px solid ${sevFilter === s ? `${color}40` : C.border}` }}>
-              {s}
-            </button>
-          )
-        })}
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="px-3 py-2 rounded-xl text-xs border" style={{ backgroundColor: C.card, borderColor: C.border, color: C.muted, outline: 'none' }}>
-          <option value="ALL">All Status</option>
-          <option value="active">Active</option>
-          <option value="investigating">Investigating</option>
-          <option value="acknowledged">Acknowledged</option>
-          <option value="resolved">Resolved</option>
-        </select>
-        <select value={protoFilter} onChange={e => setProtoFilter(e.target.value)}
-          className="px-3 py-2 rounded-xl text-xs border" style={{ backgroundColor: C.card, borderColor: C.border, color: C.muted, outline: 'none' }}>
-          <option value="ALL">All Protocols</option>
-          {['TCP','UDP','DNS','SSH','ARP','HTTPS','ICMP'].map(p => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <button onClick={() => showToast('Alerts exported', 'success')}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium"
-          style={{ borderColor: C.border, color: C.muted, backgroundColor: C.card }}>
-          <Download size={12}/> Export
-        </button>
       </div>
 
-      {/* Table */}
-      <div className="rounded-2xl border overflow-hidden" style={{ backgroundColor: C.card, borderColor: C.border, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+      {/* Live arrivals the listing does not contain, offered as a refresh */}
+      {resource.pendingNew.length > 0 && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-2xl border"
+          style={{
+            backgroundColor: tint(C.accent, 0.08),
+            borderColor: tint(C.accent, 0.25),
+          }}>
+          <Bell size={14} style={{ color: C.accent, flexShrink: 0 }} />
+          <span className="text-xs flex-1" style={{ color: C.muted }}>
+            {resource.pendingNew.length} alert{resource.pendingNew.length === 1 ? '' : 's'} arrived live
+            and {resource.pendingNew.length === 1 ? 'is' : 'are'} not part of this page. Whether
+            {resource.pendingNew.length === 1 ? ' it belongs' : ' they belong'} here is the
+            backend's answer, so reload rather than assume.
+          </span>
+          <button onClick={refreshNew}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold"
+            style={{ backgroundColor: tint(C.accent, 0.15), color: C.accent }}>
+            <RefreshCw size={11} /> Reload
+          </button>
+        </div>
+      )}
+
+      {/* Filters */}
+      <form className="flex items-center gap-2 flex-wrap"
+        onSubmit={event => { event.preventDefault(); applyAddress() }}>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border flex-1 min-w-[220px]"
+          style={{ backgroundColor: C.card, borderColor: C.border }}>
+          <Search size={13} style={{ color: C.faint }} />
+          <input value={addressInput}
+            onChange={e => setAddressInput(e.target.value)}
+            placeholder="Filter by source address, then press Enter…"
+            className="bg-transparent text-xs flex-1"
+            style={{ color: C.text, outline: 'none' }} />
+          {appliedAddress !== '' && (
+            <button type="button"
+              onClick={() => { setAddressInput(''); setAppliedAddress(''); setOffset(0) }}
+              className="text-xs" style={{ color: C.faint }}>
+              clear
+            </button>
+          )}
+        </div>
+        <select value={severityFilter}
+          onChange={e => {
+            setSeverityFilter(e.target.value as AlertSeverity | 'ALL')
+            setOffset(0)
+          }}
+          className="px-3 py-2 rounded-xl text-xs border"
+          style={{ backgroundColor: C.card, borderColor: C.border, color: C.muted, outline: 'none' }}>
+          <option value="ALL">All severities</option>
+          {ALERT_SEVERITY_ORDER.map(severity => (
+            <option key={severity} value={severity}>{severityLabel(severity)}</option>
+          ))}
+        </select>
+        <select value={statusFilter}
+          onChange={e => {
+            setStatusFilter(e.target.value as AlertStatus | 'ALL')
+            setOffset(0)
+          }}
+          className="px-3 py-2 rounded-xl text-xs border"
+          style={{ backgroundColor: C.card, borderColor: C.border, color: C.muted, outline: 'none' }}>
+          <option value="ALL">All states</option>
+          {ALERT_STATUS_ORDER.map(status => (
+            <option key={status} value={status}>{statusLabel(status)}</option>
+          ))}
+        </select>
+        <button type="button" onClick={resource.reload} disabled={resource.isLoading}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border"
+          style={{ borderColor: C.border, color: C.muted, backgroundColor: C.card }}>
+          <RefreshCw size={12} className={resource.isLoading ? 'animate-spin' : undefined} /> Refresh
+        </button>
+      </form>
+
+      {resource.error !== null && resource.alerts.length > 0 && (
+        <RefreshFailureBanner error={resource.error} onRetry={resource.reload} />
+      )}
+
+      <div className="rounded-2xl border overflow-hidden"
+        style={{ backgroundColor: C.card, borderColor: C.border, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: C.border }}>
           <div>
-            <h2 className="text-sm font-semibold text-white">Security Alerts</h2>
-            <p className="text-xs mt-0.5" style={{ color: C.faint }}>{filtered.length} events — click any row to investigate</p>
+            <h2 className="text-sm font-semibold text-white">Alerts</h2>
+            <p className="text-xs mt-0.5" style={{ color: C.faint }}>
+              {resource.alerts.length} loaded
+              {resource.total === null ? '' : ` of ${formatCount(resource.total)} matching`}
+              {` · rows ${offset + 1}–${offset + resource.alerts.length}`}
+            </p>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: C.danger }}/>
-            <span className="text-xs" style={{ color: C.faint }}>Live</span>
+          <div className="flex items-center gap-3 text-xs" style={{ color: C.faint }}>
+            <span className="flex items-center gap-1"><Hash size={11} /> rule id shown in detail</span>
           </div>
         </div>
-        {filtered.length === 0 ? (
-          <div className="flex flex-col items-center py-16 gap-3">
-            <Shield size={28} style={{ color: C.success }}/>
-            <p className="text-sm font-medium text-white">No alerts match your filter</p>
-          </div>
-        ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="border-b" style={{ borderColor: C.border }}>
-                {['Severity','Attack Type','Source','Destination','Confidence','MITRE Technique','Status','Time'].map(h => (
-                  <th key={h} className="text-left px-4 py-2.5 text-xs font-medium" style={{ color: C.dim }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(a => {
-                const sev  = SEV_CFG[a.sev]
-                const stat = STATUS_CFG[a.status]
-                return (
-                  <tr key={a.id} onClick={() => setSelected(a)}
-                    className="border-b transition-all duration-150 cursor-pointer"
-                    style={{ borderColor: '#1a2744', borderLeft: `2px solid ${sev.color}40` }}
-                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.025)'; e.currentTarget.style.borderLeftColor = sev.color }}
-                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.borderLeftColor = `${sev.color}40` }}>
-                    <td className="px-4 py-3.5">
-                      <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: sev.bg, color: sev.color }}>{sev.label}</span>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="text-xs font-semibold text-white">{a.type}</div>
-                      <div className="text-xs mt-0.5" style={{ color: C.faint }}>{a.proto}</div>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="mono text-xs font-medium" style={{ color: C.accent }}>{a.src}</div>
-                      <div className="text-xs mt-0.5" style={{ color: C.faint }}>{a.srcDevice}</div>
-                    </td>
-                    <td className="px-4 py-3.5 mono text-xs" style={{ color: C.muted }}>{a.dst}</td>
-                    <td className="px-4 py-3.5">
-                      <div className="flex items-center gap-2">
-                        <div className="w-10 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: C.panel }}>
-                          <div className="h-full rounded-full" style={{ width: `${a.confidence}%`, backgroundColor: sev.color }}/>
-                        </div>
-                        <span className="mono text-xs font-bold" style={{ color: sev.color }}>{a.confidence}%</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="mono text-xs font-semibold" style={{ color: C.accent }}>{a.mitreId}</div>
-                      <div className="text-xs mt-0.5" style={{ color: C.faint }}>{a.mitre}</div>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <span className="text-xs px-2 py-0.5 rounded-full font-medium capitalize" style={{ backgroundColor: stat.bg, color: stat.color }}>{a.status}</span>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="flex items-center gap-1.5 text-xs" style={{ color: C.faint }}>
-                        <Clock size={10}/>{a.time}
-                      </div>
-                    </td>
+
+        <AsyncSection
+          isInitialLoading={resource.isInitialLoading}
+          error={resource.blockingError}
+          isEmpty={false}
+          loadingLabel="Loading alerts…"
+          errorTitle="Unable to load alerts"
+          onRetry={resource.reload}
+          minHeight={240}
+        >
+          {resource.alerts.length === 0 ? (
+            <EmptyState
+              title={isFiltered ? 'No alerts match the filter' : 'No alerts raised'}
+              hint={isFiltered
+                ? 'Widen the severity or state filter, or clear the address box.'
+                : 'M11 raises an alert when a detection finding crosses a rule threshold. Nothing has crossed one yet.'}
+              icon={isFiltered ? <Search size={28} /> : <ShieldAlert size={28} />}
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b" style={{ borderColor: C.border }}>
+                    <th className="text-left pl-5 py-2.5 pr-3 text-xs font-medium" style={{ color: C.dim }}>Severity</th>
+                    <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Alert</th>
+                    <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>State</th>
+                    <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Flow</th>
+                    <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Confidence</th>
+                    <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Protocol</th>
+                    <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Evidence</th>
+                    <th className="text-left py-2.5 pr-5 text-xs font-medium" style={{ color: C.dim }}>Raised</th>
                   </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        )}
+                </thead>
+                <tbody>
+                  {resource.alerts.map(alert => (
+                    <AlertRow key={alert.alert_id} alert={alert} onOpen={() => openAlert(alert.alert_id)} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </AsyncSection>
+
+        <div className="flex items-center justify-between px-5 py-3 border-t" style={{ borderColor: C.border }}>
+          <button onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+            disabled={offset === 0 || resource.isLoading}
+            className="px-3 py-1.5 rounded-xl text-xs font-medium border disabled:opacity-40"
+            style={{ borderColor: C.border, color: C.muted, backgroundColor: C.panel }}>
+            Previous
+          </button>
+          <span className="text-xs" style={{ color: C.faint }}>
+            {offset === 0 && !resource.hasMore ? 'All matching alerts' : `Offset ${offset}`}
+          </span>
+          <button onClick={() => setOffset(offset + PAGE_SIZE)}
+            disabled={!resource.hasMore || resource.isLoading}
+            className="px-3 py-1.5 rounded-xl text-xs font-medium border disabled:opacity-40"
+            style={{ borderColor: C.border, color: C.muted, backgroundColor: C.panel }}>
+            Next
+          </button>
+        </div>
       </div>
+
+      {resource.alerts.length > 0 && (
+        <p className="text-xs px-1 flex items-center gap-1.5" style={{ color: C.faint }}>
+          <Server size={11} />
+          A flow of {UNKNOWN_TEXT} means the backend recorded no address for that side of the alert.
+        </p>
+      )}
     </div>
   )
 }

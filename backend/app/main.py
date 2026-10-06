@@ -105,10 +105,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS for the frontend development server.
+# Configure CORS for the frontend development server (M15.3). The allowlist is
+# configuration rather than a literal because the dev server's port is: a browser
+# sends an `Origin` and refuses a response that does not name it, so the origins
+# this project actually serves the frontend from have to be listed here or every
+# page reads as an error state. `settings.cors_allow_origins` carries them.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=settings.cors_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
