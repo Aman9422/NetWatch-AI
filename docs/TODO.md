@@ -4,7 +4,7 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M14 — WebSockets ✅ COMPLETE (next: M15 — Frontend Integration)
+**Current Milestone:** M15 — Frontend Integration ✅ COMPLETE (next: M16 — Analytics)
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -772,26 +772,73 @@ the packet pool is generated, so two runs of the script are comparable.
 
 ---
 
-# M15 — Frontend Integration
+# M15 — Frontend Integration ✅ COMPLETE
 
-* [ ] Review Figma Make code
-* [ ] Remove mock packet generation
-* [ ] Remove mock devices
-* [ ] Remove mock alerts
-* [ ] Remove simulated dashboard metrics
-* [ ] Create API service layer
-* [ ] Create TypeScript types
-* [ ] Create WebSocket hook
-* [ ] Connect Dashboard
-* [ ] Connect Live Traffic
-* [ ] Connect Devices
-* [ ] Connect Alerts
-* [ ] Connect Analytics
-* [ ] Connect Reports
-* [ ] Connect Settings
-* [ ] Add error states
-* [ ] Add loading states
-* [ ] Add empty states
+* [x] Review Figma Make code
+* [x] Remove mock packet generation
+* [x] Remove mock devices
+* [x] Remove mock alerts
+* [x] Remove simulated dashboard metrics
+* [x] Create API service layer
+* [x] Create TypeScript types
+* [x] Create WebSocket hook
+* [x] Connect Dashboard
+* [x] Connect Live Traffic
+* [x] Connect Devices
+* [x] Connect Alerts
+* [x] Connect Analytics
+* [x] Connect Reports
+* [x] Connect Settings
+* [x] Add error states
+* [x] Add loading states
+* [x] Add empty states
+
+**Verification:** frontend unit suite **422 passed** (15 files); live-backend suite
+**64 passed** (50 REST + 6 WebSocket + 8 page tests, against real FastAPI on
+`127.0.0.1:8000`); `npm run typecheck` **0 errors**; `npm run build` clean (2,545
+modules, JS 893.24 kB / 237.50 kB gzip). The manual end-to-end run (2026-10-06,
+22:22–22:29) captured **77,441 packets** on `Wi-Fi` and verified ten pages in the
+browser against real data: Dashboard (REST + `/ws/dashboard`), Live Traffic
+(`/ws/packets`, bounded at 500 rows under sustained traffic), Devices, Connections,
+Detections, Alerts (2 stored, 1 open / 1 resolved through the real lifecycle), an
+alert detail with its evidence, Incidents (risk, correlation confidence and alert
+confidence as three separate columns), Notifications and System (real health
+probes). No mock generator, fake timer or `Math.random()` remains.
+
+Three defects were found only by running the real application, and are fixed: the
+backend CORS allowlist covered port 5173 while the frontend serves on 8443 (now
+configuration, both ports, `localhost` and `127.0.0.1` as separate origins); the
+template shipped no favicon and fell back to the title `Figma Make App` (now
+`frontend/public/favicon.svg` plus a `title`/`icons` entry); and the
+`NetworkInterface` TypeScript model named a key the API has never sent
+(`addresses`) while omitting one it always sends (`ip_addresses`) — it now mirrors
+the wire.
+
+**Known limitation handed back to the backend (not a frontend defect):** on a
+routed path, device identity collapses the far end onto the next hop. The Devices
+page showed the monitoring host plus a second record holding **94 addresses**
+(`192.168.43.1` and every far-end address the host talked to), because M5 takes an
+endpoint's L2 address from the captured frame and M8 keys a device by MAC first and
+then binds every IP seen beside that MAC — and on a routed path the frame's L2 peer
+is the gateway, not the far host. The counters prove it: the two records mirror
+each other almost exactly. `docs/12_M8_Device_Discovery_Design.md` §7 does not
+distinguish an L2 neighbour from a network peer, so how to record a next-hop
+endpoint is an **M8 design follow-up**, not M15 work. Full detail in
+`docs/19_M15_Frontend_Integration.md` §12/§15.
+**Baseline (this machine, dev server, one operator):** initial document 7.0 ms
+(1,116 bytes); `GET /dashboard/summary` 11.8 ms average (8.6–16.4 ms over 5
+calls); packet list bounded at exactly 500 rows under 77,441 captured packets;
+dashboard ticks bounded at 60 points; packets channel rate-limited server-side at
+200 events/s (M14.16).
+**Not measured, and not claimed:** React memory under sustained streaming,
+alert-event render latency, and reconnect wall-clock time — reconnect is proven as
+behaviour by the unit suite, not measured as time. Not a production-scale claim.
+**Design:** `docs/19_M15_Frontend_Integration.md`.
+
+> Deliberately out of scope for M15: new backend detection, alert, correlation or
+> risk-scoring logic, ML/AI, new WebSocket backend functionality, external SIEM
+> integrations, and report generation (M17). M15 connects the existing React UI to
+> what M13/M14 already expose; it does not redesign the backend.
 
 ---
 

@@ -28,6 +28,23 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "INFO"
 
+    # CORS (M15.3)
+    # The origins a browser may call this API from. Local development serves the
+    # frontend from a Vite dev server, and the two ports below are the ones this
+    # project actually uses: 5173 as `docs/08_Deployment_Guide.md` documents, and
+    # 8443 as `frontend/vite.config.ts` defaults to. The backend previously named
+    # only 5173, so a browser on the configuration's own default port was refused
+    # before the application could read a single response — a mismatch that the
+    # test suites never see, because they are not browsers and have no origin.
+    # `localhost` and `127.0.0.1` are separate entries because a browser treats
+    # them as distinct origins.
+    cors_allow_origins: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8443",
+        "http://127.0.0.1:8443",
+    ]
+
     # Database
     database_url: str = "sqlite:///./netwatch.db"
 

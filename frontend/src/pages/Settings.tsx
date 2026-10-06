@@ -1,525 +1,564 @@
-import { useState } from 'react'
+/**
+ * Settings — the backend's own keys, and the backend's own rules (M15.23).
+ *
+ * The page this replaces was fiction with a settings-shaped shell: eleven
+ * sections, a sensor name, capture mode, MTU, a BPF filter, Snort rule sets, an
+ * AI model and confidence, a PostgreSQL host and port, backup destinations, Slack
+ * webhooks, a licence key and expiry, uptime and database size. None of it exists.
+ * `PUT` accepts exactly the keys the application declares mutable (five today),
+ * and a stored credential is not even listed. So the page is rebuilt around what
+ * the API actually answers (M15.23/M15.31).
+ *
+ * Three rules from the endpoint shape every decision here, and the page
+ * deliberately does **not** restate any of them in React:
+ *
+ * * **Which keys exist, and which are writable, comes from the response.** The
+ *   listing reports `mutable` per setting and `mutable_keys` as the whole writable
+ *   set, so nothing is hardcoded. Adding a mutable key server-side makes it
+ *   editable here with no frontend change — and, more importantly, this page can
+ *   never offer a control the backend would refuse.
+ * * **Internal-only keys are invisible and indistinguishable from unknown ones.**
+ *   A key matching the secret denylist is never listed, and reading it answers
+ *   `404` exactly as an unknown key does. The lookup below therefore reports
+ *   "not found" without speculating about which of the two it was — guessing
+ *   would confirm what is stored, which is the leak the rule prevents.
+ * * **A saved value is stored, not applied.** Stored settings are read at
+ *   application startup, so `PUT` answers `restart_required: true`. The page says
+ *   "stored — restart to apply" rather than implying the change is live. That is
+ *   the single most important thing on this screen (M15.23).
+ *
+ * Validation is not duplicated either. The backend validates each key against its
+ * own declaration (type, range, allowed values) and refuses the whole batch with a
+ * sentence naming the key; this page shows that sentence. Re-implementing the five
+ * rules in TypeScript would create a second source of truth that could disagree
+ * with the first.
+ *
+ * Settings publish no WebSocket channel, so a change made elsewhere arrives only
+ * on an explicit reload (M15.34).
+ */
+
+import { useMemo, useState } from 'react'
 import {
-  Settings as Cog, Wifi, Activity, Shield, Bell, Brain, Database,
-  HardDrive, Palette, Info, Save, RotateCcw, ChevronRight,
-  CheckCircle, ToggleLeft, ToggleRight,
+  AlertTriangle, Check, Lock, RefreshCw, RotateCcw, Save, Search,
+  Settings as Cog, Sliders,
 } from 'lucide-react'
+import { AsyncSection, EmptyState, RefreshFailureBanner } from '@/components/AsyncState'
+import { useSettings } from '@/hooks'
+import { fetchSetting } from '@/services'
+import type { ApiError, SettingValues, WritableSettingValue } from '@/services'
+import { C, tint } from '@/lib/tokens'
+import { UNKNOWN_TEXT, formatTimestamp } from '@/lib/format'
+import type { Setting, SettingValue } from '@/types'
 import type { ToastMsg } from '../App'
 
-const C = {
-  accent: '#38BDF8', success: '#22C55E', warning: '#F59E0B',
-  danger: '#EF4444', info: '#06B6D4', purple: '#818CF8',
-  card: '#1E293B', panel: '#0F172A', border: '#334155',
-  text: '#F8FAFC', muted: '#94A3B8', faint: '#64748B', dim: '#475569',
+/** A value as it is being edited, before it is converted for the request. */
+type Draft = string | number | boolean
+
+/** Turn a stored value into something an input can hold. */
+function toDraft(setting: Setting): Draft {
+  const value: SettingValue = setting.value
+  if (setting.data_type === 'bool') return value === true
+  if (typeof value === 'number' || typeof value === 'boolean') return value
+  if (value === null) return ''
+  if (typeof value === 'string') return value
+  // A decoded document has no single-line editor and the write API accepts only
+  // scalars, so it is rendered read-only rather than round-tripped through JSON.
+  return JSON.stringify(value)
 }
 
-type SettingSection =
-  | 'general' | 'network' | 'capture' | 'detection' | 'thresholds'
-  | 'ai' | 'database' | 'backup' | 'theme' | 'notifications' | 'system'
-
-const SECTIONS: { id: SettingSection; label: string; icon: React.ElementType; desc: string }[] = [
-  { id: 'general',       label: 'General',           icon: Cog,        desc: 'System name, timezone, logging' },
-  { id: 'network',       label: 'Network Interface',  icon: Wifi,       desc: 'Capture interface configuration' },
-  { id: 'capture',       label: 'Capture Engine',     icon: Activity,   desc: 'Buffer size, filters, performance' },
-  { id: 'detection',     label: 'Detection Rules',    icon: Shield,     desc: 'IDS rules, custom signatures' },
-  { id: 'thresholds',    label: 'Alert Thresholds',   icon: Bell,       desc: 'Severity triggers and limits' },
-  { id: 'ai',            label: 'AI Settings',        icon: Brain,      desc: 'Model, confidence, auto-actions' },
-  { id: 'database',      label: 'Database',           icon: Database,   desc: 'Connection, retention, indexing' },
-  { id: 'backup',        label: 'Backup & Restore',   icon: HardDrive,  desc: 'Schedule, export, recovery' },
-  { id: 'theme',         label: 'Theme',              icon: Palette,    desc: 'Color scheme, density, layout' },
-  { id: 'notifications', label: 'Notifications',      icon: Bell,       desc: 'Email, Slack, webhook alerts' },
-  { id: 'system',        label: 'System Information', icon: Info,       desc: 'Version, license, diagnostics' },
-]
-
-// ─── Reusable field components ─────────────────────────────────────────────────
-function FieldGroup({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border overflow-hidden" style={{ backgroundColor: C.card, borderColor: C.border }}>
-      <div className="px-6 py-4 border-b" style={{ borderColor: C.border }}>
-        <h3 className="text-sm font-semibold text-white">{title}</h3>
-      </div>
-      <div className="p-6 space-y-5">{children}</div>
-    </div>
-  )
+/**
+ * A value that can only be displayed, never written.
+ *
+ * `json` settings decode to objects and lists, and `PUT` accepts only
+ * `str | int | float | bool` — so a document is shown as text instead of through
+ * an editor that could not be saved.
+ */
+function isDisplayOnly(setting: Setting): boolean {
+  return setting.data_type === 'json' || setting.value === null ||
+    typeof setting.value === 'object'
 }
 
-function Field({ label, sub, children }: { label: string; sub?: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-8">
-      <div className="flex-shrink-0 w-56">
-        <div className="text-sm font-medium text-white">{label}</div>
-        {sub && <div className="text-xs mt-0.5" style={{ color: C.faint }}>{sub}</div>}
-      </div>
-      <div className="flex-1 min-w-0">{children}</div>
-    </div>
-  )
+/** Render any stored value for display, including a decoded document. */
+function displayValue(setting: Setting): string {
+  const value = setting.value
+  if (value === null) return UNKNOWN_TEXT
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (typeof value === 'string') return value === '' ? UNKNOWN_TEXT : value
+  if (typeof value === 'number') return String(value)
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return UNKNOWN_TEXT
+  }
 }
 
-function Input({ value, onChange, placeholder, type = 'text' }: { value: string; onChange: (v: string) => void; placeholder?: string; type?: string }) {
-  return (
-    <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-      className="w-full px-3 py-2 rounded-xl text-sm border"
-      style={{ backgroundColor: C.panel, borderColor: C.border, color: C.text, outline: 'none' }} />
-  )
+/**
+ * Convert a draft into a writable value for the request body.
+ *
+ * A numeric setting whose draft parses is sent as a number; one that does not is
+ * sent as the typed text so the backend's own validation rejects it and names the
+ * problem. Coercing here — or silently dropping it — would hide the operator's
+ * mistake behind this client's guess.
+ */
+function toWritable(setting: Setting, draft: Draft): WritableSettingValue {
+  if (typeof draft === 'boolean') return draft
+  if (typeof draft === 'number') return draft
+  if (setting.data_type === 'int' || setting.data_type === 'float') {
+    const parsed = Number(draft)
+    return Number.isFinite(parsed) && draft.trim() !== '' ? parsed : draft
+  }
+  return draft
 }
 
-function Select({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: string[] }) {
-  return (
-    <select value={value} onChange={e => onChange(e.target.value)}
-      className="w-full px-3 py-2 rounded-xl text-sm border"
-      style={{ backgroundColor: C.panel, borderColor: C.border, color: C.text, outline: 'none' }}>
-      {options.map(o => <option key={o} value={o}>{o}</option>)}
-    </select>
-  )
-}
+// ─── One setting, editable or not ────────────────────────────────────────────
 
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
-  return (
-    <div className="flex items-center gap-3">
-      <button onClick={() => onChange(!checked)} className="flex-shrink-0 transition-all"
-        style={{ color: checked ? C.accent : C.dim }}>
-        {checked ? <ToggleRight size={26}/> : <ToggleLeft size={26}/>}
+/** The editor a setting's declared `data_type` calls for. */
+function SettingEditor({ setting, draft, onChange, disabled }: {
+  setting: Setting
+  draft: Draft
+  onChange: (value: Draft) => void
+  disabled: boolean
+}) {
+  // A boolean has exactly two states, so it gets a switch rather than a text
+  // field an operator could typo. Everything else is taken as typed and validated
+  // by the backend.
+  if (setting.data_type === 'bool') {
+    const checked = draft === true
+    return (
+      <button type="button" onClick={() => onChange(!checked)} disabled={disabled}
+        className="flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium disabled:opacity-50"
+        style={{
+          backgroundColor: checked ? tint(C.success, 0.12) : C.panel,
+          borderColor: checked ? C.success : C.border,
+          color: checked ? C.success : C.muted,
+        }}>
+        <span className="w-1.5 h-1.5 rounded-full"
+          style={{ backgroundColor: checked ? C.success : C.dim }} />
+        {checked ? 'true' : 'false'}
       </button>
-      {label && <span className="text-sm" style={{ color: C.muted }}>{label}</span>}
-    </div>
+    )
+  }
+
+  return (
+    <input
+      value={String(draft)}
+      onChange={event => onChange(event.target.value)}
+      disabled={disabled}
+      inputMode={setting.data_type === 'int' || setting.data_type === 'float' ? 'decimal' : 'text'}
+      className="w-full px-3 py-2 rounded-xl text-xs border mono disabled:opacity-50"
+      style={{ backgroundColor: C.panel, borderColor: C.border, color: C.text, outline: 'none' }}
+    />
   )
 }
 
-function Slider({ value, onChange, min = 0, max = 100, unit = '' }: { value: number; onChange: (v: number) => void; min?: number; max?: number; unit?: string }) {
+/** One row: the key, its declared type, its editor or its value, and its instant. */
+function SettingRow({ setting, draft, isChanged, onChange, disabled }: {
+  setting: Setting
+  draft: Draft
+  isChanged: boolean
+  onChange: (value: Draft) => void
+  disabled: boolean
+}) {
+  const readOnly = !setting.mutable || isDisplayOnly(setting)
   return (
-    <div className="flex items-center gap-3">
-      <input type="range" min={min} max={max} value={value} onChange={e => onChange(Number(e.target.value))}
-        className="flex-1" style={{ accentColor: C.accent }} />
-      <span className="mono text-sm font-semibold w-20 text-right" style={{ color: C.accent }}>{value}{unit}</span>
-    </div>
-  )
-}
-
-// ─── Section panels ───────────────────────────────────────────────────────────
-function GeneralPanel() {
-  const [name, setName] = useState('NetWatch-Prod-01')
-  const [tz, setTz]     = useState('UTC+00:00')
-  const [logLevel, setLogLevel] = useState('INFO')
-  const [retainDays, setRetainDays] = useState(90)
-  const [autoUpdate, setAutoUpdate] = useState(true)
-
-  return (
-    <div className="space-y-4">
-      <FieldGroup title="Identity">
-        <Field label="Sensor Name" sub="Unique identifier for this instance">
-          <Input value={name} onChange={setName} />
-        </Field>
-        <Field label="Timezone" sub="Used for timestamps and reports">
-          <Select value={tz} onChange={setTz} options={['UTC+00:00','UTC+01:00','UTC+02:00','UTC-05:00','UTC-08:00']} />
-        </Field>
-      </FieldGroup>
-      <FieldGroup title="Logging">
-        <Field label="Log Level" sub="Verbosity of system logs">
-          <Select value={logLevel} onChange={setLogLevel} options={['DEBUG','INFO','WARNING','ERROR']} />
-        </Field>
-        <Field label="Retention Period" sub="Days to keep packet data on disk">
-          <Slider value={retainDays} onChange={setRetainDays} min={7} max={365} unit=" days" />
-        </Field>
-        <Field label="Auto-Update" sub="Automatically apply minor version updates">
-          <Toggle checked={autoUpdate} onChange={setAutoUpdate} label={autoUpdate ? 'Enabled' : 'Disabled'} />
-        </Field>
-      </FieldGroup>
-    </div>
-  )
-}
-
-function NetworkPanel() {
-  const [iface, setIface] = useState('eth0')
-  const [mode, setMode] = useState('Promiscuous')
-  const [mtu, setMtu]   = useState('1500')
-  const [vlan, setVlan] = useState(false)
-
-  return (
-    <div className="space-y-4">
-      <FieldGroup title="Interface Configuration">
-        <Field label="Capture Interface" sub="Network adapter to monitor">
-          <Select value={iface} onChange={setIface} options={['eth0','eth1','ens3','bond0','lo']} />
-        </Field>
-        <Field label="Capture Mode" sub="How packets are captured from the wire">
-          <Select value={mode} onChange={setMode} options={['Promiscuous','Tap','Mirror Port','Inline']} />
-        </Field>
-        <Field label="MTU Size" sub="Maximum Transmission Unit in bytes">
-          <Input value={mtu} onChange={setMtu} placeholder="1500" />
-        </Field>
-        <Field label="VLAN Decapsulation" sub="Strip 802.1Q VLAN tags from packets">
-          <Toggle checked={vlan} onChange={setVlan} label={vlan ? 'Enabled' : 'Disabled'} />
-        </Field>
-      </FieldGroup>
-    </div>
-  )
-}
-
-function CapturePanel() {
-  const [bufMB, setBufMB] = useState(512)
-  const [maxPkt, setMaxPkt] = useState(65535)
-  const [snaplen, setSnaplen] = useState(1518)
-  const [bpf, setBpf] = useState('not port 22')
-  const [ringBuffer, setRingBuffer] = useState(true)
-
-  return (
-    <div className="space-y-4">
-      <FieldGroup title="Engine Parameters">
-        <Field label="Ring Buffer Size" sub="MB allocated for capture ring buffer">
-          <Slider value={bufMB} onChange={setBufMB} min={64} max={4096} unit=" MB" />
-        </Field>
-        <Field label="Max Packet Size" sub="Maximum bytes captured per packet">
-          <Slider value={snaplen} onChange={setSnaplen} min={64} max={65535} unit=" B" />
-        </Field>
-        <Field label="BPF Filter" sub="Berkeley Packet Filter expression">
-          <Input value={bpf} onChange={setBpf} placeholder="e.g. not port 22" />
-        </Field>
-        <Field label="Ring Buffer Mode" sub="Overwrite oldest packets when buffer full">
-          <Toggle checked={ringBuffer} onChange={setRingBuffer} label={ringBuffer ? 'Enabled' : 'Disabled'} />
-        </Field>
-      </FieldGroup>
-    </div>
-  )
-}
-
-function DetectionPanel() {
-  const [ruleSet, setRuleSet] = useState('Snort Community')
-  const [autoFetch, setAutoFetch] = useState(true)
-  const [interval, setInterval] = useState('24')
-  const [customRules, setCustomRules] = useState('alert tcp any any -> any 4444 (msg:"Suspicious port 4444"; sid:9000001; rev:1;)')
-
-  return (
-    <div className="space-y-4">
-      <FieldGroup title="Rule Management">
-        <Field label="Rule Set" sub="Base detection rule database">
-          <Select value={ruleSet} onChange={setRuleSet} options={['Snort Community','Snort Registered','Emerging Threats','Custom Only']} />
-        </Field>
-        <Field label="Auto-Update Rules" sub="Fetch new signatures automatically">
-          <Toggle checked={autoFetch} onChange={setAutoFetch} label={autoFetch ? 'Enabled' : 'Disabled'} />
-        </Field>
-        <Field label="Update Interval" sub="Hours between rule update checks">
-          <Select value={interval} onChange={setInterval} options={['1','6','12','24','48','168']} />
-        </Field>
-      </FieldGroup>
-      <FieldGroup title="Custom Signatures">
-        <Field label="Custom Rules" sub="Snort rule syntax, one rule per line">
-          <textarea rows={5} value={customRules} onChange={e => setCustomRules(e.target.value)}
-            className="w-full px-3 py-2 rounded-xl text-xs border mono resize-none"
-            style={{ backgroundColor: C.panel, borderColor: C.border, color: C.accent, outline: 'none' }} />
-        </Field>
-      </FieldGroup>
-    </div>
-  )
-}
-
-function ThresholdsPanel() {
-  const [critScore, setCritScore]   = useState(80)
-  const [highScore, setHighScore]   = useState(60)
-  const [medScore, setMedScore]     = useState(35)
-  const [scanRate, setScanRate]     = useState(100)
-  const [connRate, setConnRate]     = useState(1000)
-  const [dnsRate, setDnsRate]       = useState(60)
-
-  return (
-    <div className="space-y-4">
-      <FieldGroup title="Severity Score Thresholds">
-        <Field label="Critical Threshold" sub="Min threat score to trigger critical alert">
-          <Slider value={critScore} onChange={setCritScore} min={50} max={100} />
-        </Field>
-        <Field label="High Threshold" sub="Min threat score to trigger high alert">
-          <Slider value={highScore} onChange={setHighScore} min={30} max={90} />
-        </Field>
-        <Field label="Medium Threshold" sub="Min threat score for medium severity">
-          <Slider value={medScore} onChange={setMedScore} min={10} max={60} />
-        </Field>
-      </FieldGroup>
-      <FieldGroup title="Rate-based Triggers">
-        <Field label="Port Scan Rate" sub="SYN packets/min to flag as port scan">
-          <Slider value={scanRate} onChange={setScanRate} min={10} max={1000} unit="/min" />
-        </Field>
-        <Field label="Connection Rate" sub="New connections/min per host threshold">
-          <Slider value={connRate} onChange={setConnRate} min={100} max={10000} unit="/min" />
-        </Field>
-        <Field label="DNS Query Rate" sub="DNS queries/min before anomaly flag">
-          <Slider value={dnsRate} onChange={setDnsRate} min={10} max={500} unit="/min" />
-        </Field>
-      </FieldGroup>
-    </div>
-  )
-}
-
-function AIPanel() {
-  const [model, setModel] = useState('NetWatch-7B-v2')
-  const [confidence, setConfidence] = useState(70)
-  const [autoBlock, setAutoBlock] = useState(false)
-  const [autoAck, setAutoAck] = useState(true)
-  const [explain, setExplain] = useState(true)
-
-  return (
-    <div className="space-y-4">
-      <FieldGroup title="Model Configuration">
-        <Field label="Detection Model" sub="Neural network used for anomaly detection">
-          <Select value={model} onChange={setModel} options={['NetWatch-7B-v2','NetWatch-3B-v1','Custom ONNX']} />
-        </Field>
-        <Field label="Confidence Threshold" sub="Min confidence to surface AI alerts (%)">
-          <Slider value={confidence} onChange={setConfidence} unit="%" />
-        </Field>
-      </FieldGroup>
-      <FieldGroup title="Automated Actions">
-        <Field label="Auto-Block on Critical" sub="Automatically block IPs on critical AI alerts">
-          <Toggle checked={autoBlock} onChange={setAutoBlock} label={autoBlock ? 'Enabled — use with caution' : 'Disabled'} />
-        </Field>
-        <Field label="Auto-Acknowledge Low" sub="Automatically acknowledge low severity findings">
-          <Toggle checked={autoAck} onChange={setAutoAck} label={autoAck ? 'Enabled' : 'Disabled'} />
-        </Field>
-        <Field label="Explainability" sub="Show AI reasoning alongside each detection">
-          <Toggle checked={explain} onChange={setExplain} label={explain ? 'Enabled' : 'Disabled'} />
-        </Field>
-      </FieldGroup>
-    </div>
-  )
-}
-
-function DatabasePanel() {
-  const [host, setHost]   = useState('localhost')
-  const [port, setPort]   = useState('5432')
-  const [db, setDb]       = useState('netwatch')
-  const [maxConn, setMaxConn] = useState(50)
-  const [compress, setCompress] = useState(true)
-
-  return (
-    <div className="space-y-4">
-      <FieldGroup title="Connection">
-        <Field label="Host" sub="PostgreSQL server hostname or IP"><Input value={host} onChange={setHost} /></Field>
-        <Field label="Port" sub="Database port number"><Input value={port} onChange={setPort} /></Field>
-        <Field label="Database Name"><Input value={db} onChange={setDb} /></Field>
-      </FieldGroup>
-      <FieldGroup title="Performance">
-        <Field label="Max Connections" sub="Connection pool size">
-          <Slider value={maxConn} onChange={setMaxConn} min={5} max={200} />
-        </Field>
-        <Field label="Compress Old Data" sub="LZ4 compress packet data older than 7 days">
-          <Toggle checked={compress} onChange={setCompress} label={compress ? 'Enabled' : 'Disabled'} />
-        </Field>
-      </FieldGroup>
-    </div>
-  )
-}
-
-function BackupPanel() {
-  const [enabled, setEnabled] = useState(true)
-  const [freq, setFreq]       = useState('Daily')
-  const [dest, setDest]       = useState('/var/backups/netwatch')
-  const [encrypt, setEncrypt] = useState(true)
-
-  return (
-    <div className="space-y-4">
-      <FieldGroup title="Backup Configuration">
-        <Field label="Automated Backups">
-          <Toggle checked={enabled} onChange={setEnabled} label={enabled ? 'Enabled' : 'Disabled'} />
-        </Field>
-        <Field label="Frequency" sub="How often backups run">
-          <Select value={freq} onChange={setFreq} options={['Hourly','Daily','Weekly','Monthly']} />
-        </Field>
-        <Field label="Destination Path" sub="Local filesystem path for backups">
-          <Input value={dest} onChange={setDest} />
-        </Field>
-        <Field label="Encrypt Backups" sub="AES-256 encryption for backup archives">
-          <Toggle checked={encrypt} onChange={setEncrypt} label={encrypt ? 'Enabled' : 'Disabled'} />
-        </Field>
-      </FieldGroup>
-    </div>
-  )
-}
-
-function ThemePanel() {
-  const [density, setDensity] = useState('Comfortable')
-  const [sidebar, setSidebar] = useState('Expanded')
-  const [monoBold, setMonoBold] = useState(true)
-
-  return (
-    <div className="space-y-4">
-      <FieldGroup title="Display">
-        <Field label="UI Density" sub="Padding and spacing between elements">
-          <Select value={density} onChange={setDensity} options={['Compact','Comfortable','Spacious']} />
-        </Field>
-        <Field label="Sidebar" sub="Default sidebar state on load">
-          <Select value={sidebar} onChange={setSidebar} options={['Expanded','Collapsed','Auto']} />
-        </Field>
-        <Field label="Bold Monospace" sub="Use bold weight for IP addresses and hex data">
-          <Toggle checked={monoBold} onChange={setMonoBold} label={monoBold ? 'Enabled' : 'Disabled'} />
-        </Field>
-      </FieldGroup>
-      <FieldGroup title="Color Scheme">
-        <div className="grid grid-cols-3 gap-3">
-          {[
-            { name: 'Midnight Blue', accent: '#38BDF8' },
-            { name: 'Emerald',       accent: '#10B981' },
-            { name: 'Violet',        accent: '#818CF8' },
-          ].map(t => (
-            <button key={t.name}
-              className="p-3 rounded-xl border text-left transition-all"
-              style={{ backgroundColor: C.panel, borderColor: t.accent === '#38BDF8' ? t.accent : C.border }}>
-              <div className="w-6 h-6 rounded-lg mb-2" style={{ backgroundColor: t.accent }} />
-              <div className="text-xs font-semibold text-white">{t.name}</div>
-            </button>
-          ))}
-        </div>
-      </FieldGroup>
-    </div>
-  )
-}
-
-function NotificationsPanel() {
-  const [email, setEmail]   = useState(true)
-  const [slack, setSlack]   = useState(false)
-  const [webhook, setWebhook] = useState(false)
-  const [slackUrl, setSlackUrl] = useState('')
-  const [webhookUrl, setWebhookUrl] = useState('')
-
-  return (
-    <div className="space-y-4">
-      <FieldGroup title="Channels">
-        <Field label="Email Alerts" sub="Send alerts to configured email addresses">
-          <Toggle checked={email} onChange={setEmail} label={email ? 'Enabled' : 'Disabled'} />
-        </Field>
-        <Field label="Slack Integration" sub="Post alerts to a Slack channel">
-          <Toggle checked={slack} onChange={setSlack} label={slack ? 'Enabled' : 'Disabled'} />
-        </Field>
-        {slack && (
-          <Field label="Slack Webhook URL">
-            <Input value={slackUrl} onChange={setSlackUrl} placeholder="https://hooks.slack.com/..." />
-          </Field>
-        )}
-        <Field label="Custom Webhook" sub="POST alert JSON to an external URL">
-          <Toggle checked={webhook} onChange={setWebhook} label={webhook ? 'Enabled' : 'Disabled'} />
-        </Field>
-        {webhook && (
-          <Field label="Webhook URL">
-            <Input value={webhookUrl} onChange={setWebhookUrl} placeholder="https://your-service.com/webhook" />
-          </Field>
-        )}
-      </FieldGroup>
-    </div>
-  )
-}
-
-function SystemPanel() {
-  const INFO = [
-    ['Product',        'NetWatch AI NDR'],
-    ['Version',        '3.8.2'],
-    ['Build',          '2024.03.18-prod'],
-    ['License',        'Enterprise — 100 nodes'],
-    ['License Expiry', '2025-12-31'],
-    ['OS',             'Ubuntu 22.04.4 LTS'],
-    ['Kernel',         '5.15.0-101-generic'],
-    ['CPU',            'Intel Xeon E5-2680 v4 (28 cores)'],
-    ['Memory',         '64 GB DDR4'],
-    ['Uptime',         '47 days, 3 hrs, 12 min'],
-    ['DB Size',        '128.4 GB'],
-    ['Packets Stored', '14.2 billion'],
-  ]
-
-  return (
-    <FieldGroup title="System Information">
-      <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-        {INFO.map(([k, v]) => (
-          <div key={k} className="flex justify-between py-2 border-b" style={{ borderColor: '#1a2744' }}>
-            <span className="text-xs" style={{ color: C.faint }}>{k}</span>
-            <span className="mono text-xs font-semibold" style={{ color: C.muted }}>{v}</span>
-          </div>
-        ))}
-      </div>
-      <div className="mt-4 pt-4 border-t" style={{ borderColor: C.border }}>
+    <tr className="border-b" style={{ borderColor: '#1a2744' }}>
+      <td className="pl-5 py-3 pr-4 align-top">
         <div className="flex items-center gap-2">
-          <CheckCircle size={14} style={{ color: C.success }} />
-          <span className="text-xs font-medium" style={{ color: C.success }}>All systems operational</span>
+          <span className="mono text-xs font-semibold text-white break-all">{setting.key}</span>
+          {isChanged && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full flex-shrink-0"
+              style={{ backgroundColor: tint(C.warning, 0.14), color: C.warning }}>
+              unsaved
+            </span>
+          )}
         </div>
-      </div>
-    </FieldGroup>
+        <div className="text-xs mt-0.5" style={{ color: C.faint }}>
+          {readOnly
+            ? setting.mutable
+              ? `read-only — ${setting.data_type} values cannot be written`
+              : 'read-only — the backend does not accept writes to this key'
+            : `writable — ${setting.data_type}`}
+        </div>
+      </td>
+      <td className="py-3 pr-4 align-top w-56">
+        {readOnly ? (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl border"
+            style={{ backgroundColor: C.bg, borderColor: C.border }}>
+            <Lock size={11} style={{ color: C.dim, flexShrink: 0 }} />
+            <span className="mono text-xs truncate" style={{ color: C.muted }}
+              title={displayValue(setting)}>
+              {displayValue(setting)}
+            </span>
+          </div>
+        ) : (
+          <SettingEditor setting={setting} draft={draft} onChange={onChange} disabled={disabled} />
+        )}
+      </td>
+      <td className="py-3 pr-4 align-top text-xs whitespace-nowrap" style={{ color: C.faint }}>
+        {setting.data_type}
+      </td>
+      <td className="py-3 pr-5 align-top text-xs whitespace-nowrap" style={{ color: C.faint }}>
+        {formatTimestamp(setting.updated_at)}
+      </td>
+    </tr>
   )
 }
 
-const SECTION_PANELS: Record<SettingSection, React.ComponentType> = {
-  general:       GeneralPanel,
-  network:       NetworkPanel,
-  capture:       CapturePanel,
-  detection:     DetectionPanel,
-  thresholds:    ThresholdsPanel,
-  ai:            AIPanel,
-  database:      DatabasePanel,
-  backup:        BackupPanel,
-  theme:         ThemePanel,
-  notifications: NotificationsPanel,
-  system:        SystemPanel,
-}
+/**
+ * Read one setting by key.
+ *
+ * Exists because the endpoint does, and because it demonstrates the rule that
+ * matters most here: an internal-only key and a key that was never stored both
+ * answer `404`, so the page reports "not found" and does not try to distinguish
+ * them. Speculating would confirm which secrets exist (M15.23).
+ */
+function SettingLookup() {
+  const [key, setKey] = useState('')
+  const [result, setResult] = useState<Setting | null>(null)
+  const [error, setError] = useState<ApiError | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
 
-interface Props { showToast: (msg: string, type?: ToastMsg['type']) => void }
+  const lookup = () => {
+    const wanted = key.trim()
+    if (wanted === '') return
+    setIsLoading(true)
+    setResult(null)
+    setError(null)
+    void fetchSetting(wanted)
+      .then(setting => setResult(setting))
+      .catch((cause: unknown) => setError(cause as ApiError))
+      .finally(() => setIsLoading(false))
+  }
+
+  return (
+    <div className="rounded-2xl border p-5" style={{ backgroundColor: C.card, borderColor: C.border }}>
+      <div className="flex items-center gap-2 mb-1.5">
+        <Search size={14} style={{ color: C.accent }} />
+        <h2 className="text-sm font-semibold text-white">Read one key</h2>
+      </div>
+      <p className="text-xs mb-3" style={{ color: C.faint }}>
+        An unknown key and a stored internal-only key both answer <span className="mono">404</span>,
+        deliberately. This reports "not found" for either rather than guessing which it was.
+      </p>
+      <form className="flex items-center gap-2"
+        onSubmit={event => { event.preventDefault(); lookup() }}>
+        <input value={key} onChange={event => setKey(event.target.value)}
+          placeholder="Setting key…"
+          className="flex-1 px-3 py-2 rounded-xl text-xs border mono"
+          style={{ backgroundColor: C.panel, borderColor: C.border, color: C.text, outline: 'none' }} />
+        <button type="submit" disabled={isLoading || key.trim() === ''}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border disabled:opacity-50"
+          style={{ borderColor: C.border, color: C.muted, backgroundColor: C.panel }}>
+          <RefreshCw size={12} className={isLoading ? 'animate-spin' : undefined} /> Read
+        </button>
+      </form>
+
+      {error !== null && (
+        <p className="text-xs mt-3" style={{ color: C.muted }}>
+          {error.userMessage}
+        </p>
+      )}
+
+      {result !== null && (
+        <div className="mt-3 px-3 py-2 rounded-xl border"
+          style={{ backgroundColor: C.panel, borderColor: tint(C.success, 0.3) }}>
+          <div className="flex items-center gap-2">
+            <Check size={12} style={{ color: C.success }} />
+            <span className="mono text-xs font-semibold text-white">{result.key}</span>
+            <span className="mono text-xs" style={{ color: C.accent }}>
+              {displayValue(result)}
+            </span>
+          </div>
+          <div className="text-xs mt-1" style={{ color: C.faint }}>
+            {result.data_type} · {result.mutable ? 'writable' : 'read-only'} · last changed{' '}
+            {formatTimestamp(result.updated_at)}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+// ─── Page ────────────────────────────────────────────────────────────────────
+
+interface Props {
+  showToast: (msg: string, type?: ToastMsg['type']) => void
+}
 
 export default function Settings({ showToast }: Props) {
-  const [active, setActive] = useState<SettingSection>('general')
-  const Panel = SECTION_PANELS[active]
-  const section = SECTIONS.find(s => s.id === active)!
+  const resource = useSettings()
+
+  // Edits are held as *overrides* rather than a mirrored copy of the listing, so
+  // a reload — which the hook performs after every successful save — needs no
+  // synchronising effect: a key that has not been touched simply reads through to
+  // whatever the backend last reported.
+  const [overrides, setOverrides] = useState<Readonly<Record<string, Draft>>>({})
+
+  const draftFor = (setting: Setting): Draft =>
+    Object.prototype.hasOwnProperty.call(overrides, setting.key)
+      ? overrides[setting.key]
+      : toDraft(setting)
+
+  const changedKeys = useMemo(
+    () =>
+      resource.settings
+        .filter(setting => {
+          if (!Object.prototype.hasOwnProperty.call(overrides, setting.key)) return false
+          const draft = overrides[setting.key]
+          // A boolean compares by value; a text draft compares as the typed string
+          // so re-typing the same digits does not count as a change.
+          return setting.data_type === 'bool'
+            ? draft !== toDraft(setting)
+            : String(draft) !== String(toDraft(setting))
+        })
+        .map(setting => setting.key),
+    [resource.settings, overrides],
+  )
+
+  const writable = resource.settings.filter(
+    setting => setting.mutable && !isDisplayOnly(setting),
+  )
+  const readOnly = resource.settings.filter(
+    setting => !setting.mutable || isDisplayOnly(setting),
+  )
+
+  const setDraft = (key: string, value: Draft) => {
+    setOverrides(current => ({ ...current, [key]: value }))
+  }
+
+  const discard = () => {
+    setOverrides({})
+  }
+
+  const save = () => {
+    const values: Record<string, WritableSettingValue> = {}
+    for (const setting of resource.settings) {
+      if (!changedKeys.includes(setting.key)) continue
+      values[setting.key] = toWritable(setting, draftFor(setting))
+    }
+    const batch: SettingValues = values
+
+    void resource.save(batch).then(failure => {
+      if (failure !== null) {
+        showToast(failure.userMessage, 'error')
+        // The overrides are kept so the operator can correct the value the backend
+        // refused rather than retyping the whole form.
+        return
+      }
+      setOverrides({})
+      showToast(
+        'Settings stored — the running service is unchanged until it is restarted',
+        'info',
+      )
+    })
+  }
 
   return (
-    <div className="flex gap-4" style={{ minHeight: '600px' }}>
-      {/* Left nav */}
-      <div className="w-64 flex-shrink-0 rounded-2xl border overflow-hidden"
-        style={{ backgroundColor: C.card, borderColor: C.border, alignSelf: 'start' }}>
-        <div className="px-4 py-4 border-b" style={{ borderColor: C.border }}>
-          <h2 className="text-sm font-semibold text-white">Settings</h2>
-          <p className="text-xs mt-0.5" style={{ color: C.faint }}>Platform configuration</p>
-        </div>
-        <div className="py-2">
-          {SECTIONS.map(s => {
-            const Icon = s.icon
-            const isActive = active === s.id
-            return (
-              <button key={s.id} onClick={() => setActive(s.id)}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-all"
-                style={{ backgroundColor: isActive ? `${C.accent}10` : 'transparent', borderLeft: `2px solid ${isActive ? C.accent : 'transparent'}` }}>
-                <Icon size={14} style={{ color: isActive ? C.accent : C.faint, flexShrink: 0 }} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-semibold" style={{ color: isActive ? C.text : C.muted }}>{s.label}</div>
-                </div>
-                {isActive && <ChevronRight size={12} style={{ color: C.accent, flexShrink: 0 }} />}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Right: content */}
-      <div className="flex-1 min-w-0 space-y-4">
-        {/* Section header */}
-        <div>
-          <h1 className="text-lg font-bold text-white">{section.label}</h1>
-          <p className="text-xs mt-0.5" style={{ color: C.faint }}>{section.desc}</p>
-        </div>
-
-        <Panel />
-
-        {/* Save bar */}
-        {active !== 'system' && (
-          <div className="flex items-center justify-between p-4 rounded-2xl border"
-            style={{ backgroundColor: C.card, borderColor: C.border }}>
-            <p className="text-xs" style={{ color: C.faint }}>
-              Changes require a service restart to take full effect.
-            </p>
-            <div className="flex gap-2">
-              <button onClick={() => showToast('Settings reset to defaults', 'info')}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold border"
-                style={{ borderColor: C.border, color: C.muted }}>
-                <RotateCcw size={12}/> Reset
-              </button>
-              <button onClick={() => showToast('Settings saved successfully', 'success')}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold"
-                style={{ backgroundColor: C.accent, color: '#0F172A' }}>
-                <Save size={12}/> Save Changes
-              </button>
-            </div>
+    <div className="space-y-4">
+      {/* What this page is, and the one thing an operator must not miss. */}
+      <div className="rounded-2xl border p-5" style={{ backgroundColor: C.card, borderColor: C.border }}>
+        <div className="flex items-start gap-3">
+          <div className="p-2.5 rounded-xl flex-shrink-0" style={{ backgroundColor: tint(C.accent, 0.08) }}>
+            <Cog size={18} style={{ color: C.accent }} />
           </div>
-        )}
+          <div className="min-w-0">
+            <h1 className="text-sm font-semibold text-white">Runtime settings</h1>
+            <p className="text-xs mt-1 max-w-2xl" style={{ color: C.muted }}>
+              The backend decides which keys exist and which may be written, and this page shows
+              exactly those. A key it does not accept has no control here, and a stored
+              internal-only key is not listed at all.
+            </p>
+            {resource.page !== null && (
+              <p className="text-xs mt-1.5" style={{ color: C.faint }}>
+                {resource.settings.length} readable key{resource.settings.length === 1 ? '' : 's'} ·{' '}
+                {resource.mutableKeys.length} writable
+                {resource.internalKeyCount > 0
+                  ? ` · ${resource.internalKeyCount} withheld as internal-only`
+                  : ''}
+              </p>
+            )}
+          </div>
+        </div>
       </div>
+
+      {/* The response's own statement that a write is stored, not applied. */}
+      {resource.restartRequired && (
+        <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl border"
+          style={{ backgroundColor: tint(C.warning, 0.08), borderColor: tint(C.warning, 0.3) }}>
+          <AlertTriangle size={14} style={{ color: C.warning, flexShrink: 0, marginTop: 1 }} />
+          <div className="min-w-0">
+            <p className="text-xs font-semibold" style={{ color: C.warning }}>
+              Stored — restart required
+            </p>
+            <p className="text-xs mt-0.5" style={{ color: C.muted }}>
+              The backend accepted the change and reported <span className="mono">restart_required</span>.
+              Stored settings are read at application startup, so the running service is still using
+              the previous values. Restart NetWatch for the change to take effect.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {resource.saveError !== null && (
+        <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl border"
+          style={{ backgroundColor: tint(C.danger, 0.08), borderColor: tint(C.danger, 0.3) }}>
+          <AlertTriangle size={14} style={{ color: C.danger, flexShrink: 0, marginTop: 1 }} />
+          <div className="min-w-0">
+            <p className="text-xs font-semibold" style={{ color: C.danger }}>
+              Nothing was written
+            </p>
+            <p className="text-xs mt-0.5" style={{ color: C.muted }}>
+              {resource.saveError.userMessage}
+            </p>
+            {resource.saveError.fieldDetails.length > 0 && (
+              <ul className="text-xs mt-1 space-y-0.5" style={{ color: C.faint }}>
+                {resource.saveError.fieldDetails.map(detail => (
+                  <li key={detail} className="mono">{detail}</li>
+                ))}
+              </ul>
+            )}
+            <p className="text-xs mt-1" style={{ color: C.faint }}>
+              The whole batch is validated before anything is stored, so a refusal changes nothing —
+              not even the keys that were valid.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {resource.error !== null && resource.settings.length > 0 && (
+        <RefreshFailureBanner error={resource.error} onRetry={resource.reload} />
+      )}
+
+      <div className="rounded-2xl border overflow-hidden"
+        style={{ backgroundColor: C.card, borderColor: C.border, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-wrap gap-3"
+          style={{ borderColor: C.border }}>
+          <div>
+            <div className="flex items-center gap-2">
+              <Sliders size={14} style={{ color: C.success }} />
+              <h2 className="text-sm font-semibold text-white">Writable settings</h2>
+            </div>
+            <p className="text-xs mt-0.5" style={{ color: C.faint }}>
+              {writable.length === 0
+                ? 'The backend reported no writable key.'
+                : `${writable.length} key${writable.length === 1 ? '' : 's'} ${'PUT /settings'} accepts`}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={resource.reload} disabled={resource.isLoading}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border disabled:opacity-50"
+              style={{ borderColor: C.border, color: C.muted, backgroundColor: C.panel }}>
+              <RefreshCw size={12} className={resource.isLoading ? 'animate-spin' : undefined} />
+              Refresh
+            </button>
+            <button type="button" onClick={discard} disabled={changedKeys.length === 0 || resource.isSaving}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border disabled:opacity-40"
+              style={{ borderColor: C.border, color: C.muted, backgroundColor: C.panel }}>
+              <RotateCcw size={12} /> Discard
+            </button>
+            <button type="button" onClick={save} disabled={changedKeys.length === 0 || resource.isSaving}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold disabled:opacity-40"
+              style={{ backgroundColor: C.accent, color: '#0F172A' }}>
+              <Save size={12} />
+              {resource.isSaving
+                ? 'Saving…'
+                : changedKeys.length === 0
+                  ? 'Save changes'
+                  : `Save ${changedKeys.length} change${changedKeys.length === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </div>
+
+        <AsyncSection
+          isInitialLoading={resource.isInitialLoading}
+          error={resource.blockingError}
+          isEmpty={false}
+          loadingLabel="Loading settings…"
+          errorTitle="Unable to load settings"
+          onRetry={resource.reload}
+          minHeight={220}
+        >
+          {resource.settings.length === 0 ? (
+            <EmptyState title="No readable settings"
+              hint="The backend reported no readable setting at all. Nothing on this page can be shown or changed."
+              icon={<Cog size={28} />} />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b" style={{ borderColor: C.border }}>
+                    <th className="text-left pl-5 py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Key</th>
+                    <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Value</th>
+                    <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Type</th>
+                    <th className="text-left py-2.5 pr-5 text-xs font-medium" style={{ color: C.dim }}>Last changed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {writable.map(setting => (
+                    <SettingRow
+                      key={setting.key}
+                      setting={setting}
+                      draft={draftFor(setting)}
+                      isChanged={changedKeys.includes(setting.key)}
+                      onChange={value => setDraft(setting.key, value)}
+                      disabled={resource.isSaving}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </AsyncSection>
+      </div>
+
+      {/* Everything the backend lists but will not accept a write for. */}
+      {readOnly.length > 0 && (
+        <div className="rounded-2xl border overflow-hidden"
+          style={{ backgroundColor: C.card, borderColor: C.border }}>
+          <div className="px-5 py-4 border-b" style={{ borderColor: C.border }}>
+            <div className="flex items-center gap-2">
+              <Lock size={14} style={{ color: C.dim }} />
+              <h2 className="text-sm font-semibold text-white">Read-only settings</h2>
+            </div>
+            <p className="text-xs mt-0.5" style={{ color: C.faint }}>
+              Listed by the backend and readable, but not writable through this API. No control is
+              offered for any of them.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b" style={{ borderColor: C.border }}>
+                  <th className="text-left pl-5 py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Key</th>
+                  <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Value</th>
+                  <th className="text-left py-2.5 pr-4 text-xs font-medium" style={{ color: C.dim }}>Type</th>
+                  <th className="text-left py-2.5 pr-5 text-xs font-medium" style={{ color: C.dim }}>Last changed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {readOnly.map(setting => (
+                  <SettingRow
+                    key={setting.key}
+                    setting={setting}
+                    draft={toDraft(setting)}
+                    isChanged={false}
+                    onChange={() => undefined}
+                    disabled
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <SettingLookup />
+
+      <p className="text-xs px-1" style={{ color: C.faint }}>
+        Values are validated by the backend against each key's own declaration, so a value it
+        rejects is reported with its own sentence naming the key — this page does not enforce a
+        second, possibly divergent, copy of those rules. A value of {UNKNOWN_TEXT} means the store
+        holds nothing for that key.
+      </p>
     </div>
   )
 }

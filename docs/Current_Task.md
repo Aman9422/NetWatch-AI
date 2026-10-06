@@ -1,531 +1,1049 @@
 # NetWatch AI — Current Task
 
 **Current Phase:** Base Application Implementation
-**Current Milestone:** M14 — WebSockets
-**Status:** ✅ Complete — implemented, verified, tested and baselined
+**Current Milestone:** M15 — Frontend Integration
+**Status:** ✅ COMPLETE — implemented and verified
+
+Milestone record: `docs/19_M15_Frontend_Integration.md`
+(architecture, feature matrix, manual verification, defects found and fixed,
+performance baseline, known limitations).
 
 ---
 
 # Current Objective
 
-Carry the state M3–M13 already produce to connected clients in real time.
+Connect the existing NetWatch AI React/TypeScript frontend to the real backend.
 
-M13 gave the frontend a REST surface it can *pull* from. M14 adds the push half:
-a client subscribes to a channel and receives the events the backend produces as
-they happen, without polling.
+M13 provides the REST API.
 
-Four channels:
+M14 provides WebSocket real-time events.
 
-    /ws/dashboard    a periodic tick of the picture the dashboard shows
-    /ws/packets      one event per packet the pipeline processes
-    /ws/alerts       alert creation, folding and lifecycle moves
-    /ws/system       capture, service and database state changes
+M15 replaces the Figma Make mock/simulated data with real backend data.
 
-M14 produces no new knowledge. It transports what M4–M12 already produce, reading
-the same services the M13 routes read.
+The main architecture becomes:
+
+    React Frontend
+         ↓
+    API Service Layer
+         ↓
+    FastAPI REST API
+         ↓
+    NetWatch Backend
+
+    React Frontend
+         ↑
+    WebSocket Hooks
+         ↑
+    FastAPI WebSockets
+         ↑
+    Real-Time Backend Events
+
+The frontend must become a real client of the NetWatch backend.
 
 ---
 
-# M14 Architecture
-
-    Producer (capture thread)
-         ↓
-    Service (M6 statistics / M8 devices / M9 connections /
-             M10 detection / M11 alerting / M12 correlation)
-         ↓
-    publish_* helper          app/websockets/events.py
-         ↓
-    EventPublisher            app/websockets/publisher.py
-         ↓
-    call_soon_threadsafe      the worker-thread → loop bridge
-         ↓
-    WebSocketManager.broadcast
-         ↓
-    per-channel registry → per-connection bounded queue
-         ↓
-    sender task → the socket
-
-Two rules hold the design together:
-
-* **The loop owns the queue.** A producer thread never touches a connection's
-  buffer. It hands the event to the loop, and everything after that hand-off is
-  single-threaded, so no lock protects a queue.
-* **M14 is not an API version.** The channels are mounted unversioned at `/ws/...`
-  beside `/api/v1/...`. M13.3's versioning rule is about production HTTP routes;
-  a WebSocket handshake is not a REST resource.
-
----
-
-# M14 Development Rule
+# M15 Development Rule
 
 Do NOT implement:
 
-- Frontend code
-- New detection, alert, correlation or risk-scoring logic
-- ML / AI
-- Automatic blocking
-- Authentication / RBAC
-- External SIEM or notification integrations
-- Message replay, history or backfill
-- Client-driven subscriptions beyond holding a channel open
+- New backend detection logic
+- New alert logic
+- New correlation logic
+- New risk scoring
+- ML
+- AI
+- New packet processing
+- New database features
+- New WebSocket backend functionality
+- External SIEM integrations
 
-M14 transports existing functionality. It does not redesign earlier milestones.
+M15 is frontend integration only.
 
----
-
-# M14.1 — Review of the Existing Architecture
-
-Review what already exists before adding anything:
-
-- where each event comes from (which M6–M12 service holds the fact);
-- what already exists to serialize with (the M13 Pydantic schemas);
-- the one thing that does not exist — a serializable envelope and a sink for it.
-
-Outcome: the M13 schemas are reused as payload sources where they fit, and one new
-envelope type is introduced for the wire. Recorded in
-`docs/18_M14_WebSocket_Design.md` §3.
+Use the backend capabilities already implemented by M3–M14.
 
 ---
 
-# M14.2 — WebSocket Manager
+# M15.1 — Review Existing Figma Make Frontend
 
-One manager owns every connection:
+Review the existing frontend before changing it.
 
-- accept, admit, register, broadcast, send, disconnect, shutdown;
-- a bounded registry per channel;
-- one running loop, bound at startup;
-- counters for accepted, closed, refused, dropped and delivered.
+Current major pages:
 
-Shutdown is idempotent and safe when startup never ran. A publish after shutdown is
-dropped and counted rather than raised.
+    Dashboard
+    Live Traffic
+    Devices
+    Alerts
+    Analytics
+    Reports
+    Settings
+
+Review:
+
+- Existing component structure
+- Existing routing
+- Existing mock data
+- Existing timers
+- `Math.random()`
+- `setInterval`
+- Static arrays
+- Simulated packet generation
+- Simulated device generation
+- Simulated alert generation
+- Existing charts
+- Existing UI states
+
+Do not destroy the original visual design unnecessarily.
+
+The Figma design is the UI baseline.
 
 ---
 
-# M14.3 — Endpoints
+# M15.2 — Preserve Original Figma Design
 
-Four routes, mounted unversioned:
+Keep the existing visual structure where practical.
+
+Preserve:
+
+- Layout
+- Navigation
+- Typography
+- Cards
+- Tables
+- Charts
+- Drawers
+- Status indicators
+- Icons
+- Existing responsive behavior
+
+Backend integration must not require redesigning the interface unless a real backend limitation requires it.
+
+---
+
+# M15.3 — Frontend Environment Configuration
+
+Create/verify frontend environment configuration.
+
+Expected variables:
+
+    VITE_API_BASE_URL
+    VITE_WS_BASE_URL
+
+Example:
+
+    VITE_API_BASE_URL=http://127.0.0.1:8000/api/v1
+    VITE_WS_BASE_URL=ws://127.0.0.1:8000
+
+Do not place backend secrets in Vite environment variables.
+
+Remember:
+
+    VITE_* variables are client-visible.
+
+---
+
+# M15.4 — API Service Layer
+
+Create a dedicated API service layer.
+
+Suggested structure:
+
+    src/services/
+        api.ts
+        capture.ts
+        packets.ts
+        statistics.ts
+        devices.ts
+        connections.ts
+        detections.ts
+        alerts.ts
+        incidents.ts
+        analytics.ts
+        dashboard.ts
+        reports.ts
+        settings.ts
+        system.ts
+        notifications.ts
+
+The exact structure may follow existing conventions.
+
+Components should not make raw `fetch()` calls throughout the application.
+
+---
+
+# M15.5 — API Client
+
+Create a shared HTTP client.
+
+Responsibilities:
+
+- Base URL
+- Request handling
+- JSON parsing
+- Error handling
+- Response envelope handling
+- HTTP status handling
+- Timeout handling where appropriate
+
+The client should understand the project's standard response envelope:
+
+    success
+    message
+    data
+    errors
+
+Do not duplicate response parsing in every page.
+
+---
+
+# M15.6 — TypeScript Models
+
+Create TypeScript types corresponding to backend response schemas.
+
+Suggested types:
+
+    CaptureStatus
+    Packet
+    TrafficStatistics
+    ProtocolStatistics
+    Device
+    Connection
+    DetectionFinding
+    Alert
+    AlertEvidence
+    Incident
+    RiskScore
+    DashboardSummary
+    Report
+    Setting
+    SystemStatus
+    Notification
+    ApiError
+
+Do not use `any` for backend data unless genuinely unavoidable.
+
+---
+
+# M15.7 — API Error Handling
+
+Create a consistent frontend API error model.
+
+Handle:
+
+    network unavailable
+    timeout
+    400
+    404
+    409
+    422
+    500
+    501
+
+Show user-friendly error messages.
+
+Do not expose backend stack traces.
+
+---
+
+# M15.8 — Loading / Empty / Error States
+
+Every data-driven page must support:
+
+    Loading
+    Success
+    Empty
+    Error
+
+Example:
+
+    Loading devices...
+          ↓
+    Devices loaded
+          or
+    No devices observed
+          or
+    Unable to load devices
+
+Do not leave blank screens when an API fails.
+
+---
+
+# M15.9 — Dashboard Integration
+
+Replace simulated dashboard data.
+
+Use:
+
+    GET /api/v1/dashboard/summary
+
+and real-time:
+
+    /ws/dashboard
+
+Connect:
+
+- Packet count
+- Packets/sec
+- Bytes/sec
+- Device count
+- Active connections
+- Open alerts
+- Active incidents
+- Capture state
+- Interface
+
+Do not calculate backend metrics independently in React.
+
+---
+
+# M15.10 — Live Traffic Integration
+
+Replace mock packet generation.
+
+Use:
+
+    /ws/packets
+
+Receive:
+
+    packet.observed
+
+Display real normalized packet data.
+
+Possible fields:
+
+    packet_id
+    timestamp
+    interface
+    source_ip
+    destination_ip
+    protocol
+    source_port
+    destination_port
+    length
+    packet_type
+
+Do not display packet payloads because M7/M14 intentionally do not expose them.
+
+---
+
+# M15.11 — Live Traffic Rate Control
+
+The frontend must not assume every captured packet reaches the browser.
+
+M14 intentionally limits packet WebSocket events.
+
+The frontend should therefore:
+
+- Handle event gaps
+- Avoid assuming sequential packet IDs
+- Avoid treating dropped packets as backend failure
+- Keep rendering bounded
+
+Use a bounded client-side packet list.
+
+Do not keep unlimited packets in React state.
+
+---
+
+# M15.12 — Devices Integration
+
+Replace mock devices.
+
+Use:
+
+    GET /api/v1/devices
+
+Connect:
+
+- Device identity
+- IP addresses
+- MAC
+- First seen
+- Last seen
+- Packet count
+- Byte count
+- Status
+
+Do not display a risk score because M8 does not provide one.
+
+---
+
+# M15.13 — Connections Integration
+
+Connect the existing connection views to:
+
+    GET /api/v1/connections
+    GET /api/v1/connections/active
+    GET /api/v1/connections/{id}
+
+Use real:
+
+- Source
+- Destination
+- Ports
+- Protocol
+- Packet counts
+- Byte counts
+- State
+- Timestamps
+- Device associations
+
+Do not create frontend-side connection tracking.
+
+---
+
+# M15.14 — Alerts Integration
+
+Replace mock alerts.
+
+Use:
+
+    GET /api/v1/alerts
+
+Connect real alert data.
+
+Use:
+
+    /ws/alerts
+
+for:
+
+    alert.created
+    alert.updated
+    alert.acknowledged
+    alert.resolved
+    alert.dismissed
+    alert.false_positive
+
+The frontend must update existing alert rows when appropriate rather than blindly creating duplicates.
+
+---
+
+# M15.15 — Alert Actions
+
+Connect:
+
+    POST /api/v1/alerts/{id}/acknowledge
+    POST /api/v1/alerts/{id}/resolve
+    POST /api/v1/alerts/{id}/dismiss
+    POST /api/v1/alerts/{id}/false-positive
+
+Use backend lifecycle validation.
+
+The frontend must not implement its own transition rules.
+
+---
+
+# M15.16 — Alert Evidence
+
+Connect:
+
+    GET /api/v1/alerts/{alert_id}/evidence
+    GET /api/v1/evidence/{evidence_id}
+
+Display references to:
+
+- Packets
+- Connections
+- Findings
+- Devices
+
+Do not copy packet payloads.
+
+---
+
+# M15.17 — Incident Integration
+
+Connect:
+
+    GET /api/v1/incidents
+    GET /api/v1/incidents/open
+    GET /api/v1/incidents/{incident_id}
+
+Display:
+
+- Title
+- Status
+- Risk score
+- Risk band
+- Correlation confidence
+- Alert confidence
+- Severity
+- Correlation reasons
+- Related alerts
+- Related findings
+- Devices
+- Connections
+- Timeline
+
+Keep:
+
+    risk_score
+    alert_confidence
+    correlation_confidence
+
+visually separate.
+
+---
+
+# M15.18 — Incident WebSocket Events
+
+Handle from:
+
+    /ws/alerts
+
+Events:
+
+    incident.created
+    incident.updated
+    incident.status_changed
+
+Update the UI without requiring a full page refresh.
+
+---
+
+# M15.19 — Incident Lifecycle Actions
+
+Connect:
+
+    POST /api/v1/incidents/{id}/investigate
+    POST /api/v1/incidents/{id}/resolve
+    POST /api/v1/incidents/{id}/dismiss
+
+Use backend validation.
+
+Show errors when a lifecycle transition is rejected.
+
+---
+
+# M15.20 — Detection Integration
+
+Connect:
+
+    GET /api/v1/detections
+    GET /api/v1/detections/{id}
+    GET /api/v1/detections/rules
+
+Display findings separately from alerts.
+
+Do not represent every detection finding as an alert.
+
+---
+
+# M15.21 — Analytics Integration
+
+Connect the real analytics APIs:
+
+    GET /api/v1/analytics/traffic
+    GET /api/v1/analytics/protocols
+    GET /api/v1/analytics/devices
+    GET /api/v1/analytics/connections
+    GET /api/v1/analytics/threats
+
+Replace static chart data.
+
+Charts must render from backend responses.
+
+---
+
+# M15.22 — Reports Integration
+
+Connect existing report metadata endpoints:
+
+    GET /api/v1/reports
+    GET /api/v1/reports/{id}
+
+If report generation returns:
+
+    501 FEATURE_NOT_IMPLEMENTED
+
+the UI must display an appropriate unavailable state.
+
+Do not create fake downloadable reports.
+
+M17 owns report generation.
+
+---
+
+# M15.23 — Settings Integration
+
+Connect:
+
+    GET /api/v1/settings
+    GET /api/v1/settings/{key}
+    PUT /api/v1/settings
+
+Respect backend restrictions.
+
+Do not expose internal-only settings.
+
+When the backend reports:
+
+    restart_required
+
+display that information clearly.
+
+---
+
+# M15.24 — System Integration
+
+Connect:
+
+    GET /api/v1/system/status
+    GET /api/v1/system/health
+    GET /api/v1/system/info
+
+Display service state appropriately.
+
+Do not invent frontend health metrics.
+
+---
+
+# M15.25 — Notifications Integration
+
+Connect:
+
+    GET /api/v1/notifications
+    GET /api/v1/notifications/{id}
+
+Use real stored notifications.
+
+Do not imply that external notification delivery exists.
+
+---
+
+# M15.26 — WebSocket Service Layer
+
+Create a reusable WebSocket client layer.
+
+Suggested:
+
+    src/services/websocket.ts
+
+and/or:
+
+    src/hooks/useWebSocket.ts
+
+Responsibilities:
+
+- Connect
+- Disconnect
+- Reconnect
+- Parse event envelope
+- Validate event type
+- Expose connection state
+- Handle errors
+- Avoid duplicate connections
+
+---
+
+# M15.27 — WebSocket Reconnection
+
+Handle:
+
+    connected
+    disconnected
+    reconnecting
+    reconnected
+
+Do not replay unlimited historical events.
+
+After reconnect:
+
+    REST API
+        ↓
+    Refresh current state
+        ↓
+    WebSocket
+        ↓
+    Continue live updates
+
+This follows the M14 design.
+
+---
+
+# M15.28 — WebSocket Channel Usage
+
+Use separate connections where required:
 
     /ws/dashboard
     /ws/packets
     /ws/alerts
     /ws/system
 
-Admission enforces two caps: a process-wide maximum and a per-channel maximum. A
-refusal closes with a policy-violation code and never registers the client.
+Do not multiplex channels unless the frontend architecture explicitly needs it.
 
 ---
 
-# M14.4 — Connection Lifecycle
+# M15.29 — WebSocket Event Deduplication
 
-Every client has an explicit state, and every transition is one call:
+Use:
 
-    accept → admit → register → sender task starts
-                                 ↓
-    send / receive → (failure, close, keepalive timeout)
-                                 ↓
-    unregister → sender task cancelled → socket closed
+    event_id
 
-A disconnect is idempotent: disconnecting an unknown or already-closed connection
-returns false and changes nothing.
+where appropriate.
 
----
+The frontend should avoid applying the same event twice.
 
-# M14.5 — Connection Registry
-
-- one entry per channel, plus a process-wide view;
-- stable connect order for diagnostics;
-- bounded by the caps, so a flood cannot grow it without limit;
-- snapshot reads, so a broadcast never holds a lock while writing.
+Do not assume event sequences are gap-free because M14 can intentionally drop packet events.
 
 ---
 
-# M14.6 — Channel Separation
+# M15.30 — Dashboard Real-Time Updates
 
-One channel per data type. A packet event reaches the packet channel and no other;
-an event type outside the vocabulary is refused at construction. Separation is
-enforced by the manager's fan-out, not by the client, so a client cannot widen what
-it receives.
+Dashboard should combine:
 
----
+    Initial REST state
+          +
+    WebSocket updates
 
-# M14.7 — Event Envelope
+The REST API is the source for current state.
 
-One envelope for every event:
+WebSockets are the real-time update mechanism.
 
-    {
-      "type": "packet.observed",
-      "channel": "packets",
-      "source": "packet_pipeline",
-      "timestamp": "2026-01-01T00:00:00.000000Z",
-      "sequence": 412,
-      "schema_version": 1,
-      "data": { ... }
-    }
-
-- the type vocabulary is a closed set;
-- timestamps are ISO-8601 UTC with an offset;
-- the sequence is monotonic across the process;
-- the envelope is frozen — a built event cannot be mutated before it is sent.
+Do not attempt to reconstruct all historical state from WebSocket events.
 
 ---
 
-# M14.8 — Packet Events
+# M15.31 — Remove Mock Data
 
-One `packet.observed` per packet the pipeline processes, projected from the
-normalized packet.
+Remove or disable:
 
-- no packet payload, raw bytes or metadata ever appears on the wire (M7.5's policy
-  carried to the live stream);
-- a missing port stays missing rather than becoming `0`;
-- the capture interface is included so a client can attribute the flow.
+- `Math.random()`
+- Mock packets
+- Mock devices
+- Mock alerts
+- Mock dashboard metrics
+- Simulated traffic
+- Fake timers
+- Fake API responses
+- Mock chart datasets
 
----
-
-# M14.9 — Dashboard Events
-
-A tick on a configurable interval, carrying the same figures the dashboard route
-serves. The tick reads the same services `/api/v1/dashboard/summary` reads; it does
-not recompute anything, and the two agree by construction.
+Do not simply hide mock data while continuing to use it.
 
 ---
 
-# M14.10 — Alert Events
+# M15.32 — React State Architecture
 
-`alert.created` for a new alert, `alert.updated` for a finding folded into an
-existing one, and the lifecycle types (`alert.acknowledged`, `alert.resolved`,
-`alert.dismissed`, `alert.false_positive`) for a controlled status move. The
-lifecycle names are M11's status vocabulary, not a second one.
+Define where backend data lives.
 
----
+Use an appropriate strategy such as:
 
-# M14.11 — System Events
+    Page state
+    Custom hooks
+    Shared context
+    Query/cache layer
 
-Capture state changes (`capture.started`, `capture.stopped`, `capture.error`),
-service state (`service.status`) and database reachability (`database.status`).
+Do not introduce a large state-management library unless it provides real benefit.
 
-A capture error carries a fixed sentence supplied by the capture layer. The
-exception's own text can name a device or a path and never reaches the wire.
+Avoid unnecessary global state.
 
 ---
 
-# M14.12 — Incident Events
+# M15.33 — Custom Hooks
 
-`incident.created` when correlation opens an incident, `incident.updated` when an
-event joins an existing one, and `incident.status_changed` for a lifecycle move.
+Create reusable hooks where appropriate.
 
-A duplicate event — one M12 already deduplicated — publishes nothing, because
-nothing changed.
+Examples:
 
----
+    useDashboard()
+    usePackets()
+    useDevices()
+    useConnections()
+    useAlerts()
+    useIncidents()
+    useWebSocket()
+    useSystemStatus()
 
-# M14.13 — Event Publisher
-
-    publish_*  →  EventPublisher  →  WebSocketManager
-
-Two implementations: the real publisher (which forwards to the manager) and a null
-publisher whose calls return false without doing anything. `ensure_publisher` turns
-`None` into the null publisher, so no call site tests for `None` and every existing
-pipeline remains constructible without a socket.
+Hooks should contain data-access behavior, while components focus on presentation.
 
 ---
 
-# M14.14 — Failure Isolation
+# M15.34 — Refresh Strategy
 
-Publishing can never reach the capture thread:
+Do not poll every endpoint continuously.
 
-- a projection that raises is logged and refused;
-- a publisher that raises is logged and refused;
-- a manager that raises does not raise through the publisher;
-- an unbound loop, a disabled layer and a shut-down manager are all counted drops,
-  not exceptions.
+Use:
 
-A failing WebSocket layer cannot stop capture, processing, statistics, device
-tracking, connection tracking, detection, alerting or correlation.
+    REST
+      ↓
+    Initial/explicit data loading
 
----
+and:
 
-# M14.15 — Backpressure
+    WebSocket
+      ↓
+    Real-time updates
 
-One bounded queue per connection:
-
-- the depth comes from the channel policy (32 to 512);
-- **drop-oldest** when full, so the newest event is the one that survives;
-- the drop is counted per connection and visible;
-- the queue never grows past its cap — asserted, not assumed.
-
-A client that drains never fills its queue. A client that stalls is retired rather
-than allowed to hold up its channel: one bad subscriber does not cost the others
-their delivery.
+Use polling only where the backend currently has no WebSocket event for the required data.
 
 ---
 
-# M14.16 — Packet Rate Control
+# M15.35 — Frontend Routing
 
-The packet channel carries a token bucket (200 events/s by default) so a busy wire
-cannot flood a subscriber. The other channels are unlimited.
+Review routing for:
 
-- the bucket starts full, so a burst up to its capacity is allowed;
-- it refills continuously rather than once a second;
-- it never holds more than its capacity and never refills into the past;
-- the ceiling is per channel, not per connection;
-- a rate-limited event reaches no subscriber and is counted as a drop, not as a
-  broadcast.
+    dashboard
+    live traffic
+    devices
+    alerts
+    analytics
+    reports
+    settings
 
-No other channel is rate-limited: alerts are security events and suppressing one
-would be a correctness problem, not a tuning choice.
+Ensure route transitions do not create duplicate API/WebSocket subscriptions.
 
----
-
-# M14.17 — Serialization
-
-One encoding step per event, once, before it is queued:
-
-- a compact JSON document, UTF-8, no pretty-printing;
-- the size is measured and checked against a cap before the frame is queued;
-- an event over the cap is refused and never reaches a connection;
-- the same encoded frame is handed to every subscriber of the channel, so fan-out
-  does not re-encode.
-
-An event whose `data` cannot be expressed as JSON cannot be constructed at all,
-which moves that class of mistake to build time rather than to the socket.
+Cleanup must occur when components unmount.
 
 ---
 
-# M14.18 — Client Disconnect Handling
+# M15.36 — Frontend Performance
 
-A dead client is removed, and only that client:
+Keep frontend rendering bounded.
 
-- a failed write retires the failing connection and leaves the others alone;
-- the survivors keep receiving on that channel after the failure;
-- the failure is counted and visible;
-- a client that stalls is retired rather than allowed to hold up its channel.
+Particularly:
 
-The manager never blocks on a slow socket, and no broadcast can fail because one
-subscriber did.
+    Packet table
+    Alert list
+    Connection list
 
----
+must not grow indefinitely.
 
-# M14.19 — Reconnection
+Use:
 
-A reconnect is a **new** connection:
+- Bounded arrays
+- Virtualization where necessary
+- Memoization where justified
+- Stable React keys
 
-- a new id, fresh counters, the channel's own queue depth;
-- nothing that was missed is replayed — there is no history and no backfill;
-- the event sequence keeps climbing across the reconnect, because the sequence is a
-  property of the process and not of the connection;
-- a reconnect after shutdown is refused and counted like any other refusal, and a
-  restarted manager admits clients again.
+Do not optimize before measuring.
 
 ---
 
-# M14.20 — Startup and Shutdown
+# M15.37 — Security Boundary
 
-The background tasks (keepalive, dashboard tick) start and stop with the
-application lifespan. The manager binds its loop at startup, which is what makes a
-publish from a worker thread a real cross-thread publish instead of a drop to
-`dropped_no_loop`.
+Do not place secrets in:
 
----
+- React source
+- `.env`
+- WebSocket messages
+- API request logs
 
-# M14.21 — Thread/Async Safety
+Remember that Vite environment variables are client-visible.
 
-Two threads can publish — the capture thread and request handlers — and one loop
-owns the sockets.
-
-- a publish from any thread goes through `call_soon_threadsafe` onto the manager's
-  loop;
-- the queue and the socket are touched only on that loop, so a queue needs no lock;
-- the registry is read as a snapshot, so a broadcast holds no lock while writing;
-- a publish from a worker thread never blocks.
+Keep the existing local-development assumption.
 
 ---
 
-# M14.22 — Security Boundary
+# M15.38 — Tests
 
-M14 is a local, unauthenticated application surface by design.
+Create frontend tests for:
 
-- no secret, token, internal path or stack trace reaches the wire;
-- a capture error's text is a fixed sentence, never the exception's own message;
-- every client frame is bounded in size and validated before it is interpreted;
-- the payload policy M7 established is carried to the live stream: packet metadata
-  only, never payload bytes;
-- the local-development assumption is documented.
+### API
 
----
+- Successful response
+- API error
+- Network failure
+- Validation failure
 
-# M14.23 — Client Input Policy
+### Components
 
-The channels are one-way by design. A client's frames are answered or refused:
+- Loading
+- Empty
+- Error
+- Success
 
-- `ping` is answered with a matching `pong`;
-- a `pong` is accepted and counted;
-- an unknown type, a malformed document, a frame without a type and a binary frame
-  are each refused with their own reason;
-- an oversized message is refused before it is parsed;
-- a flood of invalid messages disconnects the client.
+### WebSocket
 
-A client can never widen what it receives by asking.
+- Connect
+- Disconnect
+- Reconnect
+- Event parsing
+- Event routing
+- Duplicate event
+- Invalid event
+- Connection failure
 
----
+### Pages
 
-# M14.24 — Keepalive
-
-The manager pings on a configurable interval and retires a client that never
-answers within the timeout:
-
-- a client that answers is kept;
-- one that does not is retired and unregistered;
-- a tick with no connections does nothing;
-- the keepalive is quiet when its interval is set beyond the run's length, which is
-  how the baseline isolates the transport.
-
----
-
-# M14.25–M14.31 — Tests
-
-Every test that needs a socket speaks ASGI WebSocket to the real application
-through Starlette's `TestClient`, so these are integration tests of the real stack
-rather than of a mock transport.
-
-| File | Covers | Tests |
-| --- | --- | --- |
-| `tests/test_ws_manager.py` | M14.25 — connect, register, disconnect, duplicate disconnect, count, admission caps, startup/shutdown, heartbeat | 48 |
-| `tests/test_ws_event_schema.py` | M14.26 — envelope fields, the type vocabulary, ISO-8601 timestamps, size cap, JSON serialization, no payload in a packet event | 67 |
-| `tests/test_ws_broadcast.py` | M14.27 — one and many subscribers, channel isolation, failed-client removal, survivors still served | 19 |
-| `tests/test_ws_backpressure.py` | M14.28 — queue below/at/over the cap, drop-oldest, the packet token bucket, alerts never rate-limited | 33 |
-| `tests/test_ws_reconnect.py` | M14.29 — reconnect is a new connection, no replay, counters reset | 16 |
-| `tests/test_ws_pipeline_isolation.py` | M14.30 — a failing manager does not stop capture, statistics, detection, alerting or correlation | 8 |
-| `tests/test_ws_endpoints.py` | M14.31 — real ASGI WebSocket on all four channels, ping/pong, input refusal, the per-channel cap over the wire | 16 |
-| `tests/test_ws_publisher.py` | M14.13 — the publisher contract, the null publisher, the no-loop path | 17 |
+- Dashboard
+- Live Traffic
+- Devices
+- Alerts
+- Analytics
+- Reports
+- Settings
 
 ---
 
-# M14.32 — Manual Verification
+# M15.39 — Integration Tests
 
-`backend/scripts/verify_m14.py`, two modes mirroring `verify_m13.py`:
+Test the real frontend against the backend.
 
-- **`sample`** — drives controlled packets through the real M4→M12 pipeline over a
-  throwaway SQLite file with a client attached to every channel, then asserts the
-  packets the pipeline processed arrived as `packet.observed`, that the dashboard
-  tick reports the same counts the REST endpoint reports, that a controlled
-  detection produced an alert event, that a controlled incident produced an
-  incident event, and that the keepalive answers.
-- **`live`** — starts the application under uvicorn on a loopback port and speaks
-  real WebSocket over real HTTP to all four channels.
+Verify:
 
----
+    FastAPI REST
+        ↓
+    React API service
+        ↓
+    Page data
 
-# M14.33 — Performance Baseline
+and:
 
-`backend/scripts/benchmark_m14.py` with `backend/scripts/m14_bench_harness.py`
-measures, per channel:
+    FastAPI WebSocket
+        ↓
+    React WebSocket hook
+        ↓
+    UI update
 
-- connection setup time;
-- broadcast latency (publish → the client has it) and messages/second;
-- packet event throughput with and without the packet channel connected;
-- alert event latency;
-- queue depth high-water mark and drop counts under an overrun;
-- the pipeline's own packet rate with publishing enabled against the same run with
-  it disabled;
-- process CPU and RSS across the run;
-- simultaneous test clients.
+Test the complete local application.
 
 ---
 
-# M14 Completion Criteria
+# M15.40 — Manual Verification
 
-M14 is complete when:
+Start:
 
-- a WebSocket manager exists and owns every connection.
-- The four channels are served and separated.
-- The event envelope is one type with one vocabulary.
-- Packet, dashboard, alert, incident and system events are produced from the real
-  services, not from invented data.
-- Publishing is failure-isolated from capture.
-- Buffering is bounded and the drop policy is enforced and counted.
-- The packet channel is rate-controlled and the security channels are not.
-- Client input is answered or refused and can never widen what is sent.
-- The keepalive retires a dead peer.
-- Reconnection works without replay.
-- Startup and shutdown are clean.
-- Tests pass.
-- Manual verification succeeds in both modes.
-- The performance baseline is recorded.
+    FastAPI backend
+    React frontend
+
+Verify:
+
+1. Dashboard loads real backend data.
+2. Packet stream displays real normalized packets.
+3. Devices display real observed devices.
+4. Connections display real conversations.
+5. Alerts display real alerts.
+6. Incident data displays real correlation/risk information.
+7. WebSocket events update the UI.
+8. Disconnect/reconnect works.
+9. REST data refresh works.
+10. No mock data remains active.
 
 ---
 
-# M14 Completion Record
+# M15.41 — Manual Feature Matrix
 
-M14 is complete: the WebSocket layer is implemented, verified, tested and
-baselined.
+Verify each major page:
 
-**What shipped**
+    Dashboard         REST + WebSocket
+    Live Traffic      WebSocket
+    Devices           REST
+    Alerts            REST + WebSocket
+    Analytics         REST
+    Reports           REST metadata
+    Settings          REST
+    System            REST
+    Notifications     REST
 
-* `app/websockets/` — `manager` (accept, admit, register, broadcast, send,
-  disconnect, shutdown), `connection` (`ClientConnection`), `channels`, `policy`
-  (per-channel queue depth and token bucket), `event` (the envelope), `builders`
-  and `payloads` (the five payload kinds), `events` (the `publish_*` helpers),
-  `publisher` (the real and null publishers), `dashboard` (the tick),
-  `heartbeat`, `messages` (client input) and `routes`.
-* Four channels mounted unversioned — `/ws/dashboard`, `/ws/packets`, `/ws/alerts`,
-  `/ws/system` — beside the `/api/v1` REST surface.
-* The pipeline publishes `packet.observed` last of all, after every M6–M12
-  consumer has seen the packet, so an event can never describe a packet whose
-  state is still moving.
+Record any feature that remains unavailable because its backend milestone has not been implemented.
 
-**Verification**
+---
 
-* Full suite: **1863 passed**; pyright **0 errors, 0 warnings, 0 informations**
-  over **268 files**. The M14 suite is **224 tests** (48 manager, 67 event schema,
-  33 backpressure, 19 broadcast, 17 publisher, 16 reconnect, 16 endpoints,
-  8 pipeline isolation).
-* `verify_m14.py` ran green in **both** modes — `sample` (the real M4→M12 pipeline
-  with a client on every channel) and `live` (uvicorn on a loopback port answering
-  real WebSocket over real HTTP).
-* `benchmark_m14.py` produced the M14.33 baseline; the figures are recorded in
-  `docs/TODO.md`.
+# M15.42 — Performance Baseline
 
-**The measured cost**
+Measure:
 
-The packet ladder is the figure worth quoting, because it is a measured difference
-rather than an inference — the same 2,000-packet burst through the same M4–M12
-stack at five publishing configurations:
+- Initial page load
+- Dashboard API load time
+- Packet event render rate
+- Alert event render latency
+- WebSocket reconnect time
+- React memory usage during sustained packet streaming
+- Maximum bounded packet rows
+- Maximum bounded alert rows
 
-| configuration | packets/s | µs/packet | overhead vs M14 absent |
-| --- | --- | --- | --- |
-| publish call replaced (M14 absent) | 2,947 | 339.27 | — |
-| null publisher — event built, then discarded | 2,418 | 413.59 | +74.32 µs |
-| publisher, layer disabled | 2,678 | 373.35 | +34.08 µs |
-| publisher, enabled, no subscriber | 2,304 | 434.03 | +94.75 µs |
-| publisher, enabled, one subscriber | 2,015 | 496.40 | +157.12 µs |
+Do not claim production-scale frontend performance.
 
-**Building** a `packet.observed` costs roughly **74 µs/packet**; **delivering** it
-to one subscriber costs roughly **158 µs/packet** over having no layer at all. The
-M4–M12 pipeline's own ~339 µs/packet dominates both.
+---
 
-Broadcast latency is 0.21–0.40 ms p50 depending on payload size (243–799 B). The
-packet channel's 200/s ceiling is plainly visible in the throughput run — 397/s
-delivered from 6,748/s offered — which is the throttle working, not a transport
-limit. Under an overrun the queue reached its cap on every channel and never went
-past it.
+# M15 Completion Criteria
 
-**One caveat to carry forward**
+M15 is complete when:
 
-The smaller ladder steps are the same order as this disk's run-to-run variance: an
-earlier run of the identical ladder measured a 1,564 packets/s baseline where the
-recorded run measured 2,947, and one rung measured *cheaper* than the rung below it.
-The ladder's trend is quotable; no single step is. If the packet path is
-re-measured, run it more than once.
+- Figma Make frontend has been reviewed.
+- Original visual design is preserved where practical.
+- API service layer exists.
+- TypeScript backend types exist.
+- API errors are handled consistently.
+- Dashboard uses real data.
+- Live Traffic uses real WebSocket packets.
+- Devices use real data.
+- Connections use real data.
+- Detections use real data.
+- Alerts use real data.
+- Alert lifecycle actions work.
+- Evidence works.
+- Incidents use real data.
+- Incident lifecycle actions work.
+- Incident WebSocket events work.
+- Analytics use real data.
+- Reports use real metadata only.
+- Settings use real backend data.
+- System status uses real backend data.
+- Notifications use real data.
+- WebSocket reconnect works.
+- WebSocket event deduplication works.
+- Mock data is removed.
+- Loading/empty/error states exist.
+- Frontend state is bounded.
+- Frontend tests pass.
+- Backend/frontend integration tests pass.
+- Manual end-to-end verification succeeds.
+- Performance baseline is recorded.
 
-**Boundaries held**
+---
 
-No frontend code; no new detection, alert, correlation or risk-scoring logic; no
-ML/AI; no automatic blocking; no authentication/RBAC; no external SIEM or
-notification integration; no replay or backfill. M14 transports what M3–M13 already
-produce and does not redesign them.
+# Current Immediate Task
 
-**Next**
+**M15 is complete and verified.** The record — architecture, the M15.41 feature
+matrix, the M15.40 manual verification, the defects the manual run found and their
+fixes, the M15.42 performance baseline, and the known limitations — is
+`docs/19_M15_Frontend_Integration.md`.
 
-M15 — Frontend Integration, consuming this surface from the React frontend:
-the `/api/v1` REST routes for reads and the four `/ws/...` channels for live
-updates.
+Every step of the original M15.1 plan was carried out: the Figma Make frontend was
+reviewed; every mock-data source, simulated timer and generator was found and
+removed; each page was mapped to its M13 REST endpoint and/or M14 WebSocket
+channel; the API service layer, the TypeScript wire models, the WebSocket
+service/hook layer, the four async states and the bounded client-side state were
+defined and built; the Vite environment configuration was added; and the service,
+component, WebSocket, page and live-integration suites were written.
+
+**The immediate task is now M16 — Analytics**: back the remaining chart data with
+the real analytics services (`GET /api/v1/analytics/*`, already implemented in
+M13) and add the time-range filtering the roadmap asks for.
+
+**One item is handed back and should be decided before it is forgotten:** device
+identity on a routed path (`docs/19_M15_Frontend_Integration.md` §12 and §15). A
+device record can end up keyed to the next hop — the gateway — and therefore hold
+every far-end address it carried, because identity is MAC-first and the MAC is
+taken from the captured frame. It is visible on the Devices page, it is not a
+frontend defect, and correcting it is an M8 design decision.
+
+---
+
+# Architecture Boundary
+
+M13 provides:
+
+    REST API
+        ↓
+    Frontend API Services
+
+M14 provides:
+
+    WebSocket Events
+        ↓
+    Frontend WebSocket Services/Hooks
+
+M15 provides:
+
+    API + WebSocket
+          ↓
+    React Application
+          ↓
+    Real NetWatch UI
+
+M15 does not implement new backend intelligence.
+
+---
