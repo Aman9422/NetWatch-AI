@@ -103,7 +103,7 @@ function AlertRow({ alert, onOpen }: { alert: Alert; onOpen: () => void }) {
           {severityLabel(alert.severity)}
         </span>
       </td>
-      <td className="py-3 pr-4 max-w-[320px]">
+      <td className="py-3 pr-4 max-w-80">
         <div className="text-xs font-semibold text-white truncate" title={alert.title}>{alert.title}</div>
         <div className="text-xs mt-0.5 truncate" style={{ color: C.faint }} title={alert.description}>
           {alert.description}
@@ -275,7 +275,7 @@ export default function Alerts({ showToast }: Props) {
       {/* Filters */}
       <form className="flex items-center gap-2 flex-wrap"
         onSubmit={event => { event.preventDefault(); applyAddress() }}>
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border flex-1 min-w-[220px]"
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border flex-1 min-w-55"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <Search size={13} style={{ color: C.faint }} />
           <input value={addressInput}

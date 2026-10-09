@@ -80,7 +80,7 @@ function StatCard({ label, value, sub, icon, accent = C.accent }: {
       className="rounded-2xl border p-4 flex gap-3 items-center"
       style={{ backgroundColor: C.card, borderColor: C.border, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}
     >
-      <div className="p-2.5 rounded-xl flex-shrink-0" style={{ backgroundColor: tint(accent, 0.08) }}>
+      <div className="p-2.5 rounded-xl shrink-0" style={{ backgroundColor: tint(accent, 0.08) }}>
         <div style={{ color: accent }}>{icon}</div>
       </div>
       <div className="min-w-0">
@@ -96,7 +96,7 @@ function StatCard({ label, value, sub, icon, accent = C.accent }: {
 function DetailRow({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="flex items-start justify-between gap-4 py-1.5 border-b" style={{ borderColor: '#1a2744' }}>
-      <span className="text-xs flex-shrink-0" style={{ color: C.faint }}>{label}</span>
+      <span className="text-xs shrink-0" style={{ color: C.faint }}>{label}</span>
       <span className={`text-xs font-medium text-right break-all ${mono ? 'mono' : ''}`} style={{ color: C.muted }}>
         {value}
       </span>
@@ -117,7 +117,7 @@ function PacketDrawer({
 }) {
   return (
     <div
-      className="w-96 flex-shrink-0 flex flex-col rounded-2xl border overflow-hidden fade-in-up"
+      className="w-96 shrink-0 flex flex-col rounded-2xl border overflow-hidden fade-in-up"
       style={{ backgroundColor: C.card, borderColor: C.border }}
     >
       <div className="flex items-center justify-between px-4 py-3.5 border-b" style={{ borderColor: C.border }}>
@@ -282,7 +282,7 @@ export default function LiveTraffic({ showToast }: Props) {
       )}
 
       {/* Stat cards */}
-      <div className="grid grid-cols-4 gap-4 flex-shrink-0">
+      <div className="grid grid-cols-4 gap-4 shrink-0">
         <StatCard
           label="Packets / sec" value={formatItemsPerSecond(snapshot?.packets_per_second)}
           sub={ratesUnavailable ? 'snapshot unavailable' : 'M6 snapshot · polled'}
@@ -306,7 +306,7 @@ export default function LiveTraffic({ showToast }: Props) {
       </div>
 
       {/* Filters */}
-      <div className="flex-shrink-0 space-y-2">
+      <div className="shrink-0 space-y-2">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl border flex-1"
             style={{ backgroundColor: C.card, borderColor: C.border }}>
@@ -417,7 +417,7 @@ export default function LiveTraffic({ showToast }: Props) {
           style={{ backgroundColor: C.card, borderColor: C.border }}
         >
           <div
-            className="grid text-xs font-medium px-4 py-2.5 border-b flex-shrink-0"
+            className="grid text-xs font-medium px-4 py-2.5 border-b shrink-0"
             style={{ borderColor: C.border, color: C.dim, gridTemplateColumns: tableColumns }}
           >
             <span>Time</span><span>Source</span><span>Destination</span>
@@ -485,7 +485,7 @@ export default function LiveTraffic({ showToast }: Props) {
           </div>
 
           <div
-            className="flex items-center gap-4 px-4 py-2.5 border-t flex-shrink-0"
+            className="flex items-center gap-4 px-4 py-2.5 border-t shrink-0"
             style={{ borderColor: C.border, backgroundColor: C.panel }}
           >
             <span className="mono text-xs" style={{ color: C.dim }}>

@@ -1,1049 +1,580 @@
-# NetWatch AI — Current Task
+# NetWatch AI — M16 Analytics
 
-**Current Phase:** Base Application Implementation
-**Current Milestone:** M15 — Frontend Integration
-**Status:** ✅ COMPLETE — implemented and verified
-
-Milestone record: `docs/19_M15_Frontend_Integration.md`
-(architecture, feature matrix, manual verification, defects found and fixed,
-performance baseline, known limitations).
+**Milestone:** M16 — Analytics  
+**Scope:** implement and verify the backend analytics layer using the real data produced by M4–M12.  
+**Status:** not started
 
 ---
 
-# Current Objective
+# 1. Purpose
 
-Connect the existing NetWatch AI React/TypeScript frontend to the real backend.
+M15 connected the React/TypeScript frontend to the M13 REST API and M14 WebSocket channels. The frontend already consumes the following analytics endpoints:
 
-M13 provides the REST API.
+- `GET /api/v1/analytics/traffic`
+- `GET /api/v1/analytics/protocols`
+- `GET /api/v1/analytics/devices`
+- `GET /api/v1/analytics/connections`
+- `GET /api/v1/analytics/threats`
 
-M14 provides WebSocket real-time events.
+M16 now implements and hardens the backend analytics behind these endpoints.
 
-M15 replaces the Figma Make mock/simulated data with real backend data.
-
-The main architecture becomes:
-
-    React Frontend
-         ↓
-    API Service Layer
-         ↓
-    FastAPI REST API
-         ↓
-    NetWatch Backend
-
-    React Frontend
-         ↑
-    WebSocket Hooks
-         ↑
-    FastAPI WebSockets
-         ↑
-    Real-Time Backend Events
-
-The frontend must become a real client of the NetWatch backend.
+The analytics layer must transform existing NetWatch data into useful historical, statistical and security summaries without introducing a second detection or risk engine.
 
 ---
 
-# M15 Development Rule
+# 2. M16 Goal
 
-Do NOT implement:
+Build a read-oriented analytics layer for:
 
-- New backend detection logic
-- New alert logic
-- New correlation logic
-- New risk scoring
-- ML
-- AI
-- New packet processing
-- New database features
-- New WebSocket backend functionality
-- External SIEM integrations
+1. Traffic analytics
+2. Protocol analytics
+3. Device analytics
+4. Connection analytics
+5. Threat analytics
 
-M15 is frontend integration only.
+The results must come from real backend data.
 
-Use the backend capabilities already implemented by M3–M14.
+No mock data, random values or simulated activity may be introduced.
 
 ---
 
-# M15.1 — Review Existing Figma Make Frontend
+# 3. Architecture Position
 
-Review the existing frontend before changing it.
+```text
+Packet Capture
+      ↓
+Packet Processing
+      ↓
+Traffic Statistics
+      ↓
+Packet Persistence
+      ↓
+Devices / Connections
+      ↓
+Detections
+      ↓
+Alerts
+      ↓
+Correlation + Risk
+      ↓
+────────────────────────
+      Analytics
+────────────────────────
+      ↓
+M13 REST API
+      ↓
+M15 Frontend
+````
 
-Current major pages:
+M16 is a consumer of existing backend data.
 
-    Dashboard
-    Live Traffic
-    Devices
-    Alerts
-    Analytics
-    Reports
-    Settings
+It does not replace:
 
-Review:
-
-- Existing component structure
-- Existing routing
-- Existing mock data
-- Existing timers
-- `Math.random()`
-- `setInterval`
-- Static arrays
-- Simulated packet generation
-- Simulated device generation
-- Simulated alert generation
-- Existing charts
-- Existing UI states
-
-Do not destroy the original visual design unnecessarily.
-
-The Figma design is the UI baseline.
-
----
-
-# M15.2 — Preserve Original Figma Design
-
-Keep the existing visual structure where practical.
-
-Preserve:
-
-- Layout
-- Navigation
-- Typography
-- Cards
-- Tables
-- Charts
-- Drawers
-- Status indicators
-- Icons
-- Existing responsive behavior
-
-Backend integration must not require redesigning the interface unless a real backend limitation requires it.
+* M6 Traffic Statistics
+* M8 Device Discovery
+* M9 Connection Tracking
+* M10 Detection
+* M11 Alert Engine
+* M12 Correlation and Risk Scoring
 
 ---
 
-# M15.3 — Frontend Environment Configuration
+# 4. Scope
 
-Create/verify frontend environment configuration.
+## M16.1 — Analytics Architecture
 
-Expected variables:
+First inspect the existing implementation.
 
-    VITE_API_BASE_URL
-    VITE_WS_BASE_URL
+Identify:
 
-Example:
+* current analytics router
+* analytics service/module
+* existing repositories
+* packet persistence
+* statistics manager
+* device registry/data
+* connection data
+* detection findings
+* alerts
+* incidents
+* existing Pydantic schemas
+* M13 analytics response models
+* M15 frontend expectations
 
-    VITE_API_BASE_URL=http://127.0.0.1:8000/api/v1
-    VITE_WS_BASE_URL=ws://127.0.0.1:8000
+Determine whether the current analytics implementation is complete, partial or placeholder-based.
 
-Do not place backend secrets in Vite environment variables.
+Reuse existing services and models wherever possible.
 
-Remember:
-
-    VITE_* variables are client-visible.
-
----
-
-# M15.4 — API Service Layer
-
-Create a dedicated API service layer.
-
-Suggested structure:
-
-    src/services/
-        api.ts
-        capture.ts
-        packets.ts
-        statistics.ts
-        devices.ts
-        connections.ts
-        detections.ts
-        alerts.ts
-        incidents.ts
-        analytics.ts
-        dashboard.ts
-        reports.ts
-        settings.ts
-        system.ts
-        notifications.ts
-
-The exact structure may follow existing conventions.
-
-Components should not make raw `fetch()` calls throughout the application.
+Do not create duplicate representations of packets, devices, connections, alerts or incidents.
 
 ---
 
-# M15.5 — API Client
+# 5. Traffic Analytics
 
-Create a shared HTTP client.
+Implement analytics based on persisted packet and traffic data.
 
-Responsibilities:
+Support useful values such as:
 
-- Base URL
-- Request handling
-- JSON parsing
-- Error handling
-- Response envelope handling
-- HTTP status handling
-- Timeout handling where appropriate
+* total packets
+* total bytes
+* packet rate
+* byte rate
+* traffic over time
+* top source addresses
+* top destination addresses
+* inbound/outbound traffic where supported
+* packet count by time bucket
+* byte count by time bucket
 
-The client should understand the project's standard response envelope:
+Time-series results must be bounded.
 
-    success
-    message
-    data
-    errors
+Do not return an unlimited number of data points.
 
-Do not duplicate response parsing in every page.
+Define clear:
 
----
+* default time range
+* maximum time range
+* bucket size
+* maximum returned points
 
-# M15.6 — TypeScript Models
-
-Create TypeScript types corresponding to backend response schemas.
-
-Suggested types:
-
-    CaptureStatus
-    Packet
-    TrafficStatistics
-    ProtocolStatistics
-    Device
-    Connection
-    DetectionFinding
-    Alert
-    AlertEvidence
-    Incident
-    RiskScore
-    DashboardSummary
-    Report
-    Setting
-    SystemStatus
-    Notification
-    ApiError
-
-Do not use `any` for backend data unless genuinely unavoidable.
+Use existing M6 statistics where appropriate instead of creating a second traffic-statistics engine.
 
 ---
 
-# M15.7 — API Error Handling
+# 6. Protocol Analytics
 
-Create a consistent frontend API error model.
+Calculate protocol distribution from actual packet data.
+
+Support:
+
+* packet count by protocol
+* byte count by protocol
+* protocol percentage
+* top protocols
+* protocol distribution over time where useful
 
 Handle:
 
-    network unavailable
-    timeout
-    400
-    404
-    409
-    422
-    500
-    501
+* empty data
+* unknown protocols
+* zero totals
+* missing values
 
-Show user-friendly error messages.
-
-Do not expose backend stack traces.
+Percentages must be calculated from the actual selected dataset.
 
 ---
 
-# M15.8 — Loading / Empty / Error States
+# 7. Device Analytics
 
-Every data-driven page must support:
+Use the existing M8 device model and data.
 
-    Loading
-    Success
-    Empty
-    Error
+Provide analytics such as:
 
-Example:
+* total devices
+* active devices
+* inactive devices
+* unknown-state devices
+* packets per device
+* bytes per device
+* top talkers
+* first seen
+* last seen
+* device activity over time where supported
 
-    Loading devices...
-          ↓
-    Devices loaded
-          or
-    No devices observed
-          or
-    Unable to load devices
+Do not create a second device identity mechanism.
 
-Do not leave blank screens when an API fails.
+Do not add device risk scoring in M16.
 
----
-
-# M15.9 — Dashboard Integration
-
-Replace simulated dashboard data.
-
-Use:
-
-    GET /api/v1/dashboard/summary
-
-and real-time:
-
-    /ws/dashboard
-
-Connect:
-
-- Packet count
-- Packets/sec
-- Bytes/sec
-- Device count
-- Active connections
-- Open alerts
-- Active incidents
-- Capture state
-- Interface
-
-Do not calculate backend metrics independently in React.
+Preserve the existing M8 limitation where routed traffic can cause the next-hop MAC to represent multiple remote IP addresses.
 
 ---
 
-# M15.10 — Live Traffic Integration
+# 8. Connection Analytics
 
-Replace mock packet generation.
+Use M9 connection data.
 
-Use:
+Provide:
 
-    /ws/packets
+* total connections
+* active connections
+* connections by protocol
+* connections by status
+* top source devices/addresses
+* top destination devices/addresses
+* connection duration statistics where available
+* connection activity over time where practical
 
-Receive:
+Do not modify M9 connection-tracking behavior.
 
-    packet.observed
-
-Display real normalized packet data.
-
-Possible fields:
-
-    packet_id
-    timestamp
-    interface
-    source_ip
-    destination_ip
-    protocol
-    source_port
-    destination_port
-    length
-    packet_type
-
-Do not display packet payloads because M7/M14 intentionally do not expose them.
+Do not introduce connection risk scoring.
 
 ---
 
-# M15.11 — Live Traffic Rate Control
+# 9. Threat Analytics
 
-The frontend must not assume every captured packet reaches the browser.
+Use the existing M10, M11 and M12 data.
 
-M14 intentionally limits packet WebSocket events.
+Analytics may include:
 
-The frontend should therefore:
+### Findings
 
-- Handle event gaps
-- Avoid assuming sequential packet IDs
-- Avoid treating dropped packets as backend failure
-- Keep rendering bounded
+* total findings
+* findings by rule
+* findings by severity
+* findings by confidence
+* findings over time
 
-Use a bounded client-side packet list.
+### Alerts
 
-Do not keep unlimited packets in React state.
+* total alerts
+* alerts by severity
+* alerts by lifecycle status
+* alerts over time
+* top alert/detection rules
 
----
+### Incidents
 
-# M15.12 — Devices Integration
+* total incidents
+* incidents by status
+* incidents by risk band
+* incident activity over time
+* relationship between alerts and incidents where the existing references support it
 
-Replace mock devices.
+Keep these concepts separate:
 
-Use:
+```text
+Finding
+Alert
+Incident
+Severity
+Confidence
+Risk
+```
 
-    GET /api/v1/devices
+Do not calculate a new risk score.
 
-Connect:
+Use the M12 risk information where it already exists.
 
-- Device identity
-- IP addresses
-- MAC
-- First seen
-- Last seen
-- Packet count
-- Byte count
-- Status
-
-Do not display a risk score because M8 does not provide one.
-
----
-
-# M15.13 — Connections Integration
-
-Connect the existing connection views to:
-
-    GET /api/v1/connections
-    GET /api/v1/connections/active
-    GET /api/v1/connections/{id}
-
-Use real:
-
-- Source
-- Destination
-- Ports
-- Protocol
-- Packet counts
-- Byte counts
-- State
-- Timestamps
-- Device associations
-
-Do not create frontend-side connection tracking.
+Do not introduce ML or AI scoring in M16.
 
 ---
 
-# M15.14 — Alerts Integration
+# 10. Time and Aggregation
 
-Replace mock alerts.
+Follow the M13 time conventions.
 
-Use:
+HTTP time filters use ISO-8601 UTC.
 
-    GET /api/v1/alerts
+Where applicable:
 
-Connect real alert data.
+* `since` = inclusive
+* `until` = exclusive
 
-Use:
+Use explicit and predictable aggregation rules.
 
-    /ws/alerts
+Examples of supported behavior may include:
 
-for:
+```text
+short range  → smaller buckets
+long range   → larger buckets
+```
 
-    alert.created
-    alert.updated
-    alert.acknowledged
-    alert.resolved
-    alert.dismissed
-    alert.false_positive
+Do not make the behavior arbitrary.
 
-The frontend must update existing alert rows when appropriate rather than blindly creating duplicates.
+Document the selected aggregation rules.
 
----
-
-# M15.15 — Alert Actions
-
-Connect:
-
-    POST /api/v1/alerts/{id}/acknowledge
-    POST /api/v1/alerts/{id}/resolve
-    POST /api/v1/alerts/{id}/dismiss
-    POST /api/v1/alerts/{id}/false-positive
-
-Use backend lifecycle validation.
-
-The frontend must not implement its own transition rules.
+All returned timestamps must follow the existing API convention.
 
 ---
 
-# M15.16 — Alert Evidence
+# 11. API Requirements
 
-Connect:
+Verify and implement:
 
-    GET /api/v1/alerts/{alert_id}/evidence
-    GET /api/v1/evidence/{evidence_id}
+```text
+GET /api/v1/analytics/traffic
+GET /api/v1/analytics/protocols
+GET /api/v1/analytics/devices
+GET /api/v1/analytics/connections
+GET /api/v1/analytics/threats
+```
 
-Display references to:
+All endpoints must follow the existing M13 response envelope.
 
-- Packets
-- Connections
-- Findings
-- Devices
+They must provide:
 
-Do not copy packet payloads.
+* validation
+* sensible defaults
+* explicit maximum limits
+* correct empty responses
+* consistent error handling
+* stable response schemas
+* bounded results
 
----
+Do not expose stack traces or internal implementation details.
 
-# M15.17 — Incident Integration
-
-Connect:
-
-    GET /api/v1/incidents
-    GET /api/v1/incidents/open
-    GET /api/v1/incidents/{incident_id}
-
-Display:
-
-- Title
-- Status
-- Risk score
-- Risk band
-- Correlation confidence
-- Alert confidence
-- Severity
-- Correlation reasons
-- Related alerts
-- Related findings
-- Devices
-- Connections
-- Timeline
-
-Keep:
-
-    risk_score
-    alert_confidence
-    correlation_confidence
-
-visually separate.
+Do not break the TypeScript models already used by M15.
 
 ---
 
-# M15.18 — Incident WebSocket Events
+# 12. Empty and Unavailable Data
 
-Handle from:
+Maintain the project's existing distinction:
 
-    /ws/alerts
+```text
+0        = known value is zero
+empty    = valid query with no records
+unknown  = value was not reported
+unavailable = backend section could not be read
+```
 
-Events:
-
-    incident.created
-    incident.updated
-    incident.status_changed
-
-Update the UI without requiring a full page refresh.
-
----
-
-# M15.19 — Incident Lifecycle Actions
-
-Connect:
-
-    POST /api/v1/incidents/{id}/investigate
-    POST /api/v1/incidents/{id}/resolve
-    POST /api/v1/incidents/{id}/dismiss
-
-Use backend validation.
-
-Show errors when a lifecycle transition is rejected.
+Do not silently convert unavailable or unknown information into `0`.
 
 ---
 
-# M15.20 — Detection Integration
+# 13. Performance Requirements
 
-Connect:
+Analytics must remain suitable for the current local SQLite architecture.
 
-    GET /api/v1/detections
-    GET /api/v1/detections/{id}
-    GET /api/v1/detections/rules
+Avoid:
 
-Display findings separately from alerts.
+* loading the entire packet database into Python unnecessarily
+* unbounded queries
+* N+1 queries
+* repeated expensive aggregation
+* unnecessary duplicate calculations
 
-Do not represent every detection finding as an alert.
+Prefer SQL-side aggregation where appropriate.
 
----
+Add database indexes only when justified by the analytics query patterns.
 
-# M15.21 — Analytics Integration
+Performance measurements must be local development measurements only.
 
-Connect the real analytics APIs:
-
-    GET /api/v1/analytics/traffic
-    GET /api/v1/analytics/protocols
-    GET /api/v1/analytics/devices
-    GET /api/v1/analytics/connections
-    GET /api/v1/analytics/threats
-
-Replace static chart data.
-
-Charts must render from backend responses.
+Do not make production-scale claims.
 
 ---
 
-# M15.22 — Reports Integration
+# 14. Testing
 
-Connect existing report metadata endpoints:
+Add tests for each analytics area.
 
-    GET /api/v1/reports
-    GET /api/v1/reports/{id}
+### Traffic
 
-If report generation returns:
+Test:
 
-    501 FEATURE_NOT_IMPLEMENTED
+* empty data
+* normal data
+* time filtering
+* aggregation
+* bucket limits
+* source/destination ranking
+* packet totals
+* byte totals
 
-the UI must display an appropriate unavailable state.
+### Protocols
 
-Do not create fake downloadable reports.
+Test:
 
-M17 owns report generation.
+* empty data
+* multiple protocols
+* percentages
+* unknown protocol
+* zero totals
 
----
+### Devices
 
-# M15.23 — Settings Integration
+Test:
 
-Connect:
+* no devices
+* active/inactive/unknown states
+* traffic attribution
+* top talkers
+* timestamps
 
-    GET /api/v1/settings
-    GET /api/v1/settings/{key}
-    PUT /api/v1/settings
+### Connections
 
-Respect backend restrictions.
+Test:
 
-Do not expose internal-only settings.
+* no connections
+* protocol aggregation
+* status aggregation
+* active connections
+* duration where supported
 
-When the backend reports:
+### Threats
 
-    restart_required
+Test:
 
-display that information clearly.
-
----
-
-# M15.24 — System Integration
-
-Connect:
-
-    GET /api/v1/system/status
-    GET /api/v1/system/health
-    GET /api/v1/system/info
-
-Display service state appropriately.
-
-Do not invent frontend health metrics.
-
----
-
-# M15.25 — Notifications Integration
-
-Connect:
-
-    GET /api/v1/notifications
-    GET /api/v1/notifications/{id}
-
-Use real stored notifications.
-
-Do not imply that external notification delivery exists.
-
----
-
-# M15.26 — WebSocket Service Layer
-
-Create a reusable WebSocket client layer.
-
-Suggested:
-
-    src/services/websocket.ts
-
-and/or:
-
-    src/hooks/useWebSocket.ts
-
-Responsibilities:
-
-- Connect
-- Disconnect
-- Reconnect
-- Parse event envelope
-- Validate event type
-- Expose connection state
-- Handle errors
-- Avoid duplicate connections
-
----
-
-# M15.27 — WebSocket Reconnection
-
-Handle:
-
-    connected
-    disconnected
-    reconnecting
-    reconnected
-
-Do not replay unlimited historical events.
-
-After reconnect:
-
-    REST API
-        ↓
-    Refresh current state
-        ↓
-    WebSocket
-        ↓
-    Continue live updates
-
-This follows the M14 design.
-
----
-
-# M15.28 — WebSocket Channel Usage
-
-Use separate connections where required:
-
-    /ws/dashboard
-    /ws/packets
-    /ws/alerts
-    /ws/system
-
-Do not multiplex channels unless the frontend architecture explicitly needs it.
-
----
-
-# M15.29 — WebSocket Event Deduplication
-
-Use:
-
-    event_id
-
-where appropriate.
-
-The frontend should avoid applying the same event twice.
-
-Do not assume event sequences are gap-free because M14 can intentionally drop packet events.
-
----
-
-# M15.30 — Dashboard Real-Time Updates
-
-Dashboard should combine:
-
-    Initial REST state
-          +
-    WebSocket updates
-
-The REST API is the source for current state.
-
-WebSockets are the real-time update mechanism.
-
-Do not attempt to reconstruct all historical state from WebSocket events.
-
----
-
-# M15.31 — Remove Mock Data
-
-Remove or disable:
-
-- `Math.random()`
-- Mock packets
-- Mock devices
-- Mock alerts
-- Mock dashboard metrics
-- Simulated traffic
-- Fake timers
-- Fake API responses
-- Mock chart datasets
-
-Do not simply hide mock data while continuing to use it.
-
----
-
-# M15.32 — React State Architecture
-
-Define where backend data lives.
-
-Use an appropriate strategy such as:
-
-    Page state
-    Custom hooks
-    Shared context
-    Query/cache layer
-
-Do not introduce a large state-management library unless it provides real benefit.
-
-Avoid unnecessary global state.
-
----
-
-# M15.33 — Custom Hooks
-
-Create reusable hooks where appropriate.
-
-Examples:
-
-    useDashboard()
-    usePackets()
-    useDevices()
-    useConnections()
-    useAlerts()
-    useIncidents()
-    useWebSocket()
-    useSystemStatus()
-
-Hooks should contain data-access behavior, while components focus on presentation.
-
----
-
-# M15.34 — Refresh Strategy
-
-Do not poll every endpoint continuously.
-
-Use:
-
-    REST
-      ↓
-    Initial/explicit data loading
-
-and:
-
-    WebSocket
-      ↓
-    Real-time updates
-
-Use polling only where the backend currently has no WebSocket event for the required data.
-
----
-
-# M15.35 — Frontend Routing
-
-Review routing for:
-
-    dashboard
-    live traffic
-    devices
-    alerts
-    analytics
-    reports
-    settings
-
-Ensure route transitions do not create duplicate API/WebSocket subscriptions.
-
-Cleanup must occur when components unmount.
-
----
-
-# M15.36 — Frontend Performance
-
-Keep frontend rendering bounded.
-
-Particularly:
-
-    Packet table
-    Alert list
-    Connection list
-
-must not grow indefinitely.
-
-Use:
-
-- Bounded arrays
-- Virtualization where necessary
-- Memoization where justified
-- Stable React keys
-
-Do not optimize before measuring.
-
----
-
-# M15.37 — Security Boundary
-
-Do not place secrets in:
-
-- React source
-- `.env`
-- WebSocket messages
-- API request logs
-
-Remember that Vite environment variables are client-visible.
-
-Keep the existing local-development assumption.
-
----
-
-# M15.38 — Tests
-
-Create frontend tests for:
+* findings
+* rules
+* severity
+* confidence
+* alerts
+* alert lifecycle
+* incidents
+* incident risk bands
+* incident status
+* time filtering
 
 ### API
 
-- Successful response
-- API error
-- Network failure
-- Validation failure
+Test:
 
-### Components
+* defaults
+* validation
+* maximum limits
+* response schemas
+* empty results
+* error handling
 
-- Loading
-- Empty
-- Error
-- Success
-
-### WebSocket
-
-- Connect
-- Disconnect
-- Reconnect
-- Event parsing
-- Event routing
-- Duplicate event
-- Invalid event
-- Connection failure
-
-### Pages
-
-- Dashboard
-- Live Traffic
-- Devices
-- Alerts
-- Analytics
-- Reports
-- Settings
+All existing M0–M15 tests must continue to pass.
 
 ---
 
-# M15.39 — Integration Tests
+# 15. Type and Contract Verification
 
-Test the real frontend against the backend.
+Compare the actual running API responses with the schemas already consumed by M15.
 
-Verify:
+Do not assume that existing documentation and implementation are identical.
 
-    FastAPI REST
-        ↓
-    React API service
-        ↓
-    Page data
+If a schema mismatch is found:
 
-and:
+1. identify the actual backend contract
+2. determine the correct source of truth
+3. update the implementation consistently
+4. add a regression test
+5. document the change
 
-    FastAPI WebSocket
-        ↓
-    React WebSocket hook
-        ↓
-    UI update
-
-Test the complete local application.
+Do not use `any` for backend-derived TypeScript data.
 
 ---
 
-# M15.40 — Manual Verification
+# 16. Documentation
 
-Start:
+Create:
 
-    FastAPI backend
-    React frontend
+```text
+docs/13_M16_Analytics_Design.md
+```
 
-Verify:
+The document should contain:
 
-1. Dashboard loads real backend data.
-2. Packet stream displays real normalized packets.
-3. Devices display real observed devices.
-4. Connections display real conversations.
-5. Alerts display real alerts.
-6. Incident data displays real correlation/risk information.
-7. WebSocket events update the UI.
-8. Disconnect/reconnect works.
-9. REST data refresh works.
-10. No mock data remains active.
+1. Purpose
+2. Scope
+3. Non-goals
+4. Architecture position
+5. Data sources
+6. Analytics architecture
+7. Traffic analytics
+8. Protocol analytics
+9. Device analytics
+10. Connection analytics
+11. Threat analytics
+12. Time-window and aggregation rules
+13. API contracts
+14. Validation and error handling
+15. Performance considerations
+16. Testing and verification
+17. Known limitations
+18. Completion checklist
+19. M16 closure
 
----
+Keep the documentation focused only on M16.
 
-# M15.41 — Manual Feature Matrix
-
-Verify each major page:
-
-    Dashboard         REST + WebSocket
-    Live Traffic      WebSocket
-    Devices           REST
-    Alerts            REST + WebSocket
-    Analytics         REST
-    Reports           REST metadata
-    Settings          REST
-    System            REST
-    Notifications     REST
-
-Record any feature that remains unavailable because its backend milestone has not been implemented.
+Do not document future ML/AI work as implemented.
 
 ---
 
-# M15.42 — Performance Baseline
+# 17. M16 Non-Goals
 
-Measure:
+The following are explicitly outside M16:
 
-- Initial page load
-- Dashboard API load time
-- Packet event render rate
-- Alert event render latency
-- WebSocket reconnect time
-- React memory usage during sustained packet streaming
-- Maximum bounded packet rows
-- Maximum bounded alert rows
+* ML anomaly detection
+* behavioral baselines
+* AI explanations
+* local LLM/Ollama
+* automatic blocking
+* IPS functionality
+* SIEM integrations
+* threat-intelligence integrations
+* authentication/RBAC
+* report generation
+* notification delivery
+* distributed sensors
 
-Do not claim production-scale frontend performance.
-
----
-
-# M15 Completion Criteria
-
-M15 is complete when:
-
-- Figma Make frontend has been reviewed.
-- Original visual design is preserved where practical.
-- API service layer exists.
-- TypeScript backend types exist.
-- API errors are handled consistently.
-- Dashboard uses real data.
-- Live Traffic uses real WebSocket packets.
-- Devices use real data.
-- Connections use real data.
-- Detections use real data.
-- Alerts use real data.
-- Alert lifecycle actions work.
-- Evidence works.
-- Incidents use real data.
-- Incident lifecycle actions work.
-- Incident WebSocket events work.
-- Analytics use real data.
-- Reports use real metadata only.
-- Settings use real backend data.
-- System status uses real backend data.
-- Notifications use real data.
-- WebSocket reconnect works.
-- WebSocket event deduplication works.
-- Mock data is removed.
-- Loading/empty/error states exist.
-- Frontend state is bounded.
-- Frontend tests pass.
-- Backend/frontend integration tests pass.
-- Manual end-to-end verification succeeds.
-- Performance baseline is recorded.
+These belong to later milestones.
 
 ---
 
-# Current Immediate Task
+# 18. Verification
 
-**M15 is complete and verified.** The record — architecture, the M15.41 feature
-matrix, the M15.40 manual verification, the defects the manual run found and their
-fixes, the M15.42 performance baseline, and the known limitations — is
-`docs/19_M15_Frontend_Integration.md`.
+Run:
 
-Every step of the original M15.1 plan was carried out: the Figma Make frontend was
-reviewed; every mock-data source, simulated timer and generator was found and
-removed; each page was mapped to its M13 REST endpoint and/or M14 WebSocket
-channel; the API service layer, the TypeScript wire models, the WebSocket
-service/hook layer, the four async states and the bounded client-side state were
-defined and built; the Vite environment configuration was added; and the service,
-component, WebSocket, page and live-integration suites were written.
+```text
+Backend test suite
+Analytics-specific tests
+API tests
+Pyright/type checking
+M15 frontend unit tests
+M15 live integration tests where affected
+Production/frontend build where affected
+Analytics performance measurements
+```
 
-**The immediate task is now M16 — Analytics**: back the remaining chart data with
-the real analytics services (`GET /api/v1/analytics/*`, already implemented in
-M13) and add the time-range filtering the roadmap asks for.
+Verify the five analytics endpoints against the actual running backend.
 
-**One item is handed back and should be decided before it is forgotten:** device
-identity on a routed path (`docs/19_M15_Frontend_Integration.md` §12 and §15). A
-device record can end up keyed to the next hop — the gateway — and therefore hold
-every far-end address it carried, because identity is MAC-first and the MAC is
-taken from the captured frame. It is visible on the Devices page, it is not a
-frontend defect, and correcting it is an M8 design decision.
+Use real captured/persisted data for manual verification.
+
+No mock data may be used to claim successful integration.
 
 ---
 
-# Architecture Boundary
+# 19. Completion Criteria
 
-M13 provides:
+M16 is complete only when:
 
-    REST API
-        ↓
-    Frontend API Services
+* [ ] Analytics architecture is implemented
+* [ ] Traffic analytics work
+* [ ] Protocol analytics work
+* [ ] Device analytics work
+* [ ] Connection analytics work
+* [ ] Threat analytics work
+* [ ] Time filtering works
+* [ ] Aggregation is bounded
+* [ ] API validation works
+* [ ] Empty/unavailable states are handled correctly
+* [ ] Existing M13 API conventions are preserved
+* [ ] M15 frontend remains compatible
+* [ ] Analytics tests pass
+* [ ] Full regression suite passes
+* [ ] Pyright/type checking passes
+* [ ] Performance baseline is recorded
+* [ ] Manual verification with real data succeeds
+* [ ] `docs/13_M16_Analytics_Design.md` is complete
 
-M14 provides:
+Only after all items are verified should the document status be changed to:
 
-    WebSocket Events
-        ↓
-    Frontend WebSocket Services/Hooks
-
-M15 provides:
-
-    API + WebSocket
-          ↓
-    React Application
-          ↓
-    Real NetWatch UI
-
-M15 does not implement new backend intelligence.
+**Status: implemented and verified**
 
 ---
+
+# 20. Final Implementation Report
+
+At completion, provide:
+
+* files created
+* files modified
+* analytics architecture implemented
+* five analytics endpoints and their outputs
+* important design decisions
+* tests added
+* total test result
+* type-check result
+* performance measurements
+* known limitations
+* confirmation whether M16 is ready to close
+
+Do not claim anything that was not actually implemented or verified.
+
+```
+

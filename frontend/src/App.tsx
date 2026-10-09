@@ -19,7 +19,7 @@
  *   connection behind (M15.35/M15.27).
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Sidebar from './components/Sidebar'
 import Navbar from './components/Navbar'
 import Toast from './components/Toast'
@@ -35,6 +35,7 @@ import Reports from './pages/Reports'
 import Notifications from './pages/Notifications'
 import System from './pages/System'
 import Settings from './pages/Settings'
+import { isNarrowViewport, onEnterNarrowViewport } from './lib/viewport'
 
 /** Every view the shell can show. The sidebar renders this set. */
 export type Page =
@@ -63,7 +64,12 @@ const TOAST_LIFETIME_MS = 4_000
 export default function App() {
   const [page, setPage] = useState<Page>('dashboard')
   const [toast, setToast] = useState<ToastMsg | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  // The rail is a 272px column. A phone-width window would leave the page a few
+  // dozen pixels wide, so a narrow viewport starts with the rail collapsed; the
+  // navbar's menu button still opens it (M16.15).
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isNarrowViewport())
+
+  useEffect(() => onEnterNarrowViewport(() => setSidebarOpen(false)), [])
 
   const showToast = (message: string, type: ToastMsg['type'] = 'success') => {
     setToast({ message, type })

@@ -19,7 +19,7 @@ export default function Toast({ message, type, onClose }: Props) {
       className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl border shadow-2xl fade-in-up"
       style={{ backgroundColor: '#1E293B', borderColor: border, minWidth: '280px', maxWidth: '400px' }}
     >
-      <div className="p-1.5 rounded-lg flex-shrink-0" style={{ backgroundColor: bg }}>
+      <div className="p-1.5 rounded-lg shrink-0" style={{ backgroundColor: bg }}>
         <Icon size={14} style={{ color }} />
       </div>
       <p className="text-sm text-white flex-1">{message}</p>

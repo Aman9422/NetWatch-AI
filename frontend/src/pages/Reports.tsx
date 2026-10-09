@@ -56,7 +56,7 @@ function MetaField({ label, value, mono = false, icon }: {
         {icon}
         {label}
       </div>
-      <div className={`text-sm font-semibold text-white ${mono ? 'mono' : ''} break-words`}>
+      <div className={`text-sm font-semibold text-white ${mono ? 'mono' : ''} wrap-break-word`}>
         {value}
       </div>
     </div>
@@ -80,7 +80,7 @@ function GenerationOutcome({ error, onRetry }: {
   return (
     <div className="rounded-2xl border p-4 flex items-start gap-3"
       style={{ backgroundColor: tint(color, 0.06), borderColor: tint(color, 0.25) }}>
-      <div className="p-2 rounded-xl flex-shrink-0" style={{ backgroundColor: tint(color, 0.12) }}>
+      <div className="p-2 rounded-xl shrink-0" style={{ backgroundColor: tint(color, 0.12) }}>
         {isUnavailable
           ? <CalendarClock size={16} style={{ color }} />
           : <AlertTriangle size={16} style={{ color }} />}
@@ -100,7 +100,7 @@ function GenerationOutcome({ error, onRetry }: {
         )}
       </div>
       {!isUnavailable && (
-        <button onClick={onRetry} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold flex-shrink-0"
+        <button onClick={onRetry} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0"
           style={{ backgroundColor: tint(color, 0.15), color }}>
           <RefreshCw size={11} /> Retry
         </button>
@@ -153,11 +153,11 @@ function ReportDetailPanel({ reportId, fallback, onBack }: {
         <>
           <div className="rounded-2xl border p-6" style={{ backgroundColor: C.card, borderColor: C.border }}>
             <div className="flex items-start gap-4">
-              <div className="p-3 rounded-2xl flex-shrink-0" style={{ backgroundColor: tint(C.accent, 0.1) }}>
+              <div className="p-3 rounded-2xl shrink-0" style={{ backgroundColor: tint(C.accent, 0.1) }}>
                 <FileText size={24} style={{ color: C.accent }} />
               </div>
               <div className="min-w-0 flex-1">
-                <h2 className="text-base font-bold text-white break-words">{report.name}</h2>
+                <h2 className="text-base font-bold text-white wrap-break-word">{report.name}</h2>
                 <div className="flex items-center gap-2 flex-wrap mt-2">
                   <span className="text-xs font-semibold px-2.5 py-1 rounded-full capitalize"
                     style={{ backgroundColor: tint(C.purple, 0.12), color: C.purple }}>
@@ -216,11 +216,11 @@ function ReportRow({ report, onOpen }: { report: Report; onOpen: () => void }) {
       onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
       <td className="pl-5 py-3 pr-4">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl flex-shrink-0" style={{ backgroundColor: tint(C.accent, 0.08) }}>
+          <div className="p-2 rounded-xl shrink-0" style={{ backgroundColor: tint(C.accent, 0.08) }}>
             <FileText size={14} style={{ color: C.accent }} />
           </div>
           <div className="min-w-0">
-            <div className="text-xs font-semibold text-white truncate max-w-[280px]" title={report.name}>
+            <div className="text-xs font-semibold text-white truncate max-w-70" title={report.name}>
               {report.name}
             </div>
             <div className="mono text-xs mt-0.5" style={{ color: C.faint }}>#{report.report_id}</div>
@@ -342,7 +342,7 @@ export default function Reports({ showToast }: Props) {
           <button
             onClick={requestGeneration}
             disabled={resource.isGenerating}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border disabled:opacity-50 flex-shrink-0"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border disabled:opacity-50 shrink-0"
             style={{
               borderColor: tint(C.info, 0.4),
               color: C.info,
@@ -362,7 +362,7 @@ export default function Reports({ showToast }: Props) {
       {/* Filters — exact stored values. */}
       <form className="flex items-center gap-2 flex-wrap"
         onSubmit={event => { event.preventDefault(); applyFilters() }}>
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-[180px]"
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-45"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <Search size={12} style={{ color: C.faint }} />
           <input value={typeInput} onChange={e => setTypeInput(e.target.value)}
@@ -370,7 +370,7 @@ export default function Reports({ showToast }: Props) {
             className="bg-transparent text-xs flex-1"
             style={{ color: C.text, outline: 'none' }} />
         </div>
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-[160px]"
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-40"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <Search size={12} style={{ color: C.faint }} />
           <input value={formatInput} onChange={e => setFormatInput(e.target.value)}

@@ -29,11 +29,18 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.alerts.queries import AlertQueries
+from app.analytics.service import AnalyticsService
+from app.connections.manager import ConnectionTracker, get_connection_tracker
+from app.correlation import get_correlation_engine
+from app.correlation.engine import CorrelationEngine
 from app.database.session import get_db
+from app.detection import DetectionEngine, get_detection_engine
+from app.devices.manager import DeviceDiscoveryManager, get_device_manager
 from app.persistence.session_factory import app_session_factory
 from app.repositories.notification import NotificationRepository
 from app.repositories.report import ReportRepository
 from app.repositories.setting import SettingRepository
+from app.statistics.manager import TrafficStatisticsManager, get_statistics_manager
 
 # Shared alert read service. It holds no session, only a factory, so one instance
 # is safe to reuse across requests; a session is opened and closed per call.
@@ -69,8 +76,37 @@ def get_setting_repository(db: Session = Depends(get_db)) -> SettingRepository:
     return SettingRepository(db)
 
 
+def get_analytics_service(
+    db: Session = Depends(get_db),
+    statistics: TrafficStatisticsManager = Depends(get_statistics_manager),
+    devices: DeviceDiscoveryManager = Depends(get_device_manager),
+    tracker: ConnectionTracker = Depends(get_connection_tracker),
+    alerts: AlertQueries = Depends(get_alert_queries),
+    detections: DetectionEngine = Depends(get_detection_engine),
+    correlations: CorrelationEngine = Depends(get_correlation_engine),
+) -> AnalyticsService:
+    """Return the analytics service bound to this request's collaborators (M16.1).
+
+    The service is assembled per request rather than cached, because one of its
+    collaborators — the database session — is request-scoped and must not outlive
+    the request. The five live services it also holds are process-wide
+    singletons, so assembling the wrapper is a handful of attribute assignments
+    (M13.28).
+    """
+    return AnalyticsService(
+        db=db,
+        statistics=statistics,
+        devices=devices,
+        tracker=tracker,
+        alerts=alerts,
+        detections=detections,
+        correlations=correlations,
+    )
+
+
 __all__ = [
     "get_alert_queries",
+    "get_analytics_service",
     "get_notification_repository",
     "get_report_repository",
     "get_setting_repository",

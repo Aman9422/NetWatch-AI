@@ -108,12 +108,16 @@ export {
 } from './security'
 
 export type {
+  AlertSeriesPoint,
   AnalyticsConnections,
   AnalyticsDevices,
+  AnalyticsPeriod,
   AnalyticsProtocols,
   AnalyticsRank,
+  AnalyticsSection,
   AnalyticsThreats,
   AnalyticsTraffic,
+  ConnectionSeriesPoint,
   DashboardAlerts,
   DashboardCapture,
   DashboardConnections,
@@ -125,8 +129,19 @@ export type {
   DashboardSummary,
   DashboardTraffic,
   DashboardUpdateEvent,
+  DeviceWindowData,
+  DurationStats,
+  FindingRuleCount,
+  FindingsSummary,
+  IncidentLinkage,
   RankedConnection,
   RankedDevice,
+  SeriesPoint,
+  StoredAlertsData,
+  StoredConnectionsData,
+  StoredProtocolsData,
+  StoredTrafficData,
+  ThreatRuleCount,
   ThreatRuleStat,
 } from './analytics'
 

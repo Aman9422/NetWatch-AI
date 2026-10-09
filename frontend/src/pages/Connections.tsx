@@ -91,7 +91,7 @@ function MetaField({ label, value, mono = false, icon }: {
         {icon}
         {label}
       </div>
-      <div className={`text-sm font-semibold text-white ${mono ? 'mono' : ''} break-words`}>{value}</div>
+      <div className={`text-sm font-semibold text-white ${mono ? 'mono' : ''} wrap-break-word`}>{value}</div>
     </div>
   )
 }
@@ -177,7 +177,7 @@ function ConnectionDetailPanel({ connectionId, fallback, onBack }: {
         <>
           <div className="rounded-2xl border p-6" style={{ backgroundColor: C.card, borderColor: C.border }}>
             <div className="flex items-start gap-4">
-              <div className="p-3 rounded-2xl flex-shrink-0"
+              <div className="p-3 rounded-2xl shrink-0"
                 style={{ backgroundColor: tint(stateColor, 0.1) }}>
                 <ArrowRightLeft size={24} style={{ color: stateColor }} />
               </div>
@@ -430,7 +430,7 @@ export default function Connections({ showToast }: Props) {
             <option key={state} value={state}>{stateLabel(state)}</option>
           ))}
         </select>
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-[170px]"
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-42.5"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <Server size={12} style={{ color: C.faint }} />
           <input value={sourceInput} onChange={e => setSourceInput(e.target.value)}
@@ -438,7 +438,7 @@ export default function Connections({ showToast }: Props) {
             className="bg-transparent text-xs flex-1"
             style={{ color: C.text, outline: 'none' }} />
         </div>
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-[170px]"
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-42.5"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <Network size={12} style={{ color: C.faint }} />
           <input value={destinationInput} onChange={e => setDestinationInput(e.target.value)}

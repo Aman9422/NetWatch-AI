@@ -106,13 +106,13 @@ function StatTile({ label, value, hint, icon, color }: {
   color: string
 }) {
   return (
-    <div className="rounded-2xl border p-4" title={hint}
+    <div className="rounded-2xl border p-3 sm:p-4" title={hint}
       style={{ backgroundColor: C.card, borderColor: C.border }}>
-      <div className="flex items-center gap-2 mb-2">
-        <div className="p-1.5 rounded-lg" style={{ backgroundColor: tint(color, 0.1) }}>
+      <div className="flex items-center gap-2 mb-2 min-w-0">
+        <div className="p-1.5 rounded-lg shrink-0" style={{ backgroundColor: tint(color, 0.1) }}>
           <span style={{ color }}>{icon}</span>
         </div>
-        <span className="text-xs font-medium" style={{ color: C.muted }}>{label}</span>
+        <span className="text-xs font-medium truncate" style={{ color: C.muted }}>{label}</span>
       </div>
       <div className="text-xl font-bold text-white leading-none">{value}</div>
     </div>
@@ -170,7 +170,7 @@ function TopEntryList({ entries, metric, keyLabel }: {
               #{index + 1}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex justify-between gap-2 text-xs mb-1">
+              <div className="flex flex-wrap justify-between gap-x-2 gap-y-0.5 text-xs mb-1">
                 <span className="mono truncate" style={{ color: C.muted }} title={`${keyLabel}: ${entry.key}`}>
                   {entry.key}
                 </span>
@@ -237,7 +237,10 @@ function ProtocolDoughnut({ protocols }: { protocols: readonly ProtocolStat[] })
     color: RANK_COLORS[index % RANK_COLORS.length],
   }))
   return (
-    <div className="flex items-center gap-4">
+    // The doughnut is a fixed 150px. Below `sm` the two stack, so the legend is not
+    // squeezed into whatever is left of a narrow card — the row needs ~140px, and at
+    // 320px the card offers 66px beside the chart (M16.15).
+    <div className="flex flex-col sm:flex-row items-center gap-4">
       <ResponsiveContainer width={150} height={150}>
         <PieChart>
           <Pie data={data} dataKey="value" nameKey="name" innerRadius={42} outerRadius={66}
@@ -247,10 +250,10 @@ function ProtocolDoughnut({ protocols }: { protocols: readonly ProtocolStat[] })
           <Tooltip contentStyle={TIP} />
         </PieChart>
       </ResponsiveContainer>
-      <div className="space-y-2 flex-1 min-w-0">
+      <div className="space-y-2 flex-1 min-w-0 w-full">
         {protocols.map((stat, index) => (
           <div key={stat.protocol} className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-sm flex-shrink-0"
+            <span className="w-2 h-2 rounded-sm shrink-0"
               style={{ backgroundColor: RANK_COLORS[index % RANK_COLORS.length] }} />
             <span className="text-xs truncate" style={{ color: C.muted }}>{stat.protocol}</span>
             <span className="mono text-xs font-semibold ml-auto whitespace-nowrap" style={{ color: C.text }}>
@@ -305,7 +308,7 @@ function SmallFigure({ label, value, color = C.text }: {
   return (
     <div>
       <div className="text-xs mb-0.5" style={{ color: C.faint }}>{label}</div>
-      <div className="mono text-lg font-bold leading-none" style={{ color }}>{value}</div>
+      <div className="mono text-lg font-bold leading-none whitespace-nowrap" style={{ color }}>{value}</div>
     </div>
   )
 }
@@ -317,7 +320,7 @@ function DeviceRow({ device, metric }: { device: RankedDevice; metric: RankMetri
   return (
     <tr className="border-b" style={{ borderColor: '#1a2744' }}>
       <td className="pl-5 py-2.5 pr-3">
-        <div className="text-xs font-semibold text-white truncate max-w-[220px]"
+        <div className="text-xs font-semibold text-white truncate max-w-55"
           title={device.hostname ?? device.device_id}>
           {device.hostname ?? device.mac_address ?? device.device_id}
         </div>
@@ -376,29 +379,39 @@ function ConnectionRow({ connection, metric }: { connection: RankedConnection; m
   )
 }
 
-/** One detection rule's execution counters (M10.31). */
+/**
+ * One detection rule's execution counters (M10.31).
+ *
+ * The row wraps rather than truncating a counter: `Port Scan` and its five-digit
+ * evaluation count do not both fit a column in a three-card row, and a fixed-width
+ * counter column would paint its number over the row's edge instead of moving. The
+ * name keeps a readable minimum and the counters drop to their own line, so every
+ * figure stays legible at any card width (M16.15).
+ */
 function RuleRow({ rule }: { rule: ThreatRuleStat }) {
   const color = rule.enabled ? C.success : C.dim
   return (
-    <div className="flex items-center gap-3 px-2 py-2 rounded-lg"
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-2 rounded-lg"
       style={{ backgroundColor: C.panel }}>
-      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-      <span className="text-xs truncate flex-1" style={{ color: C.text }} title={rule.rule_id}>
+      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+      <span className="text-xs truncate flex-1 min-w-24" style={{ color: C.text }} title={rule.rule_id}>
         {rule.rule_name}
       </span>
-      <span className="mono text-xs whitespace-nowrap" style={{ color: C.faint }}>
-        {formatCount(rule.evaluations)} evals
-      </span>
-      <span className="mono text-xs whitespace-nowrap w-16 text-right"
-        style={{ color: rule.findings > 0 ? C.warning : C.dim }}>
-        {formatCount(rule.findings)} finds
-      </span>
-      {rule.errors > 0 && (
-        <span className="mono text-xs whitespace-nowrap" style={{ color: C.danger }}
-          title={`${rule.errors} detector errors`}>
-          {formatCount(rule.errors)} err
+      <span className="flex items-center gap-3 shrink-0">
+        <span className="mono text-xs whitespace-nowrap" style={{ color: C.faint }}>
+          {formatCount(rule.evaluations)} evals
         </span>
-      )}
+        <span className="mono text-xs whitespace-nowrap text-right"
+          style={{ color: rule.findings > 0 ? C.warning : C.dim }}>
+          {formatCount(rule.findings)} finds
+        </span>
+        {rule.errors > 0 && (
+          <span className="mono text-xs whitespace-nowrap" style={{ color: C.danger }}
+            title={`${rule.errors} detector errors`}>
+            {formatCount(rule.errors)} err
+          </span>
+        )}
+      </span>
     </div>
   )
 }
@@ -503,9 +516,9 @@ export default function Analytics() {
       {!resource.isInitialLoading && (
         <>
           {/* Traffic totals — one M6 snapshot, so every figure describes the same instant. */}
-          <div className="grid grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
             {traffic === null ? (
-              <div className="col-span-6">
+              <div className="col-span-2 lg:col-span-3 xl:col-span-6">
                 {trafficFailure === null
                   ? null
                   : <SectionFailure section="traffic" message={trafficFailure} />}
@@ -534,8 +547,9 @@ export default function Analytics() {
             )}
           </div>
 
-          {/* Composition — the snapshot's protocol and direction breakdowns. */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* Composition — the snapshot's protocol and direction breakdowns. The doughnut
+              is a fixed 150px, so the legend needs the card to itself below 1024px. */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <ChartCard title="Protocol distribution" sub="Share of packets, as the snapshot counted them">
               {protocolsFailure !== null ? (
                 <SectionFailure section="protocols" message={protocolsFailure} />
@@ -551,7 +565,7 @@ export default function Analytics() {
           </div>
 
           {/* Leading talkers, from the traffic snapshot. */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <ChartCard title="Top sources" sub={`Ranked by ${metric} — traffic, not risk`}>
               {trafficFailure !== null
                 ? <SectionFailure section="traffic" message={trafficFailure} />
@@ -569,8 +583,9 @@ export default function Analytics() {
             </ChartCard>
           </div>
 
-          {/* Observed entities — traffic rankings, deliberately unscored. */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* Observed entities — traffic rankings, deliberately unscored. Each table
+              scrolls inside its own card, so the card may keep half the row. */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <ChartCard title="Busiest devices" sub={`M8 registry, ranked by ${metric} — activity, not risk`}
               right={<Layers size={14} style={{ color: C.faint }} />}>
               {devicesFailure !== null ? (
@@ -659,11 +674,12 @@ export default function Analytics() {
             <SectionFailure section="threats"
               message={threatsFailure ?? 'The block did not answer.'} />
           ) : (
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <ChartCard title="Detection findings" sub="M10 — observations, not alerts"
                 right={<Gauge size={14} style={{ color: C.faint }} />}>
                 <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-3">
+                  {/* Figures wrap to the next line instead of painting over the neighbour. */}
+                  <div className="flex flex-wrap gap-x-5 gap-y-3">
                     <SmallFigure label="Retained" value={formatCount(threats.findings_retained)} />
                     <SmallFigure label="Evaluations" value={formatCount(threats.detections_evaluated)} />
                     <SmallFigure label="Findings" value={formatCount(threats.detections_findings)} />
@@ -691,7 +707,7 @@ export default function Analytics() {
               <ChartCard title="Alerts" sub="M11 — evidence-based judgement"
                 right={<ShieldAlert size={14} style={{ color: C.faint }} />}>
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-wrap gap-x-5 gap-y-3">
                     <SmallFigure label="Total" value={formatCount(threats.alerts_total)} />
                     <SmallFigure label="Open" value={formatCount(threats.alerts_open)} color={C.danger} />
                   </div>
@@ -709,7 +725,7 @@ export default function Analytics() {
               <ChartCard title="Incidents" sub="M12 — correlated and prioritised"
                 right={<TrendingUp size={14} style={{ color: C.faint }} />}>
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-wrap gap-x-5 gap-y-3">
                     <SmallFigure label="Total" value={formatCount(threats.incidents_total)} />
                     <SmallFigure label="Active" value={formatCount(threats.incidents_active)} color={C.warning} />
                   </div>

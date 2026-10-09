@@ -111,7 +111,7 @@ interface Props {
 export default function Sidebar({ currentPage, onNavigate, isOpen }: Props) {
   return (
     <aside
-      className="flex flex-col flex-shrink-0 border-r transition-all duration-300 overflow-hidden"
+      className="flex flex-col shrink-0 border-r transition-all duration-300 overflow-hidden"
       style={{
         width: isOpen ? '272px' : '0',
         minWidth: isOpen ? '272px' : '0',
@@ -119,9 +119,9 @@ export default function Sidebar({ currentPage, onNavigate, isOpen }: Props) {
         borderColor: C.card,
       }}>
       {/* Identity */}
-      <div className="flex items-center gap-3 px-6 py-5 border-b flex-shrink-0"
+      <div className="flex items-center gap-3 px-6 py-5 border-b shrink-0"
         style={{ borderColor: C.card }}>
-        <div className="flex items-center justify-center w-9 h-9 rounded-xl flex-shrink-0"
+        <div className="flex items-center justify-center w-9 h-9 rounded-xl shrink-0"
           style={{ background: 'linear-gradient(135deg, #38BDF8, #0EA5E9)' }}>
           <Shield size={18} color="#0F172A" />
         </div>
@@ -174,7 +174,7 @@ export default function Sidebar({ currentPage, onNavigate, isOpen }: Props) {
       {/* Which backend this session is pointed at. Public configuration only —
           no secret is read here, and none could be: Vite inlines VITE_* into the
           bundle, so anything here is already visible to the browser. */}
-      <div className="mx-3 mb-4 flex-shrink-0">
+      <div className="mx-3 mb-4 shrink-0">
         <div className="px-4 py-3 rounded-xl border"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <div className="flex items-center gap-2 mb-2">

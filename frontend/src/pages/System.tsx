@@ -92,7 +92,7 @@ function StatLine({ label, value, mono = false, hint }: {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1.5 border-b"
       style={{ borderColor: '#1a2744' }} title={hint}>
-      <span className="text-xs flex-shrink-0" style={{ color: C.faint }}>{label}</span>
+      <span className="text-xs shrink-0" style={{ color: C.faint }}>{label}</span>
       <span className={`text-xs font-semibold text-white text-right break-all ${mono ? 'mono' : ''}`}>
         {value}
       </span>

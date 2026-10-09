@@ -93,7 +93,7 @@ export function IncidentMetrics({
               M12's prioritisation of this incident, 0–100.
             </p>
           </div>
-          <div className="text-right flex-shrink-0">
+          <div className="text-right shrink-0">
             <div className="mono text-3xl font-bold leading-none" style={{ color: bandColor }}>
               {formatRiskScore(riskScore)}
             </div>

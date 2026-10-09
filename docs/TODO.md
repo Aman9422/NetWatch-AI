@@ -4,7 +4,7 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M15 — Frontend Integration ✅ COMPLETE (next: M16 — Analytics)
+**Current Milestone:** M16 — Analytics ✅ COMPLETE (next: M17 — Reporting)
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -842,16 +842,76 @@ behaviour by the unit suite, not measured as time. Not a production-scale claim.
 
 ---
 
-# M16 — Analytics
+# M16 — Analytics ✅ COMPLETE
 
-* [ ] Real traffic charts
-* [ ] Protocol analytics
-* [ ] Top ports
-* [ ] Top talkers
-* [ ] Device traffic
-* [ ] Threat trends
-* [ ] Connection trends
-* [ ] Time-range filtering
+* [x] Real traffic charts — totals, throughput rates and a direction breakdown
+      from the M6 snapshot, plus the same questions asked directly of the
+      persisted `packets` table over a bounded window
+* [x] Protocol analytics — packet and byte share per protocol from the live
+      snapshot and from the store; unknown protocols, zero totals and empty data
+      are stated rather than dropped, and each percentage is computed from the
+      dataset it belongs to
+* [x] Top ports — destination-port ranking over the window, aggregated in SQL
+* [x] Top talkers — source and destination rankings by packets or bytes
+* [x] Device traffic — M8 registry totals, status breakdown, per-device traffic
+      over the window and the registry's own first/last seen; no device risk
+      figure is calculated
+* [x] Threat trends — M10 findings, M11 alerts and M12 incidents each counted
+      with their own time series, and severity, confidence, lifecycle state and
+      M12's risk band kept apart
+* [x] Connection trends — M9 tracker counters plus stored conversations per
+      window bucket, with observed-lifetime statistics
+* [x] Time-range filtering — `since`/`until` in ISO-8601 UTC resolved into one
+      explicit, bounded window model with adaptive bucket sizes
+* [x] Analytics architecture — `backend/app/analytics/` added as a read-only
+      consumer of M6–M12; no second detection, alert, correlation or risk engine
+* [x] Five analytics endpoints — `traffic`, `protocols`, `devices`,
+      `connections`, `threats` under `/api/v1`, each in the M13 envelope and each
+      reporting a live half and a database-derived half
+* [x] Empty, zero and unavailable kept distinct — a known zero, a valid empty
+      result and an unreadable section are three different answers and are never
+      silently conflated
+* [x] Bounded queries, SQL-side aggregation and indexes added only where a
+      measured query pattern justified one
+* [x] M15 frontend stayed compatible — the TypeScript models M15 consumes were
+      extended rather than renamed, and `Analytics.test.tsx` covers the new blocks
+* [x] Documentation — `docs/20_M16_Analytics_Design.md`
+
+**Verification:** full backend suite **2083 passed**; the M16 analytics suite is
+**254 tests** across `test_analytics_api`, `test_analytics_queries`,
+`test_analytics_service`, `test_analytics_views` and `test_analytics_window`;
+pyright **0 errors, 0 warnings, 0 informations**. Frontend unit suite
+**422 passed** (15 files), `tsc --noEmit` clean, production bundle **894.14 kB JS
+(237.78 kB gzip) / 23.81 kB CSS (5.40 kB gzip)**, built in 3.83 s. Live-backend
+suite **64 passed** (3 files — 50 REST, 6 WebSocket, 8 page tests) against the real
+FastAPI app on `127.0.0.1:8000`. `verify_m16.py` ran green in both modes, `sample`
+driving the real M4–M12 pipeline and `live` issuing real HTTP requests to the five
+routes. The five endpoints were then checked against a **real capture** on `Wi-Fi`:
+at the probe point the live layer reported 22,975 packets / 24.85 MB across 6
+protocols, 2 devices, 133 active connections, 14 alerts (13 open) and 1 active
+incident at risk 52, while the persisted layer reported 896,654 packets and 1,323
+conversations — so both halves of the response were populated from real data, not
+from a mock.
+**Baseline (this machine, OneDrive-synced disk, in-process client, `--packets
+10000`):** the five routes and the aggregate queries behind them measured **1.10 ms
+median across 16 measurements (320 timed calls)**. Window resolution is effectively
+free (<0.01 ms) because the bounds are derived arithmetically rather than read. A
+100-row traffic ranking cost 17.8 ms p50 against a 1,000-packet store, 48.8 ms
+against 10,000 and 223.6 ms against 50,000, while the database-derived totals and
+bucket series stayed between 1.5 ms and 55.3 ms over the same range — the ranking is
+the term that grows, which is why it is capped and why it is documented. Not a
+production-capacity claim: one process, one SQLite file, in-process transport.
+**Known limitation:** the route that reads a 100-row ranking over a large store is
+the slowest thing on the page (223.6 ms at 50,000 packets), and the M8 next-hop
+identity limitation handed back by M15 is unchanged — M16 counts the registry as M8
+holds it rather than re-deriving device identity.
+**Design:** `docs/20_M16_Analytics_Design.md`.
+
+> Deliberately out of scope for M16: ML/AI anomaly detection, behavioural
+> baselines, AI explanations, a local LLM, automatic blocking, IPS behaviour, SIEM
+> or threat-intelligence integrations, authentication/RBAC, report generation,
+> notification delivery and distributed sensors. M16 reads and summarises what
+> M3–M12 already produce; it does not add detection, scoring or risk.
 
 ---
 

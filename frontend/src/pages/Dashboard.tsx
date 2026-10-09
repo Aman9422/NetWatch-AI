@@ -68,7 +68,7 @@ function BannerItem({ label, value, dot, mono = false }: {
       <span className="text-xs mb-1" style={{ color: C.faint }}>{label}</span>
       <div className="flex items-center gap-1.5">
         {dot && (
-          <span className="relative flex h-1.5 w-1.5 flex-shrink-0">
+          <span className="relative flex h-1.5 w-1.5 shrink-0">
             <span className="relative inline-flex rounded-full h-1.5 w-1.5" style={{ backgroundColor: dot }} />
           </span>
         )}
@@ -115,7 +115,7 @@ function Card({ title, sub, action, children }: {
       className="rounded-2xl border flex flex-col overflow-hidden"
       style={{ backgroundColor: C.card, borderColor: C.border, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}
     >
-      <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: C.border }}>
+      <div className="flex items-center justify-between px-5 py-4 border-b shrink-0" style={{ borderColor: C.border }}>
         <div>
           <h3 className="text-sm font-semibold text-white">{title}</h3>
           {sub && <p className="text-xs mt-0.5" style={{ color: C.faint }}>{sub}</p>}
@@ -137,7 +137,7 @@ function Breakdown({ label, count, total, color }: {
   const pct = total > 0 ? Math.round((count / total) * 100) : 0
   return (
     <div className="flex items-center gap-2.5">
-      <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
+      <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
       <span className="text-xs capitalize w-20" style={{ color: C.muted }}>{label.replace('_', ' ')}</span>
       <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: C.panel }}>
         <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />

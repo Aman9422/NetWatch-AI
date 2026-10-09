@@ -53,6 +53,31 @@ def make_db_override(db_engine) -> Callable[[], Generator[Session, None, None]]:
     return override
 
 
+def make_unreadable_db_override(
+    db_engine,
+) -> Callable[[], Generator[Session, None, None]]:
+    """Return a ``get_db`` override whose engine holds no tables (M16.8).
+
+    The sibling of :func:`make_db_override` with one deliberate difference: it
+    does **not** create the schema. Every statement a request makes against it
+    therefore fails the way an unreadable store does, which is what lets a test
+    drive an availability section without breaking anything else in the response.
+
+    Only useful against an engine nothing else has created tables on, so pass a
+    fresh one rather than ``db_engine`` when the same test also needs a store
+    that works.
+    """
+
+    def override() -> Generator[Session, None, None]:
+        session = Session(bind=db_engine)
+        try:
+            yield session
+        finally:
+            session.close()
+
+    return override
+
+
 def make_capture_manager(
     *,
     interfaces: list[dict] | None = None,
@@ -121,4 +146,5 @@ __all__ = [
     "capture_manager_override",
     "make_capture_manager",
     "make_db_override",
+    "make_unreadable_db_override",
 ]

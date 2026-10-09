@@ -93,7 +93,7 @@ function DetectorTable({ rules }: { rules: readonly DetectionRule[] }) {
                     <div className="text-xs font-semibold text-white">{rule.rule_name}</div>
                     <div className="mono text-[11px] mt-0.5" style={{ color: C.faint }}>{rule.rule_id}</div>
                   </td>
-                  <td className="py-3 pr-4 text-xs max-w-[360px]" style={{ color: C.muted }}>
+                  <td className="py-3 pr-4 text-xs max-w-90" style={{ color: C.muted }}>
                     {rule.description}
                   </td>
                   <td className="py-3 pr-4 text-xs mono" style={{ color: C.muted }}>
@@ -140,7 +140,7 @@ function MetaField({ label, value, mono = false, icon }: {
         {icon}
         {label}
       </div>
-      <div className={`text-sm font-semibold text-white ${mono ? 'mono' : ''} break-words`}>{value}</div>
+      <div className={`text-sm font-semibold text-white ${mono ? 'mono' : ''} wrap-break-word`}>{value}</div>
     </div>
   )
 }
@@ -198,7 +198,7 @@ function FindingDetailPanel({ findingId, fallback, onBack }: {
         <>
           <div className="rounded-2xl border p-6" style={{ backgroundColor: C.card, borderColor: C.border }}>
             <div className="flex items-start gap-4">
-              <div className="p-3 rounded-2xl flex-shrink-0"
+              <div className="p-3 rounded-2xl shrink-0"
                 style={{ backgroundColor: tint(C.purple, 0.1) }}>
                 <Crosshair size={24} style={{ color: C.purple }} />
               </div>
@@ -405,7 +405,7 @@ export default function Detections({ showToast }: Props) {
             <option key={rule.rule_id} value={rule.rule_id}>{rule.rule_name}</option>
           ))}
         </select>
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-[180px]"
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-45"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <Server size={12} style={{ color: C.faint }} />
           <input value={sourceInput} onChange={e => setSourceInput(e.target.value)}
@@ -413,7 +413,7 @@ export default function Detections({ showToast }: Props) {
             className="bg-transparent text-xs flex-1"
             style={{ color: C.text, outline: 'none' }} />
         </div>
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-[180px]"
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-45"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <Network size={12} style={{ color: C.faint }} />
           <input value={destinationInput} onChange={e => setDestinationInput(e.target.value)}
@@ -517,7 +517,7 @@ export default function Detections({ showToast }: Props) {
                           {finding.rule_id}
                         </div>
                       </td>
-                      <td className="py-3 pr-4 max-w-[360px]">
+                      <td className="py-3 pr-4 max-w-90">
                         <div className="text-xs" style={{ color: C.muted }}>{finding.description}</div>
                         <div className="mono text-[11px] mt-0.5" style={{ color: C.dim }}>
                           {finding.finding_id}

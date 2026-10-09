@@ -54,7 +54,7 @@ function MetaField({ label, value, mono = false, icon }: {
         {icon}
         {label}
       </div>
-      <div className={`text-sm font-semibold text-white ${mono ? 'mono' : ''} break-words`}>{value}</div>
+      <div className={`text-sm font-semibold text-white ${mono ? 'mono' : ''} wrap-break-word`}>{value}</div>
     </div>
   )
 }
@@ -210,7 +210,7 @@ export function IncidentDetailPanel({
         <>
           <div className="rounded-2xl border p-6" style={{ backgroundColor: C.card, borderColor: C.border }}>
             <div className="flex items-start gap-4">
-              <div className="p-3 rounded-2xl flex-shrink-0"
+              <div className="p-3 rounded-2xl shrink-0"
                 style={{ backgroundColor: tint(statusColor, 0.1) }}>
                 <Layers size={26} style={{ color: statusColor }} />
               </div>
@@ -366,7 +366,7 @@ export function IncidentDetailPanel({
               <ul className="divide-y" style={{ borderColor: '#1a2744' }}>
                 {incident.correlation_reasons.map((reason, index) => (
                   <li key={`${index}-${reason}`} className="px-5 py-3 flex items-start gap-2.5">
-                    <span className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0"
+                    <span className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
                       style={{ backgroundColor: C.purple }} />
                     <span className="text-xs leading-relaxed" style={{ color: C.muted }}>{reason}</span>
                   </li>

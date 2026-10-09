@@ -97,7 +97,7 @@ function IncidentRow({ incident, onOpen }: {
           </div>
         )}
       </td>
-      <td className="py-3 pr-4 max-w-[320px]">
+      <td className="py-3 pr-4 max-w-80">
         <div className="text-xs font-semibold text-white truncate" title={incident.title}>
           {incident.title}
         </div>
@@ -351,7 +351,7 @@ export default function Incidents({ showToast }: Props) {
           <option value="risk">Highest risk first</option>
           <option value="recent">Most recent first</option>
         </select>
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-[170px]"
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border min-w-42.5"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <input value={minRiskInput}
             onChange={e => setMinRiskInput(e.target.value)}

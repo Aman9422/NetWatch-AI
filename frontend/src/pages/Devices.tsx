@@ -107,7 +107,7 @@ function StatCard({ label, value, sub, icon, accent = C.accent }: {
   return (
     <div className="rounded-2xl border p-4 flex items-center gap-3"
       style={{ backgroundColor: C.card, borderColor: C.border, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
-      <div className="p-2.5 rounded-xl flex-shrink-0" style={{ backgroundColor: tint(accent, 0.08) }}>
+      <div className="p-2.5 rounded-xl shrink-0" style={{ backgroundColor: tint(accent, 0.08) }}>
         <div style={{ color: accent }}>{icon}</div>
       </div>
       <div>
@@ -179,7 +179,7 @@ function DeviceDetail({ device, onBack }: { device: Device; onBack: () => void }
       <div className="rounded-2xl border p-6" style={{ backgroundColor: C.card, borderColor: C.border }}>
         <div className="flex items-start justify-between gap-6">
           <div className="flex items-start gap-5 min-w-0">
-            <div className="p-4 rounded-2xl flex-shrink-0" style={{ backgroundColor: C.panel }}>
+            <div className="p-4 rounded-2xl shrink-0" style={{ backgroundColor: C.panel }}>
               <Icon size={32} style={{ color: C.accent }} />
             </div>
             <div className="min-w-0">
@@ -406,7 +406,7 @@ export default function Devices({ showToast }: Props) {
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border flex-1 min-w-[240px]"
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border flex-1 min-w-60"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <Search size={13} style={{ color: C.faint }} />
           <input value={search} onChange={e => setSearch(e.target.value)}

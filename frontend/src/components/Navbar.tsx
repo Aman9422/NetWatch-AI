@@ -74,7 +74,7 @@ export default function Navbar({ onMenuToggle, currentPage, onNavigate }: Props)
 
   return (
     <header
-      className="flex items-center px-6 gap-4 border-b flex-shrink-0 relative z-30"
+      className="flex items-center px-6 gap-4 border-b shrink-0 relative z-30"
       style={{ height: '72px', backgroundColor: C.panel, borderColor: C.card }}>
       <button
         onClick={onMenuToggle}
@@ -86,9 +86,12 @@ export default function Navbar({ onMenuToggle, currentPage, onNavigate }: Props)
         <Menu size={18} />
       </button>
 
+      {/* Below `sm` the two route buttons drop to their icons, so that the page
+          name keeps a readable width instead of being squeezed until it paints
+          over the page under it. */}
       <div className="min-w-0">
-        <h1 className="text-base font-semibold text-white">{TITLES[currentPage]}</h1>
-        <p className="text-xs" style={{ color: C.faint }}>{dateText} · {timeText}</p>
+        <h1 className="text-base font-semibold text-white truncate">{TITLES[currentPage]}</h1>
+        <p className="text-xs truncate" style={{ color: C.faint }}>{dateText} · {timeText}</p>
       </div>
 
       <div className="flex-1" />
@@ -96,7 +99,7 @@ export default function Navbar({ onMenuToggle, currentPage, onNavigate }: Props)
       {/* Which backend this browser is talking to. Public configuration, shown
           because knowing it is what makes a failed request diagnosable. */}
       <div
-        className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl border max-w-[340px]"
+        className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl border max-w-85"
         style={{ backgroundColor: C.card, borderColor: C.border }}
         title={`REST API base URL: ${environment.apiBaseUrl} — a Vite environment value, so it is visible to the browser by design.`}>
         <Server size={12} style={{ color: C.faint, flexShrink: 0 }} />
@@ -115,7 +118,7 @@ export default function Navbar({ onMenuToggle, currentPage, onNavigate }: Props)
         }}
         title="Stored notifications. The page reads the backend's own unread count — this button shows no count of its own.">
         <Bell size={14} />
-        Notifications
+        <span className="hidden sm:inline">Notifications</span>
       </button>
 
       <button
@@ -128,7 +131,7 @@ export default function Navbar({ onMenuToggle, currentPage, onNavigate }: Props)
         }}
         title="Process, database and pipeline status, as the backend reports it.">
         <Server size={14} />
-        System
+        <span className="hidden sm:inline">System</span>
       </button>
     </header>
   )

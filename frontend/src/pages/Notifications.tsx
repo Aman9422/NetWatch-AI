@@ -129,11 +129,11 @@ function NotificationDetailPanel({ notificationId, fallback, onBack }: {
         <>
           <div className="rounded-2xl border p-6" style={{ backgroundColor: C.card, borderColor: C.border }}>
             <div className="flex items-start gap-4">
-              <div className="p-3 rounded-2xl flex-shrink-0" style={{ backgroundColor: tint(color, 0.1) }}>
+              <div className="p-3 rounded-2xl shrink-0" style={{ backgroundColor: tint(color, 0.1) }}>
                 <Bell size={22} style={{ color }} />
               </div>
               <div className="min-w-0 flex-1">
-                <h2 className="text-base font-bold text-white break-words">{notification.title}</h2>
+                <h2 className="text-base font-bold text-white wrap-break-word">{notification.title}</h2>
                 <div className="flex items-center gap-3 flex-wrap mt-2">
                   <span className="text-xs font-semibold px-2.5 py-1 rounded-full"
                     style={{ backgroundColor: tint(color, 0.12), color }}>
@@ -147,7 +147,7 @@ function NotificationDetailPanel({ notificationId, fallback, onBack }: {
               </div>
             </div>
 
-            <p className="text-sm mt-5 whitespace-pre-wrap break-words" style={{ color: C.text }}>
+            <p className="text-sm mt-5 whitespace-pre-wrap wrap-break-word" style={{ color: C.text }}>
               {notification.message === '' ? UNKNOWN_TEXT : notification.message}
             </p>
 
@@ -200,21 +200,21 @@ function NotificationRow({ notification, onOpen }: {
       onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
       <td className="pl-5 py-3 pr-4">
         <div className="flex items-start gap-3">
-          <div className="p-2 rounded-xl flex-shrink-0" style={{ backgroundColor: tint(color, 0.08) }}>
+          <div className="p-2 rounded-xl shrink-0" style={{ backgroundColor: tint(color, 0.08) }}>
             <Bell size={14} style={{ color }} />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-white truncate max-w-[320px]"
+              <span className="text-xs font-semibold text-white truncate max-w-80"
                 title={notification.title}>
                 {notification.title}
               </span>
               {!notification.is_read && (
-                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                <span className="w-1.5 h-1.5 rounded-full shrink-0"
                   style={{ backgroundColor: C.accent }} title="Stored as unread" />
               )}
             </div>
-            <p className="text-xs mt-0.5 line-clamp-2 max-w-[440px]" style={{ color: C.muted }}>
+            <p className="text-xs mt-0.5 line-clamp-2 max-w-110" style={{ color: C.muted }}>
               {notification.message === '' ? UNKNOWN_TEXT : notification.message}
             </p>
           </div>

@@ -166,7 +166,7 @@ function SettingRow({ setting, draft, isChanged, onChange, disabled }: {
         <div className="flex items-center gap-2">
           <span className="mono text-xs font-semibold text-white break-all">{setting.key}</span>
           {isChanged && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full flex-shrink-0"
+            <span className="text-xs px-1.5 py-0.5 rounded-full shrink-0"
               style={{ backgroundColor: tint(C.warning, 0.14), color: C.warning }}>
               unsaved
             </span>
@@ -357,7 +357,7 @@ export default function Settings({ showToast }: Props) {
       {/* What this page is, and the one thing an operator must not miss. */}
       <div className="rounded-2xl border p-5" style={{ backgroundColor: C.card, borderColor: C.border }}>
         <div className="flex items-start gap-3">
-          <div className="p-2.5 rounded-xl flex-shrink-0" style={{ backgroundColor: tint(C.accent, 0.08) }}>
+          <div className="p-2.5 rounded-xl shrink-0" style={{ backgroundColor: tint(C.accent, 0.08) }}>
             <Cog size={18} style={{ color: C.accent }} />
           </div>
           <div className="min-w-0">

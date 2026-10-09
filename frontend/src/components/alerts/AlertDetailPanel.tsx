@@ -69,7 +69,7 @@ function MetaField({ label, value, mono = false, icon }: {
         {icon}
         {label}
       </div>
-      <div className={`text-sm font-semibold text-white ${mono ? 'mono' : ''} break-words`}>{value}</div>
+      <div className={`text-sm font-semibold text-white ${mono ? 'mono' : ''} wrap-break-word`}>{value}</div>
     </div>
   )
 }
@@ -163,7 +163,7 @@ export function AlertDetailPanel({ alertId, onBack, transition }: AlertDetailPan
         <>
           <div className="rounded-2xl border p-6" style={{ backgroundColor: C.card, borderColor: C.border }}>
             <div className="flex items-start gap-4">
-              <div className="p-3 rounded-2xl flex-shrink-0"
+              <div className="p-3 rounded-2xl shrink-0"
                 style={{ backgroundColor: tint(SEVERITY_COLORS[alert.severity] ?? C.warning, 0.1) }}>
                 <ShieldAlert size={26} style={{ color: SEVERITY_COLORS[alert.severity] ?? C.warning }} />
               </div>

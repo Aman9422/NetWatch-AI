@@ -56,7 +56,7 @@ export function KeyValueDocument({
       {entries.map(([key, value]) => (
         <div key={key} className="contents">
           <dt className="text-xs truncate" style={{ color: C.faint }} title={key}>{key}</dt>
-          <dd className="mono text-xs text-white break-words">{renderValue(value)}</dd>
+          <dd className="mono text-xs text-white wrap-break-word">{renderValue(value)}</dd>
         </div>
       ))}
     </dl>

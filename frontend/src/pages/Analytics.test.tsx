@@ -17,9 +17,26 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_ANALYTICS_LIMIT } from '@/services'
 import type {
-  AnalyticsConnections, AnalyticsDevices, AnalyticsProtocols, AnalyticsThreats,
-  AnalyticsTraffic, DirectionStat, ProtocolStat, RankedConnection, RankedDevice,
-  ThreatRuleStat, TopEntry,
+  AnalyticsConnections,
+  AnalyticsDevices,
+  AnalyticsPeriod,
+  AnalyticsProtocols,
+  AnalyticsSection,
+  AnalyticsThreats,
+  AnalyticsTraffic,
+  DeviceWindowData,
+  DirectionStat,
+  FindingsSummary,
+  IncidentLinkage,
+  ProtocolStat,
+  RankedConnection,
+  RankedDevice,
+  StoredAlertsData,
+  StoredConnectionsData,
+  StoredProtocolsData,
+  StoredTrafficData,
+  ThreatRuleStat,
+  TopEntry,
 } from '@/types'
 import Analytics from '@/pages/Analytics'
 import { failure, installFetch, networkDownFetch, ok, type RouteTable } from '@/test/harness'
@@ -39,6 +56,136 @@ function direction(name: DirectionStat['direction'], packets: number): Direction
   return { direction: name, packets, bytes: 1_048_576 }
 }
 
+/**
+ * The window the M16 blocks were read over, as every response now reports it
+ * (M16.7). The M15 page does not render it; the fixtures carry it because the
+ * contract does, and a fixture that omitted it would no longer describe a
+ * response the backend can send.
+ */
+function period(overrides: Partial<AnalyticsPeriod> = {}): AnalyticsPeriod {
+  return {
+    since: '2026-08-10T09:00:00Z',
+    until: '2026-08-10T10:00:00Z',
+    seconds: 3600,
+    bucket_seconds: 60,
+    buckets: 60,
+    max_buckets: 120,
+    defaulted: true,
+    ...overrides,
+  }
+}
+
+/** One block that answered, wrapping the payload it returned (M16.8). */
+function section<T>(data: T): AnalyticsSection<T> {
+  return { available: true, error: null, data }
+}
+
+/** The windowed `packets`-table block inside `GET /analytics/traffic` (M16.2). */
+function storedTraffic(overrides: Partial<StoredTrafficData> = {}): StoredTrafficData {
+  return {
+    total_packets: 900,
+    total_bytes: 1_530_000,
+    packets_per_second: 0.25,
+    bytes_per_second: 425,
+    average_packet_bytes: 1700,
+    first_timestamp: '2026-08-10T09:01:00Z',
+    last_timestamp: '2026-08-10T09:59:00Z',
+    distinct_protocols: 1,
+    packets_without_source_port: 0,
+    packets_without_destination_port: 0,
+    stored_packet_count: 900,
+    series: [{ start: '2026-08-10T09:00:00Z', packets: 900, bytes: 1_530_000 }],
+    top_sources: [top('10.0.0.5', 500, 700_000)],
+    top_destinations: [top('10.0.0.9', 400, 600_000)],
+    top_ports: [top('443', 300, 500_000)],
+    protocols: [protocol('TCP', 1000, 81)],
+    ...overrides,
+  }
+}
+
+/** The windowed `packets`-table block inside `GET /analytics/protocols` (M16.3). */
+function storedProtocols(overrides: Partial<StoredProtocolsData> = {}): StoredProtocolsData {
+  return {
+    count: 1,
+    distinct_protocols: 1,
+    truncated: false,
+    total_packets: 1234,
+    total_bytes: 2_097_152,
+    rank_by: 'packets',
+    protocols: [protocol('TCP', 1000, 81)],
+    ...overrides,
+  }
+}
+
+/** The re-filtered M8 registry block inside `GET /analytics/devices` (M16.4). */
+function deviceWindow(overrides: Partial<DeviceWindowData> = {}): DeviceWindowData {
+  return {
+    total: 1,
+    by_status: { active: 1 },
+    rank_by: 'packets',
+    top: [rankedDevice()],
+    ...overrides,
+  }
+}
+
+/** The windowed `connections`-table block in `GET /analytics/connections` (M16.5). */
+function storedConnections(
+  overrides: Partial<StoredConnectionsData> = {},
+): StoredConnectionsData {
+  return {
+    total: 5,
+    active: 2,
+    first_timestamp: '2026-08-10T09:00:30Z',
+    last_timestamp: '2026-08-10T09:58:00Z',
+    by_protocol: { UDP: 5 },
+    by_status: { established: 2, closed: 3 },
+    duration: { samples: 3, min_seconds: 1.5, mean_seconds: 12.25, max_seconds: 40 },
+    series: [{ start: '2026-08-10T09:00:00Z', connections: 5 }],
+    top_sources: [top('10.0.0.21', 700, 900_000)],
+    top_destinations: [top('10.0.0.9', 700, 900_000)],
+    ...overrides,
+  }
+}
+
+/** The windowed `alerts`-table block inside `GET /analytics/threats` (M16.6). */
+function storedAlerts(overrides: Partial<StoredAlertsData> = {}): StoredAlertsData {
+  return {
+    total: 6,
+    without_rule_key: 1,
+    first_timestamp: '2026-08-10T09:05:00Z',
+    last_timestamp: '2026-08-10T09:55:00Z',
+    by_severity: { high: 2, medium: 4 },
+    by_status: { open: 3, acknowledged: 2, resolved: 1 },
+    by_risk_band: { minimal: 4, high: 2 },
+    by_confidence_range: { '70-89': 1 },
+    rules: [{ rule_key: 'port_scan', alerts: 5 }],
+    series: [{ start: '2026-08-10T09:00:00Z', alerts: 6 }],
+    ...overrides,
+  }
+}
+
+/** The M10 findings still held and inside the window (M16.6). */
+function findingsSummary(overrides: Partial<FindingsSummary> = {}): FindingsSummary {
+  return {
+    retained: 5,
+    in_window: 2,
+    mean_confidence: 0.74,
+    by_confidence_range: { '70-89': 2 },
+    by_rule: [{ rule_id: 'port_scan', rule_name: 'Port scan', findings: 2 }],
+    ...overrides,
+  }
+}
+
+/** The alert-to-incident references M12 already holds (M16.6). */
+function incidentLinks(overrides: Partial<IncidentLinkage> = {}): IncidentLinkage {
+  return {
+    incidents_total: 2,
+    incidents_with_alerts: 1,
+    alerts_in_incidents: 4,
+    ...overrides,
+  }
+}
+
 /** `GET /analytics/traffic` — one M6 snapshot. */
 function traffic(overrides: Partial<AnalyticsTraffic> = {}): AnalyticsTraffic {
   return {
@@ -56,6 +203,8 @@ function traffic(overrides: Partial<AnalyticsTraffic> = {}): AnalyticsTraffic {
     top_sources: [top('10.0.0.5', 500, 700_000)],
     top_destinations: [top('10.0.0.9', 400, 600_000)],
     top_ports: [top('443', 300, 500_000)],
+    period: period(),
+    stored: section(storedTraffic()),
     ...overrides,
   }
 }
@@ -68,6 +217,8 @@ function protocols(overrides: Partial<AnalyticsProtocols> = {}): AnalyticsProtoc
     total_bytes: 2_097_152,
     rank_by: 'packets',
     protocols: [protocol('TCP', 1000, 81)],
+    period: period(),
+    stored: section(storedProtocols()),
     ...overrides,
   }
 }
@@ -80,6 +231,8 @@ function rankedDevice(overrides: Partial<RankedDevice> = {}): RankedDevice {
     ip_addresses: ['10.0.0.21'],
     hostname: 'web-01',
     status: 'active',
+    first_seen: '2026-08-10T08:00:00Z',
+    last_seen: '2026-08-10T09:59:00Z',
     packets: 900,
     bytes: 1_200_000,
     ...overrides,
@@ -93,6 +246,8 @@ function devices(overrides: Partial<AnalyticsDevices> = {}): AnalyticsDevices {
     by_status: { active: 3 },
     rank_by: 'packets',
     top: [rankedDevice()],
+    period: period(),
+    windowed: section(deviceWindow()),
     ...overrides,
   }
 }
@@ -121,6 +276,8 @@ function connections(overrides: Partial<AnalyticsConnections> = {}): AnalyticsCo
     tracked: 7,
     rank_by: 'bytes',
     top: [rankedConnection()],
+    period: period(),
+    stored: section(storedConnections()),
     ...overrides,
   }
 }
@@ -155,6 +312,10 @@ function threats(overrides: Partial<AnalyticsThreats> = {}): AnalyticsThreats {
     incidents_by_status: { open: 1 },
     incidents_by_risk_band: { high: 1 },
     highest_risk_score: 88,
+    period: period(),
+    stored: section(storedAlerts()),
+    findings: findingsSummary(),
+    incident_links: incidentLinks(),
     ...overrides,
   }
 }
