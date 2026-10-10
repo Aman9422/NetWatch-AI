@@ -214,5 +214,19 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Local runtime databases
+/backend/netwatch.db
+/backend/*.db
+/backend/*.sqlite
+/backend/*.sqlite3
+
 # Streamlit
 .streamlit/secrets.toml
+
+# Generated reports (M17.9)
+# Report artifacts are produced by the application, never authored by hand, so
+# they are not source. The directory is configurable (`report_storage_dir`);
+# this ignores the documented default and the one the repository root uses when
+# the backend is started from there.
+/reports/
+backend/reports/
