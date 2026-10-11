@@ -224,8 +224,15 @@ def test_a_conflict_is_a_409(client: TestClient) -> None:
 
 
 def test_an_unimplemented_feature_is_a_501(client: TestClient) -> None:
-    """A surface M13 exposes but does not implement says so (M13.17/M13.20)."""
-    response = client.post("/api/v1/reports/generate")
+    """A surface the API exposes but does not implement says so (M13.17).
+
+    The M13 example of this was report generation, which M17 implemented, so the
+    contract is asserted against a subsystem that is genuinely still missing -- the
+    M6 baselines engine -- rather than against a route that has since grown an
+    implementation. Asserting it here keeps the 501 mapping covered cross-cutting
+    even as individual features arrive.
+    """
+    response = client.get("/api/v1/baselines")
 
     assert response.status_code == 501
     assert assert_envelope(response.json())["errors"][0]["code"] == (

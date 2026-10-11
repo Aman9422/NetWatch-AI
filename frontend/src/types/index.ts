@@ -148,12 +148,18 @@ export type {
 export type {
   Baseline,
   DatabaseState,
+  GeneratedReport,
   HealthCheck,
   Notification,
   NotificationList,
   NotificationQuery,
   Report,
+  ReportFormat,
+  ReportGenerationRequest,
   ReportList,
+  ReportMetric,
+  ReportStatus,
+  ReportType,
   RuntimeMetrics,
   ServiceState,
   Setting,
@@ -166,6 +172,7 @@ export type {
   SystemInfo,
   SystemStatus,
 } from './system'
+export { REPORT_FORMATS, REPORT_TYPES } from './system'
 
 export type {
   AlertEvent,

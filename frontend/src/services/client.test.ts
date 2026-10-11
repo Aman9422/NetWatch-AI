@@ -19,13 +19,16 @@ import {
   NETWORK_MESSAGE,
   NOT_IMPLEMENTED_MESSAGE,
   TIMEOUT_MESSAGE,
+  apiDownload,
   apiGet,
   apiPost,
   apiPut,
   apiRequest,
   buildQueryString,
   buildUrl,
+  filenameFromDisposition,
   toApiError,
+  FALLBACK_DOWNLOAD_NAME,
 } from '@/services'
 import {
   emptyResponse,
@@ -320,5 +323,105 @@ describe('toApiError', () => {
     expect(wrapped.kind).toBe('unknown')
     // The generic sentence is used, not the thrown text.
     expect(wrapped.userMessage).toBe(GENERIC_MESSAGE)
+  })
+})
+// ── Files (M17.11) ───────────────────────────────────────────────────────────
+
+/** A file response, as the download route serves one. */
+function fileResponse(
+  body = 'report-bytes',
+  filename: string | null = 'netwatch-report-000007-daily-2026-10-10.pdf',
+  contentType = 'application/pdf',
+): Response {
+  const headers: Record<string, string> = { 'Content-Type': contentType }
+  if (filename !== null) {
+    headers['Content-Disposition'] = `attachment; filename="${filename}"`
+  }
+  return new Response(body, { status: 200, headers })
+}
+
+describe('filenameFromDisposition', () => {
+  it('reads a quoted filename', () => {
+    expect(filenameFromDisposition('attachment; filename="a.pdf"')).toBe('a.pdf')
+  })
+
+  it('reads an unquoted filename', () => {
+    expect(filenameFromDisposition('attachment; filename=a.pdf')).toBe('a.pdf')
+  })
+
+  it('prefers the RFC 5987 extended form, which can carry a non-ASCII name', () => {
+    expect(
+      filenameFromDisposition(
+        "attachment; filename=\"fallback.pdf\"; filename*=UTF-8''caf%C3%A9.pdf",
+      ),
+    ).toBe('café.pdf')
+  })
+
+  it('returns null for a blank name, so the caller falls back to a known one', () => {
+    // Saving a file called "" is worse than saving one with a generic name.
+    expect(filenameFromDisposition('attachment; filename=""')).toBeNull()
+  })
+
+  it('returns null when the header is absent', () => {
+    expect(filenameFromDisposition(null)).toBeNull()
+    expect(filenameFromDisposition('')).toBeNull()
+  })
+
+  it('survives a malformed percent-escape by falling back to the plain form', () => {
+    expect(
+      filenameFromDisposition("attachment; filename=\"plain.pdf\"; filename*=UTF-8''%E0%A4%A"),
+    ).toBe('plain.pdf')
+  })
+})
+
+describe('apiDownload', () => {
+  it('returns the bytes and the name the backend declared', async () => {
+    installFetch({ 'GET /reports/7/download': () => fileResponse('PDFCONTENT') })
+    const file = await apiDownload('/reports/7/download')
+    expect(await file.blob.text()).toBe('PDFCONTENT')
+    // The artifact's own name: two daily reports cannot overwrite each other.
+    expect(file.filename).toBe('netwatch-report-000007-daily-2026-10-10.pdf')
+    expect(file.contentType).toContain('application/pdf')
+  })
+
+  it('falls back to a known name when the backend declared none', async () => {
+    installFetch({ 'GET /reports/7/download': () => fileResponse('x', null) })
+    const file = await apiDownload('/reports/7/download')
+    expect(file.filename).toBe(FALLBACK_DOWNLOAD_NAME)
+  })
+
+  it('does not try to parse the body as JSON', async () => {
+    // A document is not a payload; the route is fetched, not enveloped.
+    const router = installFetch({
+      'GET /reports/7/download': () => fileResponse('%PDF-1.4 not json at all'),
+    })
+    const file = await apiDownload('/reports/7/download')
+    expect(router.countOf('GET /reports/7/download')).toBe(1)
+    expect(await file.blob.text()).toBe('%PDF-1.4 not json at all')
+  })
+
+  it('classifies a missing artifact through the same error model as a JSON call', async () => {
+    installFetch({
+      'GET /reports/999/download': () =>
+        failure(404, 'The report file is not available for download', [
+          { field: 'report_id', code: 'REPORT_NOT_FOUND' },
+        ]),
+    })
+    const error = (
+      await apiDownload('/reports/999/download').catch((cause: unknown) => cause)
+    ) as ApiError
+    expect(error.kind).toBe('not_found')
+    expect(error.userMessage).toBe('The report file is not available for download')
+    // The backend's sentence names no path, and neither does the client's.
+    expect(error.userMessage).not.toContain('/')
+  })
+
+  it('reports a rejected fetch as a network failure rather than a raw TypeError', async () => {
+    vi.stubGlobal('fetch', networkDownFetch())
+    const error = (
+      await apiDownload('/reports/7/download').catch((cause: unknown) => cause)
+    ) as ApiError
+    expect(error.kind).toBe('network')
+    expect(error.userMessage).toBe(NETWORK_MESSAGE)
   })
 })

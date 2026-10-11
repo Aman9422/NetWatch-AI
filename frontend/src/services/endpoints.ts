@@ -118,11 +118,18 @@ export const AnalyticsPaths = {
   threats: '/analytics/threats',
 } as const
 
-/** Stored report metadata (M13.20). Generation is M17 and answers 501. */
+/**
+ * Stored reports: metadata, generation and the artifact itself (M13.20/M17).
+ *
+ * `download` fetches the file by the report's *id*, which is the only handle a
+ * client ever has on it: no payload carries a location (M13.30), so there is no
+ * path to build a URL from and nothing here that could leak one.
+ */
 export const ReportPaths = {
   list: '/reports',
   generate: '/reports/generate',
   detail: (reportId: number): string => `/reports/${reportId}`,
+  download: (reportId: number): string => `/reports/${reportId}/download`,
 } as const
 
 /** Application settings (M13.21). */

@@ -12,12 +12,15 @@ had nowhere else to live:
   session is not thread-safe and FastAPI serves requests from a thread pool, so
   the service cannot hold a session across requests and must not share one.
 * :func:`get_report_repository` / :func:`get_notification_repository` /
-  :func:`get_setting_repository` — one-constructor wrappers over the
-  request-scoped session, so a route depends on the repository it uses rather
-  than on ``get_db`` plus a constructor call. Every one of them takes the
-  *request-scoped* session, so a request still reads the database through a
-  single connection and the session is closed by :func:`app.database.session.get_db`
-  when the request ends.
+* :func:`get_setting_repository` — one-constructor wrappers over the
+* request-scoped session, so a route depends on the repository it uses rather
+* than on ``get_db`` plus a constructor call. Every one of them takes the
+* *request-scoped* session, so a request still reads the database through a
+* single connection and the session is closed by :func:`app.database.session.get_db`
+* when the request ends.
+* :func:`get_report_service` — the M17 reporting service, assembled per request
+* from this request's session and the analytics service bound to the same one, so
+* a generation reads and writes through a single connection.
 
 Nothing here caches a session. Caching one would be the exact bug this module
 exists to avoid.
@@ -37,6 +40,7 @@ from app.database.session import get_db
 from app.detection import DetectionEngine, get_detection_engine
 from app.devices.manager import DeviceDiscoveryManager, get_device_manager
 from app.persistence.session_factory import app_session_factory
+from app.reports.service import ReportService
 from app.repositories.notification import NotificationRepository
 from app.repositories.report import ReportRepository
 from app.repositories.setting import SettingRepository
@@ -104,10 +108,30 @@ def get_analytics_service(
     )
 
 
+def get_report_service(
+    db: Session = Depends(get_db),
+    analytics: AnalyticsService = Depends(get_analytics_service),
+) -> ReportService:
+    """Return the reporting service bound to this request's collaborators (M17.12).
+
+    Assembled per request rather than cached, because both of its collaborators
+    are request-scoped: the session, and the analytics service built over that
+    same session. A generation therefore reads the analytics tables and writes the
+    report's metadata row through one connection, and nothing outlives the request
+    that asked for it.
+
+    The storage directory is left to the service's own default, so where artifacts
+    live is decided in exactly one place (``settings.report_storage_dir``) rather
+    than being passed around here.
+    """
+    return ReportService(db=db, analytics=analytics)
+
+
 __all__ = [
     "get_alert_queries",
     "get_analytics_service",
     "get_notification_repository",
     "get_report_repository",
+    "get_report_service",
     "get_setting_repository",
 ]

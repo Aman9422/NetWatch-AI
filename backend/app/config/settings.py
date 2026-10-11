@@ -274,6 +274,19 @@ class Settings(BaseSettings):
     # Outbound queue size for a packet subscriber (M14.16).
     packet_ws_queue_size: int = 256
 
+    # Reporting (M17)
+    # Directory generated report artifacts are written to. A relative value is
+    # resolved against the process working directory, which is what the default
+    # ``sqlite:///./netwatch.db`` already assumes; a deployment points it at a
+    # mounted volume by setting one variable. The directory is created on first
+    # use, never at import, and it is excluded from version control because a
+    # report is a generated artifact rather than source (M17.9).
+    report_storage_dir: str = "reports"
+    # Most rows any one report table carries. Reuses the analytics layer's own
+    # group cap (M16.2) rather than inventing a second ceiling, so a report cannot
+    # become a dump of the packet table (M17.13).
+    report_max_table_rows: int = 100
+
 
 @lru_cache
 def get_settings() -> Settings:

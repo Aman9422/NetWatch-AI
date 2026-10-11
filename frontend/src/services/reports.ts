@@ -1,25 +1,53 @@
 /**
- * Report service (M13.20, M15.22).
+ * Report service (M13.20, generation and download added by M17).
  *
- * Read-only over the `reports` table, which stores report **metadata**. There is
- * no report writer in this application, so this module deliberately exposes no
- * "generate" or "download" helper that could imply one:
+ * Four surfaces over one subsystem, and the split between them is the point:
  *
- * * `POST /reports/generate` answers `501 FEATURE_NOT_IMPLEMENTED`, and
- *   {@link requestReportGeneration} exists only so a page can *show* that
- *   refusal. It never resolves with a report.
- * * No response carries a file location. `file_path` is omitted from every wire
- *   model (`app/schemas/report.py`), because it is an internal filesystem path
- *   and M13.30 forbids exposing one.
+ * * `GET /reports` and `GET /reports/{id}` describe reports — name, type, format,
+ *   the period covered, who produced them, when, and whether their artifact can
+ *   actually be served.
+ * * `POST /reports/generate` produces one. It is a write: it creates a metadata
+ *   row *and* a file, so it answers `201` with the stored metadata plus the
+ *   summary block the artifact opens with.
+ * * `GET /reports/{id}/download` serves the file itself.
  *
- * The UI must not fabricate a downloadable report (M15.22): M17 owns report
- * generation, and until it exists the honest answer is "not available yet".
+ * **No response carries a location.** `file_path` is omitted from every wire model
+ * (`app/schemas/report.py`), because it is an internal filesystem path and M13.30
+ * forbids exposing one. The artifact is fetched by the report's *id*, through the
+ * download route, so a client can obtain the file without ever learning — or
+ * needing — the directory it lives in. That is why {@link downloadReport} returns
+ * bytes rather than a URL for a page to link to.
+ *
+ * **One request shape covers daily, weekly and custom.** A preset derives its
+ * period from the UTC calendar and a custom report names its own bounds; the two
+ * are mutually exclusive and the backend refuses a request that tries to be both
+ * rather than quietly preferring one (M17.6). The service therefore sends exactly
+ * what the caller supplied and lets the backend own the vocabulary — the same
+ * division of responsibility the rest of this layer keeps.
  */
 
-import { apiGet, apiPost } from './client'
+import { apiDownload, apiGet, apiPost } from './client'
+import type { DownloadedFile } from './client'
 import { ReportPaths } from './endpoints'
 import { withPageWindow, type PageWindow } from './query'
-import type { Report, ReportList } from '@/types'
+import type {
+  GeneratedReport,
+  Report,
+  ReportGenerationRequest,
+  ReportList,
+} from '@/types'
+
+/**
+ * How long a generation request may take.
+ *
+ * Longer than the fifteen seconds a read gets, because generation is not a read:
+ * it resolves a period, runs several aggregate queries through the M16 analytics
+ * service and renders a document (M17.12). Timing it out mid-render would abandon
+ * work the backend has already started, and the stored row would be left
+ * describing a file that was never finished — so the budget is generous rather
+ * than tight.
+ */
+export const GENERATION_TIMEOUT_MS = 60_000
 
 /** Filters accepted by `GET /api/v1/reports`. */
 export interface ReportQuery {
@@ -50,14 +78,58 @@ export function fetchReport(reportId: number, signal?: AbortSignal): Promise<Rep
 }
 
 /**
- * `POST /api/v1/reports/generate` — always refuses in this milestone.
+ * `POST /api/v1/reports/generate` — produce a report and record it (M17.12).
  *
- * Kept as a named function rather than omitted so a page can offer the control
- * and then render the backend's own `501` sentence. It rejects with an
- * {@link import('./errors').ApiError} whose `kind` is `not_implemented`, so the
- * caller can render an "unavailable until a later milestone" state instead of a
- * generic failure.
+ * The body is optional all the way down: an empty request produces the *previous
+ * completed UTC day* as a PDF, because those are the layer's documented defaults.
+ * A refusal — an unsupported type or format, a custom report with half a period,
+ * a preset given bounds — arrives as a `400` naming the field that failed, so the
+ * caller renders the backend's own sentence rather than a guess at what was
+ * wrong.
+ *
+ * Nothing is sent for a field the caller did not supply: an explicit `null` would
+ * be a value, and the backend validates strictly (M13.25).
+ *
+ * @param request The preset, the format, an optional title and the bounds a custom
+ *   period needs. Every field is optional.
+ * @param signal Abort signal, e.g. from a component unmounting.
  */
-export function requestReportGeneration(signal?: AbortSignal): Promise<never> {
-  return apiPost<never>(ReportPaths.generate, { signal })
+export function generateReport(
+  request: ReportGenerationRequest = {},
+  signal?: AbortSignal,
+): Promise<GeneratedReport> {
+  const body: Record<string, string | number> = {}
+  if (request.report_type !== undefined) body.report_type = request.report_type
+  if (request.format !== undefined) body.format = request.format
+  if (request.title !== undefined) body.title = request.title
+  if (request.generated_by !== undefined) body.generated_by = request.generated_by
+  if (request.since !== undefined) body.since = request.since
+  if (request.until !== undefined) body.until = request.until
+
+  return apiPost<GeneratedReport>(ReportPaths.generate, {
+    body,
+    signal,
+    timeoutMs: GENERATION_TIMEOUT_MS,
+  })
+}
+
+/**
+ * `GET /api/v1/reports/{report_id}/download` — fetch a stored artifact (M17.11).
+ *
+ * The response is the file itself rather than the standard envelope, so it is
+ * returned as bytes with the name and media type the backend declared. A report
+ * whose row exists but whose artifact does not is a `404` with the same sentence
+ * whether the file was never written, was removed by hand, or is outside the
+ * storage directory — all three are "not available", and none of them names a
+ * path (M13.30).
+ *
+ * A row reports this outcome in advance through its `downloadable` field, so a
+ * page can offer the control only when it would succeed; this function is what
+ * happens when it is followed through.
+ */
+export function downloadReport(
+  reportId: number,
+  signal?: AbortSignal,
+): Promise<DownloadedFile> {
+  return apiDownload(ReportPaths.download(reportId), { signal })
 }

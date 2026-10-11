@@ -217,3 +217,95 @@ def upgrade_alert_status_constraint(engine: Engine) -> bool:
         _rebuild_alerts_table(connection, replacement_ddl, index_ddl)
     logger.info("%s.status constraint upgraded", _ALERTS_TABLE)
     return True
+
+
+# ---------------------------------------------------------------------------
+# M17: additive columns on the reports table
+# ---------------------------------------------------------------------------
+
+#: The ``reports`` table the M17 upgrade operates on.
+_REPORTS_TABLE = "reports"
+
+#: The columns M17.9 adds to ``reports``, as ``name -> column DDL``. Kept as an
+#: ordered tuple rather than a dict literal built inline, so the order the columns
+#: are added in is fixed and a diff between two runs is empty.
+#:
+#: Every clause is *additive* and every added column is nullable except ``status``,
+#: which SQLite can still add because it carries a default. That is what makes this
+#: an upgrade rather than a rebuild: unlike the M11 status CHECK, no existing
+#: constraint has to change, so the table's rows, indexes and foreign keys are all
+#: left exactly as they were -- and a half-applied upgrade cannot corrupt anything,
+#: because each statement is independently valid.
+_REPORT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("period_start", "DATETIME"),
+    ("period_end", "DATETIME"),
+    ("status", "VARCHAR(20) NOT NULL DEFAULT 'completed'"),
+    ("file_size", "INTEGER"),
+    ("error", "TEXT"),
+)
+
+
+def _existing_report_columns(connection: Connection) -> set[str] | None:
+    """Return the columns ``reports`` currently has, or ``None`` when it is absent.
+
+    ``PRAGMA table_info`` is SQLite's own description of a table, which is the only
+    authority on what an *existing* database actually holds: the ORM's metadata
+    describes what the current code wants, and the whole point of this module is
+    that the two can differ.
+    """
+    row = connection.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = :name"
+        ),
+        {"name": _REPORTS_TABLE},
+    ).fetchone()
+    if row is None:
+        return None
+    rows = connection.execute(
+        text(f"PRAGMA table_info({_REPORTS_TABLE})")
+    ).fetchall()
+    # ``table_info`` yields (cid, name, type, notnull, dflt_value, pk).
+    return {str(entry[1]) for entry in rows}
+
+
+def upgrade_report_metadata_columns(engine: Engine) -> bool:
+    """Add the M17.9 report columns to an existing ``reports`` table.
+
+    Args:
+        engine: The engine whose database should be upgraded.
+
+    Returns:
+        ``True`` when at least one column was added, ``False`` when the table
+        already had them all (or does not exist). ``False`` is the common answer:
+        a database created after M17 already carries every column, so startup does
+        no work.
+
+    Raises:
+        Exception: Whatever SQLite raised. Each statement is independently valid,
+            so a failure leaves the table with the columns added so far -- all of
+            which are additive and nullable (bar ``status``, which has a default)
+            -- and the *next* startup adds the remainder. There is no state in which
+            a failure here makes an existing row unreadable.
+    """
+    with engine.connect() as connection:
+        existing = _existing_report_columns(connection)
+        if existing is None:
+            logger.debug("No %s table to upgrade", _REPORTS_TABLE)
+            return False
+        missing = [
+            (name, ddl) for name, ddl in _REPORT_COLUMNS if name not in existing
+        ]
+        if not missing:
+            logger.debug("%s already carries the M17 columns", _REPORTS_TABLE)
+            return False
+        for name, ddl in missing:
+            logger.info("Adding %s.%s for M17", _REPORTS_TABLE, name)
+            connection.execute(
+                text(f"ALTER TABLE {_REPORTS_TABLE} ADD COLUMN {name} {ddl}")
+            )
+        connection.commit()
+    logger.info(
+        "%s upgraded with %d M17 column(s)", _REPORTS_TABLE, len(missing)
+    )
+    return True

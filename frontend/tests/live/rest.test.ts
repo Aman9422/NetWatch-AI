@@ -20,12 +20,19 @@
  *   alerts" would be a test of the developer's machine. Every assertion here is
  *   about shape, about a relationship between two endpoints, or about a refusal —
  *   all of which hold whatever the store contains.
- * * **It never mutates what it cannot undo.** The alert lifecycle has no "reopen",
- *   a stored setting cannot be deleted and a report cannot be un-generated, so the
- *   write endpoints are exercised through **refusals**: an unknown id, an
- *   illegal value and a validation failure. Each of those is checked to have left
- *   the store untouched, which is the property the frontend depends on and is also
- *   the only way to test those paths without damaging the operator's data.
+ * * **It never mutates what it cannot undo.** The alert lifecycle has no "reopen"
+ *   and a stored setting cannot be deleted, so those write endpoints are exercised
+ *   through **refusals**: an unknown id, an illegal value and a validation failure.
+ *   Each of those is checked to have left the store untouched, which is the property
+ *   the frontend depends on and is also the only way to test those paths without
+ *   damaging the operator's data.
+ * * **A report *is* generated, because that is M17's whole claim.** The rule above
+ *   cannot cover generation any more: a report cannot be un-generated, so testing
+ *   only refusals would leave the milestone's central promise unverified against a
+ *   real backend — and "the route exists" is a different claim from "a file comes
+ *   out". The mutation is additive (one metadata row and one file in a development
+ *   store) and is asserted rather than assumed; the refusal paths are still checked
+ *   to have written *nothing*.
  *
  * The `node` environment is required, not incidental: these are plain `fetch`
  * calls with no DOM involved, and the sibling socket suite needs the runtime's own
@@ -39,6 +46,7 @@ import {
   applyAlertLifecycle,
   applyIncidentLifecycle,
   apiGet,
+  downloadReport,
   fetchActiveConnections,
   fetchActiveDevices,
   fetchAlert,
@@ -77,8 +85,8 @@ import {
   fetchSystemInfo,
   fetchSystemStatus,
   fetchUnreadCount,
+  generateReport,
   isApiError,
-  requestReportGeneration,
   setAlertStatus,
   updateSettings,
   type ApiError,
@@ -663,18 +671,110 @@ describe('report endpoints', () => {
     }
   })
 
-  it('answers report generation with a 501 the UI can render as unavailable', async () => {
-    const error = await refusalFrom(requestReportGeneration())
-    expect(error.kind).toBe('not_implemented')
-    expect(error.status).toBe(501)
-    expect(error.code).toBe(ErrorCode.FEATURE_NOT_IMPLEMENTED)
-    expect(leaksInternals(error.userMessage)).toBe(false)
+  it('generates a report for real and returns the figures it opens with (M17.12)', async () => {
+    const before = await fetchReports()
+    // The one mutating call in this file, and the milestone's central claim: a
+    // report is produced. Additive — a development store accumulates reports — and
+    // the row count is asserted rather than assumed.
+    const outcome = await generateReport({ report_type: 'daily', format: 'PDF' })
+    const report = outcome.report
+
+    expect(Number.isInteger(report.report_id)).toBe(true)
+    expect(report.status).toBe('completed')
+    expect(report.format).toBe('PDF')
+    // Every M17 field is populated for a row this backend just wrote — which is
+    // what lets the UI show a period and a size instead of the unknown marker.
+    expect(report.period_start).not.toBeNull()
+    expect(report.period_end).not.toBeNull()
+    expect(Date.parse(report.period_end as string)).toBeGreaterThan(
+      Date.parse(report.period_start as string),
+    )
+    expect(report.file_size).toBeGreaterThan(0)
+    expect(report.downloadable).toBe(true)
+    expect(report.generated_at).not.toBeNull()
+    expect(typeof report.generated_at_epoch).toBe('number')
+
+    // The summary the artifact opens with, so a client can show what the report
+    // *says* without downloading it. Labels and values are already formatted
+    // server-side; the client re-formats nothing (M17.3).
+    expect(outcome.summary.length).toBeGreaterThan(0)
+    for (const metric of outcome.summary) {
+      expect(metric.label.length).toBeGreaterThan(0)
+      expect(metric.value.length).toBeGreaterThan(0)
+    }
+
+    const after = await fetchReports()
+    expect(after.total).toBe(before.total + 1)
+
+    // And it is readable back as a stored record, not merely as a response.
+    const stored = await fetchReport(report.report_id)
+    expect(stored.report_id).toBe(report.report_id)
+    expect(stored.period_start).toBe(report.period_start)
+    expect('file_path' in stored).toBe(false)
   })
 
-  it('refuses an unknown report id', async () => {
+  it('serves the generated artifact by id, under a name that is not a path (M17.11)', async () => {
+    const outcome = await generateReport({ report_type: 'daily', format: 'CSV' })
+    const file = await downloadReport(outcome.report.report_id)
+
+    expect(file.blob.size).toBeGreaterThan(0)
+    expect(file.contentType).toContain('csv')
+    // The backend's own name, which is what stops two daily reports colliding —
+    // and never a directory (M13.30).
+    expect(file.filename.length).toBeGreaterThan(0)
+    expect(file.filename).not.toContain('/')
+    expect(file.filename).not.toContain('\\')
+  })
+
+  it('refuses an unsupported format and writes nothing at all', async () => {
+    const before = await fetchReports()
+    const error = await refusalFrom(generateReport({ format: 'DOCX' }))
+    expect(error.kind).toBe('validation')
+    expect(error.status).toBe(400)
+    expect(leaksInternals(error.userMessage)).toBe(false)
+
+    // A refused generation is rejected before a row or a file exists, so the store
+    // is untouched — which is what the UI states as "nothing was created".
+    const after = await fetchReports()
+    expect(after.total).toBe(before.total)
+  })
+
+  it('refuses a preset given bounds, and a custom report given none (M17.6)', async () => {
+    const before = await fetchReports()
+
+    // A preset derives its period from the calendar, so bounds are refused rather
+    // than quietly preferred (M17.6).
+    const both = await refusalFrom(
+      generateReport({
+        report_type: 'daily',
+        since: '2026-10-01T00:00:00+00:00',
+        until: '2026-10-02T00:00:00+00:00',
+      }),
+    )
+    expect(both.kind).toBe('validation')
+    expect(both.status).toBe(400)
+
+    // And a custom report has no calendar to derive from, so it must name its own.
+    const neither = await refusalFrom(generateReport({ report_type: 'custom' }))
+    expect(neither.kind).toBe('validation')
+    expect(neither.status).toBe(400)
+
+    const after = await fetchReports()
+    expect(after.total).toBe(before.total)
+  })
+
+  it('refuses an unknown report id, and an artifact that is not there', async () => {
     const error = await refusalFrom(fetchReport(999_999))
     expect(error.status).toBe(404)
     expect(error.code).toBe(ErrorCode.REPORT_NOT_FOUND)
+
+    // The download route answers the same sentence for a report that never existed
+    // and for one whose file was removed: both are "not available" (M17.11), and
+    // neither names a location.
+    const download = await refusalFrom(downloadReport(999_999))
+    expect(download.status).toBe(404)
+    expect(download.code).toBe(ErrorCode.REPORT_NOT_FOUND)
+    expect(leaksInternals(download.userMessage)).toBe(false)
   })
 })
 
@@ -779,7 +879,7 @@ describe('a request the backend validates', () => {
     const refusals = await Promise.all([
       refusalFrom(fetchDevice('mac:00:00:00:00:00:00')),
       refusalFrom(fetchSetting('definitely_not_a_setting')),
-      refusalFrom(requestReportGeneration()),
+      refusalFrom(generateReport({ format: 'DOCX' })),
       refusalFrom(apiGet('/statistics/traffic', { window: 'bogus' })),
     ])
     for (const error of refusals) {

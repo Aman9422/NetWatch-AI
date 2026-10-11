@@ -4,7 +4,7 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M16 — Analytics ✅ COMPLETE (next: M17 — Reporting)
+**Current Milestone:** M17 — Reporting ✅ COMPLETE (next: M18 — Testing)
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -915,16 +915,102 @@ holds it rather than re-deriving device identity.
 
 ---
 
-# M17 — Reporting
+# M17 — Reporting ✅ COMPLETE
 
-* [ ] CSV generation
-* [ ] PDF generation
-* [ ] Daily report
-* [ ] Weekly report
-* [ ] Custom report
-* [ ] Report history
-* [ ] Report download
-* [ ] Report tests
+* [x] CSV generation — `app/reports/csv_renderer.py`: a block-structured UTF-8
+      document written with the standard `csv` module, one marker line per block
+      (`report`, `section:<key>`, `table:<key>`) so a named part of the document is
+      findable without parsing the whole thing
+* [x] PDF generation — `app/reports/pdf_renderer.py`: the same content model as a
+      paginated document via `reportlab`, which M17 declared in
+      `backend/requirements.txt`; text wrapped to the page width, an empty table
+      rendered as its notice rather than as unlabelled blankness
+* [x] Daily report — the previous *completed* UTC day, floored through `datetime`
+      rather than integer division so the calendar stays the authority, and named
+      so two daily reports generated in the same hour cannot collide
+* [x] Weekly report — the ISO-8601 Monday-to-Sunday week that ended most recently,
+      labelled on the last day it covers rather than on its exclusive bound
+* [x] Custom report — both bounds required in ISO-8601 UTC, `[since, until)`,
+      inverted and empty ranges refused and the span capped at M16's own 30-day
+      ceiling (`MAX_REPORT_PERIOD_SECONDS = MAX_WINDOW_SECONDS`, imported rather
+      than re-declared)
+* [x] Report history — `GET /api/v1/reports` ordered `generated_at DESC, id DESC`
+      with `report_type`/`format` filters, M13 paging and a `total` counted over
+      the same filters so a page and its total cannot disagree
+* [x] Report download — `GET /api/v1/reports/{id}/download` serving bytes as an
+      attachment with the format's own media type, and `404` for an unknown id or
+      an artifact that is not there; the resolved path is confined to the storage
+      directory on every read, and a path outside it is indistinguishable from a
+      missing file
+* [x] Report tests — **257 tests** across `test_reports_period`,
+      `test_reports_request`, `test_reports_content`, `test_reports_csv_renderer`,
+      `test_reports_pdf_renderer`, `test_reports_assembler`,
+      `test_reports_storage`, `test_reports_service` and `test_reports_api`
+* [x] Reporting architecture — `backend/app/reports/` added as a consumer and
+      formatter over M16, not a second analytics engine: the assembler calls
+      `AnalyticsService` and queries no table itself, which is what makes a report
+      and the dashboard agree by construction
+* [x] One content model, two renderers — `content.py` knows nothing about CSV,
+      PDF, reportlab or the `csv` module, so both formats say the same thing and
+      neither can round or unit-shift a figure the other left alone
+* [x] A truthful generation lifecycle — the metadata row is written before the
+      artifact and carries the state (`generating` / `completed` / `failed`); a
+      failure marks the row with a safe sentence and deletes any partial file; and
+      `downloadable` is asked of the store rather than inferred from a status
+* [x] Empty, zero and unavailable kept distinct — an unavailable section carries
+      no metrics and no tables at all, an empty one carries its notice, an
+      unmeasured value is `not reported` and a share of a zero total is `n/a`,
+      never `0`
+* [x] Downloads and errors expose nothing internal — no `file_path` in any schema,
+      one fixed sentence for an unavailable artifact, no filesystem path, SQL,
+      stack trace or exception text in any error body (M13.30)
+* [x] Frontend — a generation form, an outcome panel, a report status badge, a
+      report row and a detail panel in `frontend/src/components/reports/`, over the
+      M15 typed client; every report field is typed, none is `any`
+* [x] Additive migration — five columns on `reports` (`period_start`,
+      `period_end`, `status`, `file_size`, `error`); no column dropped, renamed or
+      retyped, no row rewritten, and a pre-M17 row keeps `null` where it genuinely
+      has no answer
+* [x] Documentation — `docs/21_M17_Reports_Design.md`
+
+**Verification:** full backend suite **2322 passed**; the reporting suite is
+**257 tests** across the nine files above plus a shared fake set; pyright **0
+errors, 0 warnings, 0 informations**. Frontend unit suite **448 passed** (15
+files), `tsc --noEmit` clean, production bundle **907.84 kB JS (241.03 kB gzip) /
+24.71 kB CSS (5.52 kB gzip)**, built in 3.62 s. Live-backend suite **67 passed**
+(3 files — 53 REST, 6 WebSocket, 8 page tests) against the real FastAPI app on
+`127.0.0.1:8000`; six of those are report tests, one of which generates a report
+for real and checks the figures it opens with. `verify_m17.py` ran green in both
+modes: `sample` drove seeded real data through generation, the refusals, a listing,
+a download and a failed generation; `live` started the real application under
+uvicorn and drove the four routes over real HTTP (list `200`, unknown id `404`,
+generate `201`, download `200` with 15,221 bytes of `text/csv`, `DOCX` refused
+`400`). Sample mode additionally compares report figures against the analytics
+endpoints for the same period (packets 14/14, bytes 696/696, protocols 2/2, alerts
+2/2) and asserts that a refused request writes no row.
+**Baseline (this machine, in-process client, `benchmark_m17.py`, 10,000 packets /
+100 conversations / 20 alerts over 168 h, row limit 100):** a full CSV generation
+measured **104.43 ms p50** and a full PDF generation **657.25 ms p50**; of the CSV
+figure, assembly is 74.58 ms, the CSV encode 0.69 ms and the atomic artifact write
+2.98 ms, so almost all of a PDF generation is reportlab's layout. The configured
+row limit is flat across 5 / 100 / 100,000 because it is clamped to the analytics
+layer's own group cap. Not a production-capacity claim: one process, one SQLite
+file, in-process transport.
+**Known limitation:** generation is synchronous, so the caller waits for the file
+(~0.66 s for a PDF of this content); nothing prunes the artifact directory, so it
+grows until an operator cleans it; a report is a snapshot, so its figures describe
+the period as the store held it at generation time; and every M16 limitation behind
+those figures — the M8 registry is a snapshot, findings are retained in memory, a
+stored zero means the store held nothing — applies to report content unchanged.
+§17 of the design document states all of them.
+**Design:** `docs/21_M17_Reports_Design.md`.
+
+> Deliberately out of scope for M17: ML/AI anomaly detection, behavioural
+> baselines, AI explanations, a local LLM, automatic blocking, IPS behaviour, SIEM
+> or threat-intelligence integrations, authentication/RBAC, notification delivery,
+> scheduled or recurring reports and distributed sensors. M17 reads the M16
+> analytics views and writes them down; it adds no metric, no score and no
+> detection of its own.
 
 ---
 

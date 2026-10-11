@@ -25,9 +25,20 @@ export {
   apiGet,
   apiPost,
   apiPut,
+  apiDownload,
+  filenameFromDisposition,
   CLIENT_FALLBACK_MESSAGE,
+  DEFAULT_BINARY_MEDIA_TYPE,
+  FALLBACK_DOWNLOAD_NAME,
 } from './client'
-export type { BodyRequestOptions, QueryParams, QueryValue, RequestOptions } from './client'
+export type {
+  BodyRequestOptions,
+  DownloadedFile,
+  QueryParams,
+  QueryValue,
+  RequestOptions,
+  WriteRequestOptions,
+} from './client'
 
 export {
   ApiError,
@@ -160,7 +171,13 @@ export type {
   AnalyticsSectionFailure,
 } from './analytics'
 
-export { fetchReport, fetchReports, requestReportGeneration } from './reports'
+export {
+  GENERATION_TIMEOUT_MS,
+  downloadReport,
+  fetchReport,
+  fetchReports,
+  generateReport,
+} from './reports'
 export type { ReportQuery } from './reports'
 
 export { fetchSetting, fetchSettings, requiresRestart, updateSettings } from './settings'

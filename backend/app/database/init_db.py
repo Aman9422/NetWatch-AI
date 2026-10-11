@@ -3,27 +3,33 @@
 Two responsibilities, in order:
 
 1. **Create** any missing table (``create_all``).
-2. **Upgrade** the constraints ``create_all`` cannot change (M11).
+2. **Upgrade** what ``create_all`` cannot change: the M11 ``alerts.status``
+   constraint, which SQLite cannot drop, and the M17 additive report columns,
+   which ``create_all`` never adds to an already-existing table.
 
-The second step is what makes M11 work against a database created by an earlier
-milestone. ``create_all`` never alters an existing table, and SQLite cannot drop
-a CHECK constraint, so the M2 ``alerts.status`` constraint — which predates the
-M11 lifecycle and rejects ``open`` and ``dismissed`` — would otherwise make every
-M11 alert write fail with an ``IntegrityError``. See
-:mod:`app.database.upgrade` for the rebuild and why foreign keys are disabled
-while it runs.
+The second step is what makes a milestone work against a database created by an
+earlier one. ``create_all`` never alters an existing table, so the M2
+``alerts.status`` constraint — which predates the M11 lifecycle and rejects
+``open`` and ``dismissed`` — would otherwise make every M11 alert write fail with
+an ``IntegrityError``, and a ``reports`` table created before M17 would have no
+``period_start`` for M17 to write. See :mod:`app.database.upgrade` for both: the
+table rebuild and why foreign keys are disabled while it runs, and the additive
+column upgrade that needs no rebuild at all.
 
 Upgrades run *after* ``create_all`` for two reasons: a brand-new database already
-gets the current constraints from the model, so the upgrade finds nothing to do
-and returns immediately; and a table that does not exist yet cannot be upgraded,
-which is why the upgrade tolerates a missing table rather than requiring one.
+gets the current schema from the model, so an upgrade finds nothing to do and
+returns immediately; and a table that does not exist yet cannot be upgraded,
+which is why each upgrade tolerates a missing table rather than requiring one.
 """
 
 import logging
 
 from app.database.base import Base
 from app.database.session import engine
-from app.database.upgrade import upgrade_alert_status_constraint
+from app.database.upgrade import (
+    upgrade_alert_status_constraint,
+    upgrade_report_metadata_columns,
+)
 
 # Importing the models package registers every model with ``Base.metadata``.
 # This is what lets ``create_all()`` discover and create all the tables.
@@ -53,8 +59,17 @@ def init_db() -> None:
 
 
 def _apply_schema_upgrades() -> None:
-    """Apply the constraint upgrades ``create_all`` cannot perform."""
+    """Apply every upgrade ``create_all`` cannot perform.
+
+    Each upgrade is independently idempotent and independently safe: it inspects
+    the live schema, adds only what is missing, and returns whether it changed
+    anything. None of them is wrapped in a bare ``except``, because a schema that
+    failed to upgrade would make every later write fail, and starting anyway would
+    only move the failure somewhere less visible.
+    """
     if upgrade_alert_status_constraint(engine):
         # Logged at info by the upgrade itself only when it actually rebuilds;
         # this line makes the *reason* the rebuild happened visible at startup.
         logger.info("Applied the M11 alert status constraint upgrade.")
+    if upgrade_report_metadata_columns(engine):
+        logger.info("Applied the M17 report metadata column upgrade.")

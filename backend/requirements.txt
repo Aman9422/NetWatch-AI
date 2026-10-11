@@ -26,6 +26,13 @@ psutil>=5.9.0
 # Packet capture (M4)
 scapy>=2.6.0
 
+# PDF report rendering (M17). ReportLab is pure Python and pulls no system
+# library, so a report can be rendered on any machine the backend itself runs
+# on. Its platypus layer is what gives wrapped text, page-breaking tables with
+# a repeated header row, and a "Page X of Y" footer — none of which is worth
+# hand-writing a PDF writer for.
+reportlab>=4.0.0
+
 # Testing
 pytest>=8.0.0
 httpx>=0.27.0
