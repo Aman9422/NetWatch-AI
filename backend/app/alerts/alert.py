@@ -175,6 +175,7 @@ class Alert(BaseModel):
             destination_ip=record.destination_ip,
             protocol=_component(record.correlation_key, 3),
             connection_id=_component(record.correlation_key, 5),
+            finding_id=record.finding_id,
             evidence_count=max(int(evidence_count or 0), 0),
             correlation_key=record.correlation_key,
         )

@@ -4,17 +4,21 @@ Two responsibilities, in order:
 
 1. **Create** any missing table (``create_all``).
 2. **Upgrade** what ``create_all`` cannot change: the M11 ``alerts.status``
-   constraint, which SQLite cannot drop, and the M17 additive report columns,
-   which ``create_all`` never adds to an already-existing table.
+   constraint, which SQLite cannot drop, and the additive columns M17 and M18
+   add to the ``reports`` and ``alerts`` tables, which ``create_all`` never adds
+   to an already-existing table.
 
 The second step is what makes a milestone work against a database created by an
 earlier one. ``create_all`` never alters an existing table, so the M2
 ``alerts.status`` constraint — which predates the M11 lifecycle and rejects
 ``open`` and ``dismissed`` — would otherwise make every M11 alert write fail with
 an ``IntegrityError``, and a ``reports`` table created before M17 would have no
-``period_start`` for M17 to write. See :mod:`app.database.upgrade` for both: the
-table rebuild and why foreign keys are disabled while it runs, and the additive
-column upgrade that needs no rebuild at all.
+``period_start`` for M17 to write. The same is true of ``alerts.finding_id``: a
+database created before that column existed would read every alert back without
+the finding that raised it, quietly losing the trail M11.7 declares. See
+:mod:`app.database.upgrade` for all of them: the table rebuild and why foreign
+keys are disabled while it runs, and the additive column upgrades that need no
+rebuild at all.
 
 Upgrades run *after* ``create_all`` for two reasons: a brand-new database already
 gets the current schema from the model, so an upgrade finds nothing to do and
@@ -27,6 +31,7 @@ import logging
 from app.database.base import Base
 from app.database.session import engine
 from app.database.upgrade import (
+    upgrade_alert_finding_column,
     upgrade_alert_status_constraint,
     upgrade_report_metadata_columns,
 )
@@ -73,3 +78,5 @@ def _apply_schema_upgrades() -> None:
         logger.info("Applied the M11 alert status constraint upgrade.")
     if upgrade_report_metadata_columns(engine):
         logger.info("Applied the M17 report metadata column upgrade.")
+    if upgrade_alert_finding_column(engine):
+        logger.info("Applied the M18 alert finding column upgrade.")

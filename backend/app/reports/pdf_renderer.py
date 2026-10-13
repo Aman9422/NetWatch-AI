@@ -75,8 +75,19 @@ logger = logging.getLogger(__name__)
 PAGE_SIZE = A4
 PAGE_MARGIN = 18 * mm
 
-#: The width a table may occupy: the page minus both margins.
-FRAME_WIDTH = PAGE_SIZE[0] - 2 * PAGE_MARGIN
+#: The padding ReportLab's ``Frame`` applies inside the margin box, per side.
+#:
+#: ``SimpleDocTemplate`` builds its one frame with the ``Frame`` class's defaults,
+#: and those include 6 points of left and right padding. The area a flowable may
+#: actually occupy is therefore *narrower* than the margin box by 12 points, so a
+#: table sized to the margins alone is 12 points wider than the frame it must sit
+#: in: its right edge is drawn past the margin, and ReportLab's own measurement of
+#: a cell disagrees with the width the table was built for (M17.8).
+FRAME_PADDING = 6
+
+#: The width a table may occupy: the page, minus both margins, minus the frame's own
+#: padding. Sizing to the margins alone is the defect :data:`FRAME_PADDING` records.
+FRAME_WIDTH = PAGE_SIZE[0] - 2 * PAGE_MARGIN - 2 * FRAME_PADDING
 
 #: The registered font family, or the built-in fallback. Resolved once, by
 #: :func:`_register_fonts`.
@@ -278,7 +289,20 @@ def _data_table(table: ReportTable, styles) -> Table:
     for row in table.rows:
         rows.append([_paragraph(cell, styles["cell"]) for cell in row])
 
-    rendered = Table(rows, colWidths=_column_widths(table), repeatRows=1, hAlign="LEFT")
+    rendered = Table(
+        rows,
+        colWidths=_column_widths(table),
+        repeatRows=1,
+        # A single cell can hold more text than one page. That is not hypothetical:
+        # M8 identifies a device by its MAC, so a machine seen at hundreds of
+        # addresses is one row whose address cell is longer than a page (M8's
+        # documented routed-traffic identity limitation). Without ``splitInRow``
+        # ReportLab refuses to lay out a row taller than the frame -- raising
+        # ``LayoutError`` and failing the entire document -- while with it the row
+        # continues on the next page, which is the only outcome that keeps the data.
+        splitInRow=1,
+        hAlign="LEFT",
+    )
     style: list[tuple] = [
         ("BACKGROUND", (0, 0), (-1, 0), HEADER_BG),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),

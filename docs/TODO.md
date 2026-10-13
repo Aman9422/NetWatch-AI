@@ -4,7 +4,7 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M17 — Reporting ✅ COMPLETE (next: M18 — Testing)
+**Current Milestone:** M18 — Testing ✅ COMPLETE (next: M19 — Stabilization)
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -1014,23 +1014,167 @@ stored zero means the store held nothing — applies to report content unchanged
 
 ---
 
-# M18 — Testing
+# M18 — Testing ✅ COMPLETE
 
-* [ ] Packet parser tests
-* [ ] Feature extraction tests
-* [ ] Database tests
-* [ ] Device tests
-* [ ] Connection tests
-* [ ] Detection tests
-* [ ] Alert tests
-* [ ] Correlation tests
-* [ ] Risk scoring tests
-* [ ] API tests
-* [ ] WebSocket tests
-* [ ] Frontend tests
-* [ ] End-to-end tests
-* [ ] Performance tests
-* [ ] Security tests
+## The milestone's own checklist
+
+* [x] M18.1 — Audit the existing test suite — 90 backend files, 16 frontend unit
+      files, 3 live files and 27 scripts inventoried, with a coverage matrix and the
+      gap list in `docs/22_M18_Testing_Design.md` §4–§5
+* [x] M18.2 — Packet capture and processing tests — 21 tests added
+      (`backend/tests/test_capture_sniffer.py`): interface handling, lifecycle,
+      malformed frames, protocol identification; no privileged handle required
+* [x] M18.3 — Statistics, persistence and database tests — 31 migration tests added
+      (`backend/tests/test_database_migration.py`), each applying a milestone's
+      upgrade to a database at the *previous* schema; every test uses a temporary
+      database
+* [x] M18.4 — Device and connection tests — audited; the M8 routed-traffic identity
+      limitation is preserved and documented rather than masked, and the tall-row
+      PDF defect it produces on real data is fixed (§12.9)
+* [x] M18.5 — Detection, alerting and correlation tests — audited; found and fixed
+      a real defect: the M11 alert-to-finding trail was never persisted. Column,
+      domain object, persistence, migration, view and 7 tests (`test_alerts_finding_trail.py`)
+* [x] M18.6 — REST API and database contract tests — audited plus the boundary and
+      containment tests in `test_security_regression.py`; the 400-vs-422 split and
+      the refusal sentences are asserted
+* [x] M18.7 — WebSocket tests — audited; the hub in process and the hub over a real
+      socket (6 live tests) both verified
+* [x] M18.8 — Frontend tests — audited; 461 unit tests and 67 live tests run and
+      reported. No frontend file was modified by M18
+* [x] M18.9 — End-to-end testing — `backend/scripts/verify_m18.py`, two modes,
+      both PASS: `sample` (the whole pipeline over a throwaway database, cross-checked
+      against the API, the analytics views and a generated report) and `live` (uvicorn
+      on a loopback port, real HTTP and a real WebSocket)
+* [x] M18.10 — Performance regression testing — `backend/scripts/benchmark_m18.py`
+      measures the whole M5–M12 pipeline, every M13 listing, all five M16 analytics
+      routes and M17 generation; records the environment, reports median/p95 and
+      per-repetition memory growth, and compares against a saved baseline. It found
+      three defects rather than reporting a first regression (§12.9)
+* [x] M18.11 — Security testing — 145 tests in
+      `backend/tests/test_security_regression.py` over four boundary surfaces. Found
+      one unguarded boundary: CSV formula injection, now closed at a single choke
+      point in `app/reports/csv_renderer.py`
+* [x] M18.12 — Failure and recovery testing — 11 tests in
+      `backend/tests/test_failure_recovery.py`: a full disk during the flush, during
+      the rename, an artifact that vanishes after the rename, and a cleanup that fails
+      while handling a failure
+* [x] M18.13 — Reproducible quality gates — `backend/scripts/run_quality_gates.py`
+      runs every gate from one command, with `--full`, `--list`, `--only`, `--skip`
+      and `-v`; a gate that cannot run is reported as skipped rather than passed
+* [x] M18.14 — Test quality and maintenance — no skipped, `xfail`ed or disabled test
+      anywhere; the duplicated verification block in `verify_m18.py` was removed;
+      the spent temporary helper was deleted; the repository-root runtime database was
+      untracked and ignored
+* [x] M18.15 — Documentation — `docs/22_M18_Testing_Design.md`, 20 sections with the
+      audit, the coverage matrix, every measured number, the defects and the known
+      limitations
+
+## The roadmap's own list, as it stands after the audit
+
+* [x] Packet parser tests — the M5 suite, plus 21 capture-and-processing tests added
+* [x] Feature extraction tests — the M5 suite; audited, no gap found
+* [x] Database tests — the M2/M7 suites, plus 31 migration tests added
+* [x] Device tests — the M8 suite; audited, no gap found. The routed-traffic
+      limitation is documented, not a defect
+* [x] Connection tests — the M9 suite; audited, no gap found
+* [x] Detection tests — the M10 suite; audited, no gap found
+* [x] Alert tests — the M11 suite, plus 7 tests for the finding trail that was
+      never persisted and is now written
+* [x] Correlation tests — the M12 suite; audited, no gap found
+* [x] Risk scoring tests — the M12 suite; boundaries asserted as bounds
+* [x] API tests — the M13–M17 route suites; audited, plus the refusal and boundary
+      assertions in the security suite
+* [x] WebSocket tests — the M14 suite, plus 6 live tests over a real socket
+* [x] Frontend tests — 461 unit and 67 live, both re-run during M18
+* [x] End-to-end tests — `verify_m18.py`, both modes PASS
+* [x] Performance tests — `benchmark_m18.py`, with a recorded baseline
+* [x] Security tests — 145 tests, run as their own quality gate
+
+## Verification (recorded during M18, on the environment in the design document §12.2)
+
+* **Backend suite: 2 539 passed, 0 failed, 0 skipped** — 40.4 s
+  (`pytest -c backend/pytest.ini --rootdir backend backend/tests -q`)
+* **Frontend unit: 461 passed (16 files)** — 47.7 s (`npm test`)
+* **Frontend live: 67 passed (3 files)** — 18.5 s (`npm run test:live`)
+* **Security: 145 passed**; **failure and recovery: 11 passed**
+* **Pyright: 0 errors, 0 warnings, 0 informations**
+* **TypeScript: `tsc --noEmit` exit 0**
+* **Production build: succeeded**, 3.39 s (907.84 kB JS / 24.71 kB CSS)
+* **End-to-end: `verify_m18.py sample` PASS, `verify_m18.py live` PASS**
+* **Performance: `benchmark_m18.py --save-baseline` — measured, exit 0, 0 HTTP
+  errors, 0 report errors.** 553.07 packets/s (1 808.10 µs/packet) through the whole
+  M5–M12 pipeline; the slowest listing 34.29 ms; the slowest analytics route
+  54.83 ms; PDF generation 808.57 ms. No timing is a pass/fail threshold.
+* **One explained warning**: the installed `fastapi.testclient` raises its own
+  `StarletteDeprecationWarning` about a future `httpx` change. Not from project code.
+
+## Tests added: 217
+
+Less than the M17 suite grew by; that was the point. Counted per file:
+
+| File | Tests | Covers |
+| --- | ---: | --- |
+| `test_security_regression.py` | 145 | the four boundary surfaces |
+| `test_database_migration.py` | 31 | every milestone's migration, against a previous schema |
+| `test_capture_sniffer.py` | 21 | capture and processing, malformed frames isolated |
+| `test_failure_recovery.py` | 11 | a failing write, a failing rename, a vanished artifact, a failing cleanup |
+| `test_alerts_finding_trail.py` | 7 | the trail that was never written |
+| `test_reports_pdf_renderer.py` | +2 | the frame width, and a row taller than a page |
+| **total** | **217** | 2 322 (M17) + 217 = 2 539 (M18), exactly |
+
+## Files created
+
+* `backend/scripts/run_quality_gates.py` — the one-command gate runner
+* `backend/scripts/verify_m18.py` — the two-mode end-to-end verification
+* `backend/scripts/benchmark_m18.py` — the performance regression harness
+* `backend/tests/test_capture_sniffer.py` (21)
+* `backend/tests/test_database_migration.py` (31)
+* `backend/tests/test_security_regression.py` (145)
+* `backend/tests/test_failure_recovery.py` (11)
+* `backend/tests/test_alerts_finding_trail.py` (7)
+* `docs/22_M18_Testing_Design.md` — the milestone document
+
+## Files modified
+
+* `backend/app/models/alert.py` — the `finding_id` column and its index
+* `backend/app/alerts/alert.py` — the domain object carries the finding id
+* `backend/app/alerts/persistence.py` — the finding id is written to its own column
+* `backend/app/database/upgrade.py` — `upgrade_alert_finding_column`, additive
+* `backend/app/database/init_db.py` — the M18 upgrade is registered
+* `backend/app/reports/csv_renderer.py` — the CSV formula-injection guard
+* `backend/app/reports/pdf_renderer.py` — the frame width, and `splitInRow=1`
+* `backend/tests/test_reports_pdf_renderer.py` — the two layout tests
+* `.gitignore` — the repository-root runtime database
+
+## Defects found and fixed
+
+Three were found by the verification, not reported by a user, and one boundary had
+no guard at all:
+
+1. **The alert-to-finding trail was never persisted.** The column was mapped and
+   read but never written, so every alert's citation was `NULL`. Found by asking
+   which column no test ever sees written.
+2. **Every PDF data table was 12 points too wide.** `FRAME_WIDTH` was the margin
+   box; reportlab's frame has 6 pt of padding per side.
+3. **A row taller than a page failed the whole document.** A device seen at hundreds
+   of addresses is one row, and reportlab refuses it without `splitInRow`. The
+   failure was data-dependent: it appeared at `--packets 800` and not at `--packets 50`.
+4. **CSV formula injection had no guard.** A report title is caller-supplied and a
+   spreadsheet evaluates it. Closed at one choke point.
+
+## Known gaps, carried forward rather than hidden
+
+* The frontend bundle exceeds Vite's advisory (907.84 kB). Code-splitting is a
+  feature change and is out of M18's scope.
+* No coverage percentage is claimed: no coverage tool was run, and M18.1 forbids
+  claiming a percentage without one. The audit answered "was this behaviour
+  asserted?" instead.
+* No authentication, authorisation or TLS exists, so none is tested. Nothing here
+  claims the application is ready for a network.
+* Behavioural baselines, ML/AI anomaly detection and a local LLM remain
+  feature-missing and answer `501`, by design.
+
+**Design document:** `docs/22_M18_Testing_Design.md`.
 
 ---
 

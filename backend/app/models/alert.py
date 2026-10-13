@@ -44,6 +44,11 @@ class Alert(TimestampMixin, Base):
         correlation_key: The deduplication key of the incident this alert
             belongs to (M11.9), which is also where the detector's string rule
             id is carried.
+        finding_id: The M10 finding that raised this alert (M11.7) — the trail
+            back to the raw observation. It needs a column of its own because the
+            deduplication key cannot carry it: a finding id is unique per
+            observation, while the key has to stay stable across them for
+            deduplication to fold a repeat into the same alert.
         resolved_at: When the alert reached a terminal state (optional).
     """
 
@@ -76,6 +81,7 @@ class Alert(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
 
     correlation_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    finding_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     device: Mapped["Device"] = relationship(back_populates="alerts")
@@ -114,4 +120,5 @@ class Alert(TimestampMixin, Base):
         Index("idx_alerts_status", "status"),
         Index("idx_alerts_device_id", "device_id"),
         Index("idx_alerts_rule_id", "rule_id"),
+        Index("idx_alerts_finding_id", "finding_id"),
     )

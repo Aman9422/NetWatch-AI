@@ -1,569 +1,842 @@
-# NetWatch AI — M17 Reports
+# NetWatch AI — M18 Testing
 
-**Milestone:** M17 — Report Generation
-**Scope:** implement and verify report generation over the real data produced by M4–M16.
-**Status:** implemented and verified
-**Supersedes:** the M16 task document that previously occupied this file. M16's own
-record lives in `docs/20_M16_Analytics_Design.md` and in `docs/TODO.md`.
+**Milestone:** M18 — Testing  
+**Scope:** audit, strengthen, and verify the complete NetWatch AI test suite across M0–M17.  
+**Status:** not started
 
 ---
 
 # 1. Purpose
 
-M13 exposed `GET /api/v1/reports` and `GET /api/v1/reports/{id}`, and M15 put a
-Reports page in front of them. Those routes could only ever *list* stored metadata:
-nothing in the application produced a report, and no route produced a document.
+NetWatch AI has implemented the core monitoring pipeline, detection and alerting, correlation and risk scoring, REST APIs, WebSockets, frontend integration, analytics, and report generation.
 
-M17 makes the reporting layer real. It resolves a reporting period, reads the M16
-analytics views over it, assembles one renderer-agnostic content model, renders it
-to CSV or PDF, writes the artifact to disk, records the outcome, and serves the file
-back.
+Previous milestones already added extensive unit tests, integration tests, live API tests, performance benchmarks, and verification scripts.
 
-M17 is a consumer and a formatter. It must not introduce a second statistics
-engine, a second device identity, a second risk score, a new metric, or any
-detection logic.
+M18 must assess whether the project is adequately tested as a complete application.
 
----
+The objective is to:
 
-# 2. M17 Goal
+- audit existing test coverage
+- identify missing or weak tests
+- add meaningful tests for uncovered behavior
+- strengthen integration and end-to-end verification
+- test failure handling and recovery
+- assess performance regressions
+- validate security boundaries
+- establish repeatable project-wide verification commands
 
-Build a read-oriented reporting layer that produces:
+Do not rewrite working modules merely to increase test coverage.
 
-1. A bounded reporting period
-2. A validated report request
-3. One renderer-agnostic content model
-4. A CSV artifact
-5. A PDF artifact
-6. A stored, truthful report record
-7. Four working HTTP routes
-
-The results must come from real backend data.
-
-No mock data, random values or simulated content may be introduced.
+Do not duplicate existing tests without adding meaningful new coverage.
 
 ---
 
-# 3. Architecture Position
+# 2. Current Project Status
+
+M0–M17 are implemented.
+
+The existing project includes:
+
+- Python backend using FastAPI
+- SQLite persistence
+- Scapy packet capture
+- packet processing and traffic statistics
+- device discovery and connection tracking
+- detection rules and alerts
+- event correlation and risk scoring
+- REST API and WebSocket channels
+- React/TypeScript frontend
+- analytics
+- CSV and PDF reporting
+
+The M17 implementation record reports:
+
+- 2,322 passing backend tests
+- 257 reporting-specific tests
+- 448 frontend unit tests
+- 67 live frontend/backend integration tests
+- Pyright with zero errors
+- successful TypeScript type checking and production build
+
+Treat these as existing recorded results, not as proof that the current checkout still passes.
+
+**First rerun the actual test suites and establish a fresh baseline.** Counts and results must be taken from commands executed during M18.
+
+---
+
+# 3. M18 Goals
+
+M18 must produce:
+
+1. An inventory of existing tests
+2. A milestone-by-milestone coverage audit
+3. Additional tests for identified gaps
+4. Reliable database and API test isolation
+5. Cross-component integration tests
+6. End-to-end verification
+7. Performance regression checks
+8. Defensive security tests
+9. Reproducible quality-check commands
+10. A completed testing design document
+
+The application must continue to work without paid services or cloud dependencies.
+
+Testing must remain suitable for a local Windows development environment and the current Python, SQLite, FastAPI, React, and TypeScript stack.
+
+---
+
+# 4. M18.1 — Audit the Existing Test Suite
+
+Before adding tests, inspect the repository.
+
+Review:
+
+- `backend/tests/`
+- `backend/scripts/`
+- `frontend/src/**/*.test.ts`
+- `frontend/src/**/*.test.tsx`
+- `frontend/tests/live/`
+- all existing `pytest` configuration
+- all frontend test configurations
+- Pyright and TypeScript configurations
+- existing benchmark and verification scripts
+- `pyproject.toml` or other dependency/configuration files
+- CI configuration, if present
+- `docs/TODO.md`
+- milestone design documents from M0–M17
+
+Identify:
+
+- unit tests
+- integration tests
+- API tests
+- WebSocket tests
+- frontend component tests
+- live backend/frontend tests
+- end-to-end verification scripts
+- performance benchmarks
+- security tests
+
+Create a coverage matrix showing:
+
+| Area | Existing Tests | Identified Gaps | M18 Action |
+|---|---|---|---|
+| Packet processing | Audit | Missing cases | Add only where needed |
+| Database | Audit | Missing cases | Add only where needed |
+| Device discovery | Audit | Missing cases | Add only where needed |
+| Connection tracking | Audit | Missing cases | Add only where needed |
+| Detection and alerts | Audit | Missing cases | Add only where needed |
+| Correlation and risk | Audit | Missing cases | Add only where needed |
+| REST API | Audit | Missing cases | Add only where needed |
+| WebSockets | Audit | Missing cases | Add only where needed |
+| Frontend | Audit | Missing cases | Add only where needed |
+| Reporting | Audit | Missing cases | Add only where needed |
+| Performance | Audit | Missing cases | Add only where needed |
+| Security | Audit | Missing cases | Add only where needed |
+
+Do not claim formal coverage percentages without running a coverage tool.
+
+Where coverage data is useful, use an appropriate existing or freely available coverage tool and document its limitations.
+
+Avoid installing new dependencies when the existing toolchain can perform the task.
+
+---
+
+# 5. M18.2 — Packet Capture and Processing Tests
+
+Audit M3–M5.
+
+Verify that tests adequately cover:
+
+- network interface enumeration
+- interface selection
+- capture start and stop
+- invalid interface handling
+- capture lifecycle transitions
+- repeated start/stop requests
+- graceful shutdown
+- capture failures
+- malformed packets
+- unsupported protocols
+- IPv4 and IPv6
+- TCP, UDP, ICMP and DNS identification
+- missing Ethernet or network-layer information
+- packet normalization
+- timestamp handling
+- processor failure isolation
+
+Test that malformed or unsupported packets do not crash the capture pipeline.
+
+Verify that a capture error is reported rather than silently appearing as zero traffic.
+
+Use packet fixtures and controlled local test data where appropriate.
+
+Do not require elevated privileges for ordinary unit tests.
+
+Live packet-capture tests must be optional, explicitly invoked, and limited to an authorized local interface.
+
+---
+
+# 6. M18.3 — Statistics, Persistence and Database Tests
+
+Audit M6–M7 and the shared database infrastructure.
+
+Verify:
+
+- packet and byte counters
+- protocol statistics
+- time-window statistics
+- top talkers
+- bounded statistics state
+- packet persistence
+- batch writing
+- queue capacity behavior
+- retention cleanup
+- query filtering
+- pagination
+- session cleanup
+- database initialization
+- database upgrades
+- interrupted or failed writes
+- appropriate rollback behavior
+
+Confirm that the database migrations work for both:
+
+1. a fresh database
+2. an existing database that requires an upgrade
+
+Test that M17's additive report schema upgrades existing databases correctly without destroying existing records.
+
+Use isolated temporary databases for tests.
+
+Tests must never accidentally delete or modify the developer's real `backend/netwatch.db`.
+
+Keep local database files and backups out of Git.
+
+---
+
+# 7. M18.4 — Device and Connection Tests
+
+Audit M8–M9.
+
+### Device discovery
+
+Test:
+
+- first observation of a device
+- updates to existing devices
+- MAC address normalization
+- multiple IPv4/IPv6 addresses
+- missing MAC or IP
+- first-seen and last-seen timestamps
+- traffic attribution
+- device status transitions
+- stale device cleanup
+- mapping conflicts
+- concurrent updates
+- registry bounds
+
+Preserve and document the known routed-traffic/next-hop identity limitation. Do not mask it with fabricated device identities.
+
+### Connection tracking
+
+Test:
+
+- canonical bidirectional flow identity
+- reversed endpoints
+- TCP connection states
+- UDP and ICMP tracking
+- connection expiration
+- active/historical transitions
+- byte and packet counters
+- device association
+- persistence and retrieval
+- capacity limits
+- thread safety
+- invalid or incomplete packet information
+
+Verify that M8 and M9 state remains consistent with the normalized packets and existing persistence rules.
+
+---
+
+# 8. M18.5 — Detection, Alerting and Correlation Tests
+
+Audit M10–M12.
+
+### Detection engine
+
+Verify:
+
+- every implemented detection rule
+- threshold boundaries
+- time windows
+- repeated observations
+- false-positive-prone conditions
+- detector exceptions
+- bounded detector state
+- evidence construction
+- confidence values
+- failure isolation
+
+Test legitimate and suspicious patterns separately so that ordinary activity is not automatically treated as malicious.
+
+### Alert engine
+
+Verify:
+
+- finding-to-alert mapping
+- severity and confidence separation
+- alert evidence
+- deduplication windows
+- acknowledgement
+- resolution
+- dismissal
+- false-positive lifecycle action
+- invalid transitions
+- repeated actions
+- persistence and query behavior
+
+### Correlation and risk scoring
+
+Verify:
+
+- event normalization
+- correlation-window boundaries
+- relationship weights
+- confidence aggregation
+- anti-chaining rules
+- event deduplication
+- incident creation and updates
+- incident lifecycle restrictions
+- bounded risk values
+- risk-band boundaries
+- explanation of contributing risk factors
+- missing and unavailable context
+
+Confirm that findings, alerts, incidents, severity, confidence and risk remain separate concepts.
+
+M18 must test the existing behavior. It must not introduce a new detection or risk-scoring model.
+
+---
+
+# 9. M18.6 — REST API and Database Contract Tests
+
+Audit M13 and the endpoints added by M16–M17.
+
+Cover:
+
+- HTTP methods and route registration
+- request validation
+- response schemas
+- pagination limits
+- invalid filters
+- malformed timestamps
+- inclusive and exclusive time boundaries
+- error response envelopes
+- missing resources
+- unavailable data sections
+- database failures
+- incorrect lifecycle transitions
+- report generation failures
+- report download behavior
+- safe error messages
+
+Test all API groups, including:
+
+- capture and interface management
+- packets and statistics
+- devices and connections
+- detections and alerts
+- evidence and incidents
+- analytics
+- dashboard
+- settings and system
+- notifications
+- reporting
+
+Verify the five M16 analytics endpoints and all four M17 report routes.
+
+Use the actual running backend for live API verification where appropriate.
+
+Compare real API responses with their Pydantic schemas and frontend TypeScript models.
+
+Do not assume that documentation, OpenAPI schemas and runtime behavior are identical.
+
+---
+
+# 10. M18.7 — WebSocket Tests
+
+Audit M14 and the frontend integration from M15.
+
+Verify:
+
+- each supported channel
+- event envelope validation
+- event schema compatibility
+- subscriber registration and removal
+- shared connections
+- reconnect behavior
+- REST refresh after reconnect
+- duplicate event rejection
+- bounded deduplication state
+- per-channel buffering
+- drop-oldest backpressure
+- packet rate limiting
+- heartbeat and timeout behavior
+- invalid client messages
+- client disconnects
+- publisher failure isolation
+
+Confirm that publishing failures cannot interrupt packet processing, detection, alerting, or correlation.
+
+Test packet rate limiting without assuming the frontend receives every captured packet.
+
+Do not introduce external network dependencies into ordinary unit tests.
+
+---
+
+# 11. M18.8 — Frontend Tests
+
+Audit the existing React/TypeScript tests.
+
+Test:
+
+- loading states
+- successful data display
+- empty states
+- API failures
+- unavailable data sections
+- retry actions
+- API validation errors
+- WebSocket connection status
+- reconnect behavior
+- duplicate event handling
+- bounded lists
+- alert lifecycle actions
+- incident lifecycle actions
+- analytics charts and filters
+- report generation forms
+- daily, weekly and custom reporting periods
+- CSV/PDF download actions
+- report history
+- safe rendering of unexpected server values
+
+Verify that:
+
+- no mock data is activated in the live application
+- no random generators simulate network activity
+- no frontend component bypasses the shared API service layer
+- TypeScript types match actual backend responses
+- report files are downloaded from the backend, not fabricated browser URLs
+
+Keep existing UI design changes outside M18 unless a test exposes a genuine defect that prevents correct application behavior.
+
+---
+
+# 12. M18.9 — End-to-End Testing
+
+Build on the existing M13, M15, M16 and M17 verification scripts.
+
+Verify the complete data flow:
 
 ```text
+Authorized Local Traffic
+          ↓
 Packet Capture
-      ↓
-Packet Processing
-      ↓
-Traffic Statistics
-      ↓
-Packet Persistence
-      ↓
-Devices / Connections
-      ↓
-Detections
-      ↓
+          ↓
+Normalization
+          ↓
+Statistics + Persistence
+          ↓
+Device Discovery + Connections
+          ↓
+Detection Findings
+          ↓
 Alerts
-      ↓
-Correlation + Risk
-      ↓
-────────────────────────
-      Analytics (M16)
-────────────────────────
-      ↓
-────────────────────────
-      Reports (M17)
-────────────────────────
-      ↓
-M13 REST API
-      ↓
-M15 Frontend
+          ↓
+Correlated Incidents + Risk
+          ↓
+REST API + WebSockets
+          ↓
+Frontend Displays Live Data
+          ↓
+Analytics
+          ↓
+CSV/PDF Reports
+          ↓
+Report History + Download
 ```
 
-M17 is a consumer of the M16 analytics layer.
+Create or strengthen a repeatable end-to-end verification procedure that confirms:
 
-It does not replace:
+- real packets reach the pipeline
+- statistics and persistence reflect processed packets
+- device and connection state updates
+- controlled suspicious test patterns produce the expected findings
+- alerts and incidents are created by their actual engines
+- the API exposes the resulting state
+- WebSocket messages match the API's current state where applicable
+- the frontend renders the real responses
+- analytics queries return the expected aggregate values
+- reports contain values consistent with the analytics responses
+- generated CSV/PDF files can actually be retrieved
 
-* M6 Traffic Statistics
-* M8 Device Discovery
-* M9 Connection Tracking
-* M10 Detection
-* M11 Alert Engine
-* M12 Correlation and Risk Scoring
-* M16 Analytics
+Use controlled local traffic and isolated temporary databases.
 
----
+Existing fixtures may be used for unit and integration tests, but do not use mock-generated events to claim successful real-pipeline verification.
 
-# 4. Scope
-
-## M17.1 — Reporting Architecture
-
-Inspect the existing implementation and identify:
-
-* the analytics service and its views
-* the existing reports router, service and repository
-* the `reports` table and the existing models
-* the M2 migration/upgrade path
-* the existing Pydantic schemas
-* the M15 frontend's expectations
-
-Determine whether the current reporting implementation is complete, partial or
-placeholder-based.
-
-Implement one reporting package under `backend/app/reports/` that owns the period,
-the request, the content model, the renderers, the storage and the lifecycle.
-
-Reuse existing services and models wherever possible. Do not create duplicate
-representations of packets, devices, connections, alerts or incidents, and do not
-re-implement an analytics aggregation.
+Live capture tests must be optional and authorized.
 
 ---
 
-# 5. Reporting Periods
+# 13. M18.10 — Performance Regression Testing
 
-Define one period model, used by every generation.
+Audit benchmarks already created by earlier milestones.
 
-* Convention: `[since, until)` — `since` inclusive, `until` exclusive (M13.26)
-* Encoding: ISO-8601 UTC with an explicit offset
-* Presets: `daily` is the previous **completed** UTC day; `weekly` is the previous
-  completed ISO-8601 Monday-to-Sunday week
-* Custom: both bounds required; an inverted, empty or over-long range is refused
-* Ceiling: the M16 analytics window ceiling, reused rather than re-declared
-* Every period has a name, and the name is what the default title is built from
+Review existing measurements from:
 
-There must be no path that reports over all of history.
+- packet processing
+- statistics
+- persistence
+- device discovery
+- connection tracking
+- detection
+- alerts
+- correlation and risk scoring
+- REST API
+- WebSockets
+- analytics
+- report generation
 
-Time-series results inside a report must be bounded, and the bucket rules are
-M16's own.
+Do not rebuild every benchmark if the current scripts already measure the relevant behavior.
 
----
+Establish reproducible test inputs and record the environment.
 
-# 6. Report Content Model
+Measure relevant operations such as:
 
-Define one renderer-agnostic description of what a report says:
+- packets processed per second
+- per-packet processing overhead
+- bounded queue behavior
+- persistence throughput
+- important API response times
+- analytics query response times
+- report generation and download costs
+- memory growth under sustained traffic
+- WebSocket behavior under controlled client load
 
-* `Metric` — a labelled scalar whose value is already rendered text
-* `ReportTable` — declared column names and string rows, with an optional notice
-* `ReportSection` — one subject with its metrics, tables and an explicit
-  `available` flag
-* `ReportContent` — identity, period, summary metrics and body sections
+Compare with the existing local baselines where comparable measurements are available.
 
-Five body sections, each drawn from an M16 view: traffic, protocols, devices,
-connections, threats.
+Record:
 
-The summary is built from named headline figures lifted out of those sections, so
-it cannot disagree with the body it summarises.
+- hardware/software environment
+- dataset and test conditions
+- warm-up and measurement procedure
+- median and tail latency where appropriate
+- observed resource consumption
+- deviations from the existing baseline
 
-Nothing in the content model scores, weights or judges anything.
+Do not claim production-scale capacity.
 
----
+Do not treat an arbitrary timing threshold as a correctness test on every machine.
 
-# 7. CSV Generation
-
-Render the content model to a UTF-8, block-structured document written with the
-standard `csv` module:
-
-* one marker line per block (`report`, `section:<key>`, `table:<key>`)
-* column names taken from the content model, so they cannot disagree with the PDF
-* an empty table writes its notice instead of rows
-* an unavailable section writes its sentence instead of metrics and tables
-
----
-
-# 8. PDF Generation
-
-Render the same content model to a paginated PDF with `reportlab`, declared in
-`backend/requirements.txt`:
-
-* title, then period, then summary metrics, then one block per section
-* table header rows from the content model's declared columns
-* text wrapped to the page width so nothing overflows the page
-* an empty report states once that the period holds no stored data
-
-The renderer is pure: content in, bytes out. It touches no session, no filesystem
-and no clock.
----
-
-# 9. Artifact Storage
-
-One directory, configurable through `settings.report_storage_dir`.
-
-* created on first write, never at import
-* one collision-safe naming rule, keyed on the report's own id, so a second
-  generation can never overwrite a first one's file
-* atomic writes: a temporary file in the same directory, an `fsync`, then
-  `os.replace`
-* reads confined to the directory on **every** request, so a stored path can never
-  make the process open an arbitrary file
-* failures reported as a sentence, never as a path
+Performance regressions must be measured and reported, not hidden by disabling tests or weakening assertions without justification.
 
 ---
 
-# 10. Generation Lifecycle
+# 14. M18.11 — Security Testing
 
-One metadata row per generation, moving through three states:
+Perform defensive security tests against the local NetWatch application and its test environment.
 
-| State | Means |
-| --- | --- |
-| `generating` | the row exists and the artifact is being produced |
-| `completed` | the artifact was written and its size recorded |
-| `failed` | generation was attempted and did not finish; `error` carries a safe sentence and any partial file was removed |
+Focus on:
 
-The row is written **before** the file, so an interrupted generation leaves a row
-that truthfully says the file does not exist rather than leaving no trace.
+- input validation
+- malformed packet handling
+- unsafe file paths
+- report download path traversal
+- report filename handling
+- CSV formula injection
+- PDF rendering of untrusted text
+- SQL parameterization
+- filesystem containment
+- secret and credential exposure
+- error message disclosure
+- unsafe configuration defaults
+- unexpected HTTP methods
+- WebSocket message validation
+- resource exhaustion from excessive requests or oversized inputs
+- cleanup of temporary files
+- local database and generated-artifact permissions
 
-`downloadable` is asked of the storage directory per row rather than inferred from
-a status, because a file can be removed by hand while the row still says
-`completed`.
+Verify that user-controlled values cannot cause arbitrary file reads or writes through the report functionality.
 
-The schema change is additive: five columns on `reports` (`period_start`,
-`period_end`, `status`, `file_size`, `error`), no column dropped, renamed or
-retyped and no row rewritten.
+Check that secrets, internal paths, SQL statements and tracebacks are not exposed through API responses or generated reports.
 
-The row limit is `max(1, min(settings.report_max_table_rows, REPORT_ROW_LIMIT))`,
-where `REPORT_ROW_LIMIT` is the analytics layer's own group cap, reused rather than
-re-declared.
+Do not run destructive security tests against external targets.
 
----
+Do not send uncontrolled flood traffic or run invasive scans against public infrastructure.
 
-# 11. API Requirements
+Document that authentication/RBAC is not implemented yet, and do not claim security appropriate for public or multi-user deployment.
 
-Verify and implement:
-
-```text
-GET  /api/v1/reports                stored metadata, newest first
-GET  /api/v1/reports/{id}           one report's metadata
-POST /api/v1/reports/generate       produce a report and record it
-GET  /api/v1/reports/{id}/download  serve the artifact itself
-```
-
-The three JSON routes must follow the existing M13 response envelope. The download
-route serves bytes as an attachment with the format's own media type.
-
-They must provide:
-
-* validation
-* sensible defaults
-* explicit maximum limits
-* correct empty responses
-* consistent error handling
-* stable response schemas
-* bounded results
-
-Do not expose stack traces, filesystem paths or internal implementation details.
-
-Do not break the TypeScript models already used by M15.
+Fix only minimal, clearly identified correctness or security defects needed to make the tested behavior safe. Record larger architectural changes for M19 or a separately scoped milestone.
 
 ---
 
-# 12. Empty and Unavailable Data
+# 15. M18.12 — Failure and Recovery Testing
 
-Maintain the project's existing distinction:
+Test the application under controlled failure conditions.
 
-```text
-0           = known value is zero
-empty       = valid query with no records
-unknown     = value was not reported
-unavailable = backend section could not be read
-```
+Include:
 
-An unavailable section carries no metrics and no tables. An empty section carries
-its notice. An unmeasured value is never written as `0`, and a share of a zero total
-is `n/a` rather than `0.00%`.
+- a missing or invalid capture interface
+- malformed packets
+- database write failures
+- database read failures
+- disk write failures
+- full or unavailable report storage
+- failed CSV/PDF generation
+- missing report files
+- failed WebSocket connections
+- disconnected clients
+- unavailable API responses
+- invalid settings
+- service shutdown during activity
 
----
+Verify that:
 
-# 13. Performance Requirements
+- errors are surfaced honestly
+- resources are released
+- state is not silently corrupted
+- partial report artifacts are cleaned up
+- unavailable values do not become misleading zeroes
+- a failure in one subsystem does not unnecessarily break unrelated components
 
-Reports must remain suitable for the current local SQLite architecture.
-
-Avoid:
-
-* loading the packet table into Python
-* unbounded queries or unbounded periods
-* N+1 queries across sections
-* re-rendering an artifact to measure it
-* a second aggregation of anything the analytics layer already computes
-
-Prefer M16's SQL-side aggregation, and add a database index only when a measured
-reporting query pattern justifies one.
-
-Performance measurements must be local development measurements only.
-
-Do not make production-scale claims.
+Use dependency injection, test doubles and temporary files where appropriate to reproduce failures deterministically.
 
 ---
 
-# 14. Testing
+# 16. M18.13 — Reproducible Quality Gates
 
-Add tests for each reporting area.
+Provide one documented, repeatable test workflow.
 
-### Periods
+Audit the existing scripts and package commands before adding new ones.
 
-Test presets, the boundary between two consecutive periods, inverted, empty and
-over-long custom ranges, and preset-with-bounds refusals.
+The final verification process must include:
 
-### Requests
+1. Backend unit and integration tests
+2. Database/API contract tests
+3. WebSocket tests
+4. Reporting tests
+5. Frontend unit tests
+6. Live frontend/backend tests
+7. End-to-end verification
+8. Python type checking
+9. TypeScript type checking
+10. Frontend production build
+11. Selected performance checks
+12. Security regression tests
 
-Test format and type normalisation, blank values, unknown values and malformed
-timestamps.
+Use the existing package scripts wherever possible.
 
-### Content
+If a new project-level test runner or script would simplify verification, add it only when it can execute the existing checks reliably without duplicating their logic.
 
-Test the five sections, availability, the summary's headline figures and the
-rendering of unknown values.
+Tests that require elevated privileges or live packet capture must be clearly separated from the normal unit-test command.
 
-### CSV
+Document the expected environment variables and prerequisites for each test group.
 
-Test the block structure, the marker lines, quoting, notices and empty tables.
-
-### PDF
-
-Test a real document is produced, that it parses, that it carries the content's
-columns and cells, and that notices appear in place of empty tables.
-
-### Storage
-
-Test the naming rule, collision safety, atomicity, the containment refusals and the
-failure sentences.
-
-### Lifecycle
-
-Test the three states, a failure leaving a truthful row, and `downloadable`
-disagreeing with `completed`.
-
-### API
-
-Test defaults, validation, maximum limits, response schemas, empty results, the
-`404` paths, the download media type and error handling.
-
-All existing M0–M16 tests must continue to pass.
+A failed live test must not be silently skipped and counted as a pass.
 
 ---
 
-# 15. Type and Contract Verification
+# 17. M18.14 — Test Quality and Maintenance
 
-Compare the actual running API responses with the schemas already consumed by M15.
+Review the quality of existing tests.
 
-Do not assume that existing documentation and implementation are identical.
+Check for:
 
-Three additions were required and are recorded in the TypeScript types: `status`,
-`file_size` with the `period_*` pair, and `downloadable`. No existing field changed
-name or type, so the M15 build continued to compile unchanged.
+- tests that assert implementation details instead of behavior
+- duplicate tests with no independent value
+- weak assertions
+- nondeterministic timing
+- hidden dependence on network connectivity
+- dependence on the developer's real SQLite database
+- tests that change the working tree unexpectedly
+- resource leaks
+- background threads that remain running
+- unclosed sockets
+- temporary artifacts left behind
+- overly broad exception assertions
+- skipped or disabled tests without explanation
 
-Do not use `any` for backend-derived TypeScript data.
+Improve test clarity and determinism where needed.
+
+Do not delete a useful test merely because it is slow.
+
+If a test is flaky, identify and document the root cause rather than increasing retry counts until it passes.
 
 ---
 
-# 16. Documentation
+# 18. M18.15 — Documentation
 
 Create:
 
-```text
-docs/21_M17_Reports_Design.md
-```
+`docs/22_M18_Testing_Design.md`
 
-The document contains:
+Use the same numbered, detailed format as the M15–M17 milestone documents.
+
+Include:
 
 1. Purpose
 2. Scope
 3. Non-goals
-4. Architecture position
-5. Data sources
-6. Reporting architecture
-7. Reporting periods
-8. Report content model
-9. CSV rendering
-10. PDF rendering
-11. Storage and artifacts
-12. Generation lifecycle
-13. API contracts
-14. Validation and error handling
-15. Performance considerations
-16. Testing and verification
-17. Known limitations
-18. Completion checklist
-19. M17 closure
+4. Existing test-suite audit
+5. Coverage matrix
+6. Unit testing
+7. Database testing
+8. API contract testing
+9. WebSocket testing
+10. Frontend testing
+11. End-to-end testing
+12. Performance regression testing
+13. Security testing
+14. Failure and recovery testing
+15. Reproducible quality gates
+16. Test execution instructions
+17. Results and measurements
+18. Known limitations
+19. Completion checklist
+20. M18 closure
 
-Keep the documentation focused only on M17.
+Record actual commands, outputs, test counts, failures and skips.
 
-Do not document future ML/AI work as implemented.
+Do not invent coverage percentages or test results.
 
----
+Keep the document focused on M18.
 
-# 17. M17 Non-Goals
+Update only the M18 section of `docs/TODO.md` as appropriate. Do not rewrite previous milestone records.
 
-The following are explicitly outside M17:
+Keep the status as:
 
-* ML anomaly detection
-* behavioral baselines
-* AI explanations
-* local LLM / Ollama
-* automatic blocking
-* IPS functionality
-* SIEM integrations
-* threat-intelligence integrations
-* authentication / RBAC
-* notification delivery
-* scheduled or recurring reports
-* distributed sensors
+**Status: design / in progress**
 
-These belong to later milestones.
+until all completion criteria are verified.
+
+Only then mark it:
+
+**Status: implemented and verified**
 
 ---
 
-# 18. Verification
+# 19. M18 Non-Goals
 
-Run:
+The following are not part of M18:
+
+- new detection algorithms
+- ML anomaly detection
+- behavioral baselines
+- AI explanations
+- local LLM/Ollama
+- new risk-scoring models
+- new dashboard functionality
+- new reporting features
+- authentication/RBAC implementation
+- SIEM integrations
+- distributed sensors
+- Docker deployment
+- PostgreSQL migration
+- major architectural refactoring
+
+M18 is primarily a testing and verification milestone.
+
+Do not add application features merely to increase the number of modified files.
+
+---
+
+# 20. Verification
+
+Before closing M18, run the relevant project checks from a clean, documented environment.
+
+At minimum:
 
 ```text
-Backend test suite
-Reporting-specific tests
-API tests
-Pyright/type checking
-M15 frontend unit tests
-M15 live integration tests against the real backend
+Full backend test suite
+Backend type checking
+Frontend unit suite
+Frontend TypeScript type checking
 Frontend production build
-Reporting performance measurements
+Live API integration tests
+Live WebSocket tests
+Reporting tests
+End-to-end verification
+Performance regression checks
+Security regression tests
 ```
 
-Verify the four report routes against the actual running backend, using real
-persisted data.
+Also verify:
 
-No mock data may be used to claim successful integration.
+- the database migrations work
+- `.env.example` contains the necessary configuration without secrets
+- local `.env` files and runtime databases are ignored by Git
+- generated reports and temporary test files do not accidentally enter the repository
+- existing M0–M17 behavior remains compatible
+
+If a test fails, investigate and report the failure.
+
+Do not mark M18 complete merely because the test command was started or because previously recorded test counts appear in the documentation.
 
 ---
 
-# 19. Completion Criteria
+# 21. Completion Criteria
 
-M17 is complete only when:
+M18 is complete only when:
 
-* [x] Reporting architecture is implemented
-* [x] CSV generation works
-* [x] PDF generation works
-* [x] Daily reports work
-* [x] Weekly reports work
-* [x] Custom reports work
-* [x] Report history works
-* [x] Report download works
-* [x] Period filtering is correct and half-open
-* [x] Aggregation is bounded
-* [x] API validation works
-* [x] Empty/unavailable states are handled correctly
-* [x] Existing M13 API conventions are preserved
-* [x] M15 frontend remains compatible
-* [x] Errors expose nothing internal
-* [x] Reporting tests pass
-* [x] Full regression suite passes
-* [x] Pyright/type checking passes
-* [x] Performance baseline is recorded
-* [x] Manual verification with real data succeeds
-* [x] `docs/21_M17_Reports_Design.md` is complete
-
-**Status: implemented and verified.**
+- [ ] Existing test suites have been audited
+- [ ] A coverage matrix is documented
+- [ ] Packet capture and processing tests are adequate
+- [ ] Database and migration tests pass
+- [ ] Device and connection tests pass
+- [ ] Detection, alert and correlation tests pass
+- [ ] Risk-scoring boundary tests pass
+- [ ] REST API contracts are verified
+- [ ] WebSocket behavior is verified
+- [ ] Frontend behavior is verified
+- [ ] Reporting functionality is covered
+- [ ] End-to-end data flow is verified
+- [ ] Performance checks are repeatable
+- [ ] Security regression tests pass
+- [ ] Failure and recovery behavior is tested
+- [ ] The main test workflow is reproducible
+- [ ] Existing M0–M17 regression suites pass
+- [ ] Pyright passes
+- [ ] TypeScript checking passes
+- [ ] Frontend build succeeds
+- [ ] Test output contains no unexplained skips or failures
+- [ ] `docs/22_M18_Testing_Design.md` is complete
+- [ ] M18's `docs/TODO.md` checklist is updated
 
 ---
 
-# 20. Final Implementation Report
+# 22. Final Implementation Report
 
-**Files created**
+At completion, provide:
 
-```text
-backend/app/reports/__init__.py
-backend/app/reports/period.py
-backend/app/reports/requests.py
-backend/app/reports/content.py
-backend/app/reports/assembler.py
-backend/app/reports/csv_renderer.py
-backend/app/reports/pdf_renderer.py
-backend/app/reports/renderers.py
-backend/app/reports/storage.py
-backend/app/reports/errors.py
-backend/app/reports/status.py
-backend/app/reports/service.py
-backend/app/schemas/report.py
-backend/tests/reports_fakes.py
-backend/tests/test_reports_period.py
-backend/tests/test_reports_request.py
-backend/tests/test_reports_content.py
-backend/tests/test_reports_csv_renderer.py
-backend/tests/test_reports_pdf_renderer.py
-backend/tests/test_reports_assembler.py
-backend/tests/test_reports_storage.py
-backend/tests/test_reports_service.py
-backend/tests/test_reports_api.py
-backend/scripts/verify_m17.py
-backend/scripts/benchmark_m17.py
-frontend/src/components/reports/reportDisplay.ts
-frontend/src/components/reports/ReportStatusBadge.tsx
-frontend/src/components/reports/GenerationForm.tsx
-frontend/src/components/reports/GenerationOutcome.tsx
-frontend/src/components/reports/ReportRow.tsx
-frontend/src/components/reports/ReportDetailPanel.tsx
-docs/21_M17_Reports_Design.md
-```
+1. Existing test suites audited
+2. Coverage matrix summary
+3. Files created
+4. Files modified
+5. New tests added and the gaps they address
+6. Backend test result
+7. Frontend test result
+8. Live integration result
+9. Type-checking and build results
+10. End-to-end verification result
+11. Performance regression measurements
+12. Security test results
+13. Known gaps and deferred defects
+14. Any failures or skipped tests
+15. Whether M18 is ready to mark implemented and verified
 
-**Files modified**
+Do not claim complete coverage of the application unless the evidence supports it.
 
-```text
-backend/app/api/v1/reports.py        the four routes (was list/detail only)
-backend/app/api/v1/deps.py           the reporting service and storage providers
-backend/app/repositories/report.py   period, status and size columns
-backend/app/models/report.py         the five additive columns
-backend/app/database/upgrade.py      the additive migration
-backend/app/database/init_db.py      the same columns for a fresh database
-backend/app/config/settings.py       report_storage_dir, report_max_table_rows
-backend/requirements.txt             reportlab
-backend/tests/test_api_contract.py   the report contract tests
-frontend/src/types/system.ts         the report view's added fields
-frontend/src/types/index.ts          the re-exports
-frontend/src/services/reports.ts     generate and download
-frontend/src/services/endpoints.ts   the report routes
-frontend/src/services/client.ts      the download helper
-frontend/src/services/index.ts       the re-exports
-frontend/src/services/client.test.ts the report client tests
-frontend/src/hooks/useReports.ts     generation and refresh
-frontend/src/pages/Reports.tsx       the page over the new components
-frontend/src/pages/Reports.test.tsx  the page tests
-frontend/tests/live/rest.test.ts     six live report tests
-docs/TODO.md                         the M17 completion record
-docs/Current_Task.md                 this document
-```
+Do not claim production readiness based solely on successful tests.
 
-**Analytics architecture implemented** — one reporting package that owns the
-period, the request, the content model, the two renderers, the storage and the
-lifecycle, and reads nothing but the M16 analytics service.
-
-**The four routes and their outputs**
-
-| Route | Output |
-| --- | --- |
-| `GET /api/v1/reports` | `ReportListData` in the M13 envelope: `count`, `total`, `limit`, `offset`, `has_more`, `reports` |
-| `GET /api/v1/reports/{id}` | one `ReportView`, or `404 REPORT_NOT_FOUND` |
-| `POST /api/v1/reports/generate` | `201` with `GeneratedReportData` — the stored `ReportView` plus the summary the artifact opens with |
-| `GET /api/v1/reports/{id}/download` | the bytes, as an attachment with `text/csv; charset=utf-8` or `application/pdf`, or `404 REPORT_NOT_FOUND` |
-
-**Important design decisions** — one period model shared by every generation; one
-content model behind two renderers; the period ceiling imported from M16 rather
-than re-declared; refusal rather than adjustment; the metadata row written before
-the artifact; the file name derived from the row's id; a report's every figure
-taken from `AnalyticsService` so it cannot disagree with the dashboard.
-
-**Tests added** — 257 reporting tests across nine files, plus a shared fake set.
-
-**Total test result** — backend `2322 passed`; reporting subset `257 passed`;
-frontend unit suite `448 passed` (15 files); frontend live-backend suite
-`67 passed` (3 files) against the real application.
-
-**Type-check result** — pyright `0 errors, 0 warnings, 0 informations`;
-`tsc --noEmit` clean; production build clean (2 554 modules, `907.84 kB` JS /
-`241.03 kB` gzip, built in 3.62 s).
-
-**Performance measurements** — `benchmark_m17.py`, local, in-process client,
-10 000 packets / 100 conversations / 20 alerts over 168 h, row limit 100: CSV
-generation `104.43 ms p50`, PDF generation `657.25 ms p50`; assembly `74.58 ms`,
-CSV encode `0.69 ms`, artifact write `2.98 ms`. Not a production-capacity claim.
-
-**Known limitations** — generation is synchronous and the caller waits for the
-file; nothing prunes the artifact directory; a report is a snapshot of the store at
-generation time; and every M16 limitation behind its figures is inherited
-unchanged. §17 of the design document states all of them.
-
-**M17 is ready to close.**
-
-Nothing in this document claims anything that was not implemented and verified.
+**The milestone is complete only when the actual project has passed the required checks and the results have been documented.**

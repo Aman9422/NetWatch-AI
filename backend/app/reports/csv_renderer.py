@@ -47,6 +47,22 @@ hand-rolled quoting is where CSV writers go wrong.
 opens with the summary block and then a single ``### notice`` block carrying the
 sentence from the content model. A reader gets a file that says why it has no
 records, rather than a file with headers and nothing under them.
+
+**A cell cannot be read as a formula.** A CSV file is opened in a spreadsheet, and
+a spreadsheet evaluates a cell whose first character is ``=``, ``+``, ``-`` or
+``@`` (M18.11). One value in a report is caller-supplied -- the report's title --
+and a device hostname or a rule name could begin with one of those characters, so
+the file is a *formula-injection* surface: a value nobody reviewed could execute
+on the machine of the operator who opens the report.
+
+Every cell therefore passes through :func:`guard_cell` at a single choke point,
+:class:`_GuardedWriter`, which prefixes a formula-triggering value with a single
+quote -- the conventional spreadsheet text marker. A cell that is genuinely a
+number (``-12``, ``+3``) is left alone: a spreadsheet reads those as numbers
+rather than formulas, and guarding them would turn a figure into a string that
+would not sum. This is the only place in the reporting layer that alters a value
+on its way out, and it is documented here rather than applied silently, because a
+reviewer has to be able to see why a report can differ from what the store held.
 """
 
 from __future__ import annotations
@@ -89,6 +105,75 @@ EMPTY_NOTICE = "No data was recorded in this period."
 #: The line terminator. CRLF is what RFC 4180 specifies and what Excel expects;
 #: a Unix-only consumer reads it unchanged.
 LINE_TERMINATOR = "\r\n"
+
+#: The characters a spreadsheet may read as the start of a formula or a command
+#: (M18.11). ``=``, ``+``, ``-`` and ``@`` begin a formula; a leading tab or
+#: carriage return is trimmed by some importers, which then exposes whatever
+#: follows it. The set is named once here rather than inlined at the guard, so
+#: the rule has exactly one definition and exactly one test.
+FORMULA_TRIGGER_CHARS: tuple[str, ...] = ("=", "+", "-", "@", "\t", "\r")
+
+#: What is written in front of a value that would otherwise be read as a formula.
+#: A single quote is a spreadsheet's own text marker, so the cell is displayed as
+#: the text it was meant to be instead of being evaluated.
+FORMULA_GUARD = "'"
+
+
+def _looks_numeric(value: str) -> bool:
+    """Return True when ``value`` is a number a spreadsheet would read as one.
+
+    Used to keep the guard away from ordinary figures: ``-12`` and ``+3`` are
+    numbers rather than formulas, and prefixing them would turn a value a reader
+    might sum into a string instead.
+    """
+    try:
+        float(value)
+    except ValueError:
+        return False
+    return True
+
+
+def guard_cell(value: object) -> str:
+    """Return ``value`` as a cell a spreadsheet cannot evaluate (M18.11).
+
+    Args:
+        value: The already-rendered cell text.
+
+    Returns:
+        The text unchanged, unless its first character could begin a formula -- in
+        which case it is prefixed with :data:`FORMULA_GUARD`. A value that is a
+        plain number is returned unchanged whatever its sign.
+
+    The guard is applied on the way *out* of the renderer and nowhere else, so a
+    reviewer can read one function to know whether a report can differ from the
+    content it was built from. It never raises: a value it cannot inspect is
+    written as it stands rather than dropped.
+    """
+    text = str(value)
+    if not text:
+        return text
+    if text[0] not in FORMULA_TRIGGER_CHARS:
+        return text
+    if _looks_numeric(text):
+        return text
+    return FORMULA_GUARD + text
+
+
+class _GuardedWriter:
+    """A ``csv`` writer that passes every cell through :func:`guard_cell`.
+
+    One choke point rather than a call at each write site: a block added later
+    cannot forget the guard, because nothing in this module writes to the ``csv``
+    writer directly. It satisfies :class:`_RowWriter`, so every block helper above
+    is unchanged.
+    """
+
+    def __init__(self, writer: _RowWriter) -> None:
+        self._writer = writer
+
+    def writerow(self, row: Iterable[object], /) -> None:
+        """Write one record with every cell guarded."""
+        self._writer.writerow([guard_cell(cell) for cell in row])
 
 
 def _write_marker(writer: _RowWriter, name: str) -> None:
@@ -161,12 +246,16 @@ def render_csv(content: ReportContent) -> bytes:
         on every platform.
     """
     buffer = io.StringIO(newline="")
-    writer = csv.writer(
-        buffer,
-        delimiter=",",
-        quotechar='"',
-        quoting=csv.QUOTE_MINIMAL,
-        lineterminator=LINE_TERMINATOR,
+    # Wrapped, not used directly: every cell is guarded on its way out, so a
+    # block added below cannot write an unguarded value (M18.11).
+    writer = _GuardedWriter(
+        csv.writer(
+            buffer,
+            delimiter=",",
+            quotechar='"',
+            quoting=csv.QUOTE_MINIMAL,
+            lineterminator=LINE_TERMINATOR,
+        )
     )
 
     _write_block(
@@ -199,8 +288,11 @@ def render_csv(content: ReportContent) -> bytes:
 __all__ = [
     "BLOCK_MARKER",
     "EMPTY_NOTICE",
+    "FORMULA_GUARD",
+    "FORMULA_TRIGGER_CHARS",
     "LINE_TERMINATOR",
     "NOTICE_BLOCK",
     "REPORT_BLOCK",
+    "guard_cell",
     "render_csv",
 ]

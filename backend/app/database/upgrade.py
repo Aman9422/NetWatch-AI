@@ -30,6 +30,14 @@ This module deliberately does **not** rewrite the whole table definition. It
 copies the existing DDL and replaces only the status CHECK, so an upgrade can
 never alter a column, a foreign key or an index that M11 has no business
 touching — the only thing that changes is the constraint that has to.
+
+A later upgrade is additive and needs no rebuild at all: M11.7 declares a trail
+from an alert back to the M10 finding that raised it, and the M2 ``alerts`` table
+has no column for it. Because a finding id is unique per observation it cannot
+travel in ``correlation_key`` the way the rule id does — the key has to stay
+stable for deduplication to fold a repeat observation into the same alert — so
+the trail needs a column of its own. Adding one is exactly the shape of the M17
+report upgrade below: additive, nullable, and idempotent.
 """
 
 from __future__ import annotations
@@ -307,5 +315,117 @@ def upgrade_report_metadata_columns(engine: Engine) -> bool:
         connection.commit()
     logger.info(
         "%s upgraded with %d M17 column(s)", _REPORTS_TABLE, len(missing)
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
+# M18: the alerts.finding_id column
+# ---------------------------------------------------------------------------
+
+#: The columns M18 adds to ``alerts``, as ``name -> column DDL``. Kept as an
+#: ordered tuple for the same reason ``_REPORT_COLUMNS`` is: the order a run adds
+#: them in is then fixed, so two runs diff cleanly.
+#:
+#: The clause is *additive* and the column is nullable, which is what makes this
+#: an upgrade rather than a rebuild. A pre-M18 row simply reads back with no
+#: finding id, which is the honest answer for an alert whose finding id was never
+#: recorded — and it is strictly better than the alternative of guessing one.
+_ALERT_COLUMNS: tuple[tuple[str, str], ...] = (("finding_id", "VARCHAR(64)"),)
+
+#: Name of the index the added column carries, matching the model's declaration
+#: so a fresh database and an upgraded one end up with the same schema. The
+#: statement is only run when the index is absent, so a current database still
+#: does no work at startup.
+_ALERT_FINDING_INDEX_NAME = "idx_alerts_finding_id"
+_ALERT_FINDING_INDEX = (
+    f"CREATE INDEX {_ALERT_FINDING_INDEX_NAME} ON {_ALERTS_TABLE} (finding_id)"
+)
+
+
+def _existing_alert_columns(connection: Connection) -> set[str] | None:
+    """Return the columns ``alerts`` currently has, or ``None`` when it is absent.
+
+    ``PRAGMA table_info`` is SQLite's own description of the live table, which is
+    the only authority on what an existing database actually holds — the reason
+    this module exists at all is that the ORM's metadata and a stored database
+    can differ.
+    """
+    row = connection.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = :name"
+        ),
+        {"name": _ALERTS_TABLE},
+    ).fetchone()
+    if row is None:
+        return None
+    rows = connection.execute(
+        text(f"PRAGMA table_info({_ALERTS_TABLE})")
+    ).fetchall()
+    # ``table_info`` yields (cid, name, type, notnull, dflt_value, pk).
+    return {str(entry[1]) for entry in rows}
+
+
+def _existing_alert_indexes(connection: Connection) -> set[str]:
+    """Return the index names ``alerts`` currently carries (M18)."""
+    rows = connection.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'index' AND tbl_name = :name"
+        ),
+        {"name": _ALERTS_TABLE},
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def upgrade_alert_finding_column(engine: Engine) -> bool:
+    """Add the ``alerts.finding_id`` column to an existing table (M11.7).
+
+    A fresh database gets the column from the model through ``create_all``, so
+    this only has work to do for a database created before the column existed.
+    Without it, such a database would keep rejecting nothing — SQLAlchemy would
+    simply omit the column from its statements — and every alert read back from
+    it would report no finding, silently breaking the trail M11.7 declares.
+
+    Args:
+        engine: The engine whose database should be upgraded.
+
+    Returns:
+        ``True`` when the column or its index was created, ``False`` when the
+        table already carried both (or does not exist). ``False`` is the common
+        answer, so a current database does no work at startup.
+
+    Raises:
+        Exception: Whatever SQLite raised. ``ALTER TABLE ... ADD COLUMN`` is
+            atomic per statement and the column is nullable, so a failure leaves
+            the table with the column absent or added — never with an existing
+            row unreadable, and the next startup finishes the job.
+    """
+    with engine.connect() as connection:
+        existing = _existing_alert_columns(connection)
+        if existing is None:
+            logger.debug("No %s table to upgrade", _ALERTS_TABLE)
+            return False
+        missing = [
+            (name, ddl) for name, ddl in _ALERT_COLUMNS if name not in existing
+        ]
+        has_index = _ALERT_FINDING_INDEX_NAME in _existing_alert_indexes(connection)
+        if not missing and has_index:
+            logger.debug("%s already carries the M18 column", _ALERTS_TABLE)
+            return False
+        for name, ddl in missing:
+            logger.info("Adding %s.%s for M18", _ALERTS_TABLE, name)
+            connection.execute(
+                text(f"ALTER TABLE {_ALERTS_TABLE} ADD COLUMN {name} {ddl}")
+            )
+        if not has_index:
+            # ``ALTER TABLE ADD COLUMN`` cannot carry an index, so it is created
+            # separately — otherwise an upgraded database would hold a column the
+            # application queries by and no index to serve it.
+            connection.execute(text(_ALERT_FINDING_INDEX))
+        connection.commit()
+    logger.info(
+        "%s upgraded with %d M18 column(s)", _ALERTS_TABLE, len(missing)
     )
     return True

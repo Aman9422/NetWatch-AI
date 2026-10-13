@@ -20,6 +20,11 @@ every difference between the two is resolved here and nowhere else:
   id has no column of its own; it is carried in ``correlation_key``, and this
   mapping takes the resolved row id (or ``None``) as an argument rather than
   trying to derive it (M11.18).
+* **``finding_id`` is written to its own column.** It cannot travel in
+  ``correlation_key`` like the rule id does: a finding id is unique per
+  observation, and the key has to stay stable across observations for
+  deduplication to work (M11.9). The column is additive and nullable, so a
+  database created before it is upgraded in place (M18.3).
 * **timestamps are supplied, not defaulted.** An alert is dated to when the
   behaviour was *observed*, not to when the row was written, so ``created_at``
   and ``updated_at`` are passed explicitly and override the columns' server
@@ -80,6 +85,7 @@ def to_alert_row_values(
         "confidence": confidence_to_percent(alert.confidence),
         "status": alert.status.value,
         "correlation_key": alert.correlation_key,
+        "finding_id": alert.finding_id,
         "resolved_at": alert.resolved_at,
         "created_at": created_at,
         "updated_at": alert.updated_at or created_at,

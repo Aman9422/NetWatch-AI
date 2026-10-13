@@ -26,6 +26,8 @@ from app.reports.pdf_renderer import (
     FRAME_WIDTH,
     MAX_COLUMN_WEIGHT,
     MIN_COLUMN_WEIGHT,
+    PAGE_MARGIN,
+    PAGE_SIZE,
     _clip,
     _column_widths,
     render_pdf,
@@ -306,3 +308,94 @@ def test_a_refusal_never_names_an_internal() -> None:
     message = str(caught.value)
     for internal in ("Traceback", "File \"", "app.", "site-packages", "reportlab"):
         assert internal not in message
+# ---------------------------------------------------------------------------
+# the two layout failures M18.10 exposed
+# ---------------------------------------------------------------------------
+
+
+def test_the_frame_width_is_the_width_the_frame_really_lays_out_in() -> None:
+    """``FRAME_WIDTH`` must be the frame's usable width, not the margin box.
+
+    Every table is normalised to :data:`FRAME_WIDTH`, so if that constant were the
+    margin box rather than the area *inside* it, every table would be built wider
+    than the space available: its right column drawn past the margin, and
+    ReportLab's own measurement of a cell disagreeing with the width the table was
+    built for.
+
+    ``Frame`` is constructed here exactly as ``SimpleDocTemplate`` constructs its
+    own -- from the margins -- and its usable width is compared with the constant.
+    The two must be equal, which is a stronger claim than "the constant is smaller
+    than the page": too narrow leaves a visible gutter, too wide is the defect
+    (M17.8).
+    """
+    from reportlab.platypus import Frame
+
+    frame = Frame(
+        PAGE_MARGIN,
+        PAGE_MARGIN,
+        PAGE_SIZE[0] - 2 * PAGE_MARGIN,
+        PAGE_SIZE[1] - 2 * PAGE_MARGIN,
+    )
+
+    # ``_aW`` is ReportLab's usable width: the frame's outer width minus the
+    # padding it applies inside itself. It is not in the type stubs, so it is read
+    # by name -- the value, not the attribute access, is what is being asserted.
+    usable_width = getattr(frame, "_aW")
+
+    assert FRAME_WIDTH == pytest.approx(usable_width)
+
+
+def test_a_row_taller_than_a_page_still_renders() -> None:
+    """One crowded row must not cost a reader the whole document.
+
+    M8 identifies a device by its MAC, so a machine observed at hundreds of
+    addresses is a single row whose address cell is taller than a page. That is
+    the identity limitation M8 documents rather than an artificial input.
+
+    ReportLab refuses to lay out a row taller than the frame, and that refusal
+    fails the *entire* document -- every other section included -- unless the table
+    is told it may split a row across pages. The addresses below are enough to
+    exceed a page in the narrow column a nine-column table gives them, which is the
+    shape that was failing (M17.8).
+    """
+    addresses = ", ".join(
+        f"10.{index // 250}.{(index // 250) % 250}.{index % 250}"
+        for index in range(400)
+    )
+    content = make_content(
+        sections=(
+            make_section(
+                tables=(
+                    make_table(
+                        columns=(
+                            "Device",
+                            "MAC address",
+                            "IP addresses",
+                            "Hostname",
+                            "Status",
+                            "First seen",
+                            "Last seen",
+                            "Packets",
+                            "Bytes",
+                        ),
+                        rows=(
+                            (
+                                "dev-1",
+                                "aa:bb:cc:00:11:22",
+                                addresses,
+                                "not reported",
+                                "active",
+                                "2026-01-01 00:00:00",
+                                "2026-01-01 00:00:00",
+                                "1",
+                                "2",
+                            ),
+                        ),
+                    ),
+                )
+            ),
+        )
+    )
+
+    assert len(addresses) > 4_000
+    assert is_valid_pdf(render_pdf(content))

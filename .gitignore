@@ -230,3 +230,14 @@ __marimo__/
 # the backend is started from there.
 /reports/
 backend/reports/
+# Local runtime database, repository-root form (M18)
+# The same file the backend writes when the application is started from the
+# repository root rather than from `backend/`, which is the default
+# `sqlite:///./netwatch.db`. Committed once before the rule above existed, so it
+# is untracked rather than merely ignored: an ignore rule does not apply to a file
+# Git is already following.
+/netwatch.db
+/*.db
+/*.sqlite
+/*.sqlite3
+netwatch.db-journal
