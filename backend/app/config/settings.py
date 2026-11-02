@@ -287,6 +287,32 @@ class Settings(BaseSettings):
     # become a dump of the packet table (M17.13).
     report_max_table_rows: int = 100
 
+    # Report artifact retention (M19.5).
+    # Days a generated report's metadata row *and* its file are kept before
+    # retention may remove them. **0 disables it, and 0 is the default.** A report
+    # is something an operator asked for, so M19 does not delete one nobody asked
+    # it to delete: automatic report cleanup happens only when this is set to a
+    # positive number. Rows and files are removed together, never one without the
+    # other, so the metadata can never claim a file that is gone (M19.9).
+    report_retention_days: int = 0
+    # Most reports one cleanup pass may remove. A backlog is drained over several
+    # passes rather than in one unbounded pass, so a cleanup is always bounded and
+    # never holds a write transaction open for an unbounded time (M19.5).
+    report_retention_max_per_run: int = 500
+
+    # Retention sweep (M19.5).
+    # Seconds between automatic retention passes. **This is what makes a
+    # configured retention window actually take effect**: before M19 nothing ever
+    # called either cleanup service, so ``packet_retention_days`` was readable but
+    # unenforced, and a retention policy that never runs protects nothing. Both
+    # the packet window and the report window are applied by the same sweep.
+    # ``0`` disables the sweep, which leaves both policies unenforced and is the
+    # honest way to say "manage this by hand". The default is hourly: a window
+    # measured in days does not need to be checked more often, and one pass is a
+    # single indexed delete. The first pass runs one interval *after* startup, so
+    # starting the application never deletes anything by surprise.
+    retention_sweep_interval_seconds: float = 3600.0
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -1,817 +1,762 @@
-# NetWatch AI — M18 Testing
+# NetWatch AI — M19 Stabilization
 
-**Milestone:** M18 — Testing  
-**Scope:** audit, strengthen, and verify the complete NetWatch AI test suite across M0–M17.  
+**Milestone:** M19 — Stabilization  
+**Scope:** stabilize the existing M0–M18 application, investigate outstanding defects, and prepare a reliable local installation for M20.  
 **Status:** not started
 
 ---
 
 # 1. Purpose
 
-NetWatch AI has implemented the core monitoring pipeline, detection and alerting, correlation and risk scoring, REST APIs, WebSockets, frontend integration, analytics, and report generation.
+NetWatch AI has implemented its core packet-processing pipeline, detection and alerting, correlation and risk scoring, REST APIs, WebSockets, frontend, analytics, report generation, and project-wide testing.
 
-Previous milestones already added extensive unit tests, integration tests, live API tests, performance benchmarks, and verification scripts.
+M18 audited and verified these capabilities. It also identified outstanding operational concerns, including:
 
-M18 must assess whether the project is adequately tested as a complete application.
+- frontend bundle size above Vite's advisory threshold
+- routed-network device identity limitations inherited from M8
+- no authentication, authorization, or TLS
+- no dedicated concurrency coverage
+- report artifacts that are not automatically pruned
+- performance measurements from only one development environment
 
-The objective is to:
+M19 must examine the running application as a whole, resolve critical and high-priority defects, verify resource management, improve operational reliability, and document any limitations that remain.
 
-- audit existing test coverage
-- identify missing or weak tests
-- add meaningful tests for uncovered behavior
-- strengthen integration and end-to-end verification
-- test failure handling and recovery
-- assess performance regressions
-- validate security boundaries
-- establish repeatable project-wide verification commands
+M19 is a **stabilization milestone, not a feature-development milestone**.
 
-Do not rewrite working modules merely to increase test coverage.
-
-Do not duplicate existing tests without adding meaningful new coverage.
+Do not rewrite working modules, introduce new detection logic, or add advanced AI/ML functionality merely to make the project appear more complete.
 
 ---
 
-# 2. Current Project Status
+# 2. M19 Goals
 
-M0–M17 are implemented.
+M19 must deliver:
 
-The existing project includes:
+1. A fresh baseline from the M18 quality gates
+2. A prioritized defect and risk register
+3. Reliable startup and shutdown behavior
+4. Reviewed application logs and error handling
+5. Memory and database-growth assessments
+6. WebSocket and packet-processing stability checks
+7. Safe report-artifact and temporary-file handling
+8. Deployment-instruction verification
+9. A clean-installation verification
+10. Repository and Git hygiene checks
+11. Repeatable stabilization verification
+12. A documented list of release blockers for M20
 
-- Python backend using FastAPI
-- SQLite persistence
-- Scapy packet capture
-- packet processing and traffic statistics
-- device discovery and connection tracking
-- detection rules and alerts
-- event correlation and risk scoring
-- REST API and WebSocket channels
-- React/TypeScript frontend
-- analytics
-- CSV and PDF reporting
-
-The M17 implementation record reports:
-
-- 2,322 passing backend tests
-- 257 reporting-specific tests
-- 448 frontend unit tests
-- 67 live frontend/backend integration tests
-- Pyright with zero errors
-- successful TypeScript type checking and production build
-
-Treat these as existing recorded results, not as proof that the current checkout still passes.
-
-**First rerun the actual test suites and establish a fresh baseline.** Counts and results must be taken from commands executed during M18.
+Every change must address an observed defect, a verified operational risk, or a stated stabilization requirement.
 
 ---
 
-# 3. M18 Goals
+# 3. Architecture and Scope Boundaries
 
-M18 must produce:
+M19 stabilizes the existing architecture:
 
-1. An inventory of existing tests
-2. A milestone-by-milestone coverage audit
-3. Additional tests for identified gaps
-4. Reliable database and API test isolation
-5. Cross-component integration tests
-6. End-to-end verification
-7. Performance regression checks
-8. Defensive security tests
-9. Reproducible quality-check commands
-10. A completed testing design document
+```text
+Network
+   ↓
+Packet Capture
+   ↓
+Packet Processing
+   ↓
+Statistics + Persistence
+   ↓
+Devices + Connections
+   ↓
+Detection + Alerts
+   ↓
+Correlation + Risk
+   ↓
+REST API + WebSockets
+   ↓
+Analytics + Reporting
+   ↓
+React/TypeScript Frontend
+```
 
-The application must continue to work without paid services or cloud dependencies.
+Preserve the existing ownership boundaries.
 
-Testing must remain suitable for a local Windows development environment and the current Python, SQLite, FastAPI, React, and TypeScript stack.
+M19 must not create a second packet processor, statistics engine, device registry, detection engine, risk-scoring system, analytics engine, or reporting system.
+
+Use the existing M18 test and verification infrastructure wherever possible.
 
 ---
 
-# 4. M18.1 — Audit the Existing Test Suite
+# 4. M19.1 — Establish the Stabilization Baseline
 
-Before adding tests, inspect the repository.
+Start by auditing the actual checkout.
+
+Inspect:
+
+- `docs/TODO.md`
+- `docs/Current_Task.md`
+- milestone design documents from M0–M18
+- `backend/tests/`
+- `backend/scripts/`
+- frontend test and build configurations
+- backend settings and environment files
+- SQLite initialization, migrations, and retention
+- report storage configuration
+- `.gitignore`
+- README and installation instructions
+
+Run the existing quality gates:
+
+```powershell
+python backend/scripts/run_quality_gates.py
+```
+
+Inspect the script's supported options and run its full verification mode as documented.
+
+Also run the relevant frontend checks:
+
+```powershell
+cd frontend
+npm test
+npm run test:live
+npm run typecheck
+npm run build
+```
+
+Run live tests with the backend running and correctly configured.
+
+Record actual results, including:
+
+- pass/fail counts
+- skipped tests
+- warnings
+- backend type-check results
+- frontend type-check results
+- frontend build output
+- end-to-end verification results
+
+Do not assume M18's recorded numbers still represent the current checkout.
+
+Do not modify code merely to make a warning disappear. Establish which issues are genuine defects and which are documented limitations.
+
+---
+
+# 5. M19.2 — Defect and Risk Register
+
+Create a prioritized list of stabilization findings.
+
+Use this classification:
+
+| Priority | Meaning |
+|---|---|
+| Critical | Data loss, severe security exposure, or failure that makes the application unusable |
+| High | Major functionality is broken, persistent corruption is possible, or recovery is unreliable |
+| Medium | A significant limitation or defect with a usable workaround |
+| Low | Minor usability, documentation, or maintenance issue |
+
+For every finding, record:
+
+- description
+- affected milestone/component
+- reproducible steps
+- evidence or test result
+- impact
+- priority
+- proposed correction
+- regression test
+- final status
+
+Fix reproducible critical and high-priority defects within M19.
+
+Fix medium-priority issues where they can be resolved safely without an architectural redesign. Otherwise, document the limitation and its impact on the M20 release.
+
+Do not invent defects simply to create more changes.
+
+---
+
+# 6. M19.3 — Logging and Error Handling
+
+Review logs across the backend and frontend integration.
+
+Verify that:
+
+- failures contain useful diagnostic context
+- log levels distinguish routine operations from warnings and errors
+- exceptions are logged without silently losing failures
+- user-facing errors remain safe and understandable
+- API responses do not expose stack traces, SQL statements, secrets, or internal filesystem paths
+- sensitive packet payloads and credentials are not unnecessarily logged
+- repeated failures do not produce uncontrolled log growth
+- application startup and shutdown messages are meaningful
+- failed capture, database, report, and WebSocket operations are observable
+
+Reuse the existing configuration and logging conventions.
+
+Avoid a broad logging rewrite.
+
+Add tests for any corrected behavior, especially where a failure could previously appear as a successful operation or a misleading zero.
+
+---
+
+# 7. M19.4 — Memory and Resource Stability
+
+Review the bounded-state guarantees implemented by M4–M14 and audited by M18.
+
+Check:
+
+- packet-processing buffers
+- persistence queues
+- statistics windows
+- device registry limits
+- connection tracking limits
+- detector history
+- alert history
+- incident registry
+- WebSocket client queues
+- frontend packet and alert lists
+- WebSocket event-deduplication state
+- open database sessions
+- file handles and sockets
+- background workers and shutdown hooks
+
+Use the existing bounded, repeatable traffic input from `benchmark_m18.py` where appropriate.
+
+Measure multiple repetitions with the same bounded dataset.
+
+Compare memory growth across repetitions instead of reporting only an average that may hide initialization costs.
+
+Use `tracemalloc` for Python allocations and a suitable process-level measurement when available. State clearly what each measurement includes and excludes.
+
+Verify that:
+
+- bounded collections remain within their configured limits
+- clients disconnecting do not leave permanent subscriptions
+- shutdown releases worker threads and sockets
+- repeated capture start/stop cycles do not create unbounded state
+- failed requests do not leak database sessions
+- memory growth does not continue proportionally with every repeated bounded workload without explanation
+
+Do not claim that a flat `tracemalloc` result proves all native or operating-system memory is leak-free.
+
+Do not establish arbitrary timing or memory thresholds that fail on unrelated machines.
+
+---
+
+# 8. M19.5 — Database Growth and Persistence Stability
+
+Review the growth behavior of the SQLite database.
+
+Audit:
+
+- packet persistence rate
+- packet retention settings
+- cleanup scheduling or invocation
+- connection-history growth
+- alert growth
+- report metadata growth
+- SQLite indexes
+- transaction boundaries
+- recovery after database errors
+- behavior when the database file is locked
+- behavior when storage is unavailable or full
+
+Verify that packet retention uses the configured retention policy and that cleanup does not delete data outside the intended scope.
+
+Measure database file size over a repeatable workload.
+
+Where practical, inspect table row counts and index sizes before and after cleanup.
+
+Review report-artifact growth. M18 documents that generated report files are not automatically pruned.
+
+If this creates a meaningful operational risk, design and implement the smallest safe, configurable retention policy that fits the existing architecture. Do not silently delete user reports or change retention behavior without documenting it and testing it.
+
+Verify that cleanup operations:
+
+- are bounded
+- handle failures honestly
+- do not interrupt unrelated capture and analysis work
+- leave metadata and files in a consistent state
+- preserve existing database records outside the cleanup scope
+
+Do not run destructive cleanup tests against the developer's real database.
+
+---
+
+# 9. M19.6 — Packet-Processing Stability
+
+Use the existing M18 benchmark and end-to-end verification harnesses.
+
+Verify the real pipeline:
+
+```text
+Normalized Packet
+       ↓
+Statistics
+       ↓
+Persistence
+       ↓
+Device Discovery
+       ↓
+Connection Tracking
+       ↓
+Detection
+       ↓
+Alerting
+       ↓
+Correlation
+```
 
 Review:
 
-- `backend/tests/`
-- `backend/scripts/`
-- `frontend/src/**/*.test.ts`
-- `frontend/src/**/*.test.tsx`
-- `frontend/tests/live/`
-- all existing `pytest` configuration
-- all frontend test configurations
-- Pyright and TypeScript configurations
-- existing benchmark and verification scripts
-- `pyproject.toml` or other dependency/configuration files
-- CI configuration, if present
-- `docs/TODO.md`
-- milestone design documents from M0–M17
+- processing exceptions
+- malformed packet handling
+- duplicate packet counting
+- persistence queue saturation
+- worker shutdown
+- concurrent capture lifecycle operations
+- shared-state locking
+- detector failures
+- alert persistence failures
+- correlation failures
 
-Identify:
+Add targeted concurrency or lifecycle tests where M18 identified missing coverage, particularly for shared state and threaded paths.
 
-- unit tests
-- integration tests
-- API tests
-- WebSocket tests
-- frontend component tests
-- live backend/frontend tests
-- end-to-end verification scripts
-- performance benchmarks
-- security tests
+Do not add a complete concurrency-testing framework or a new application feature.
 
-Create a coverage matrix showing:
+Run repeatable benchmarks and compare them with M18's local baseline.
 
-| Area | Existing Tests | Identified Gaps | M18 Action |
-|---|---|---|---|
-| Packet processing | Audit | Missing cases | Add only where needed |
-| Database | Audit | Missing cases | Add only where needed |
-| Device discovery | Audit | Missing cases | Add only where needed |
-| Connection tracking | Audit | Missing cases | Add only where needed |
-| Detection and alerts | Audit | Missing cases | Add only where needed |
-| Correlation and risk | Audit | Missing cases | Add only where needed |
-| REST API | Audit | Missing cases | Add only where needed |
-| WebSockets | Audit | Missing cases | Add only where needed |
-| Frontend | Audit | Missing cases | Add only where needed |
-| Reporting | Audit | Missing cases | Add only where needed |
-| Performance | Audit | Missing cases | Add only where needed |
-| Security | Audit | Missing cases | Add only where needed |
+Investigate a significant regression before deciding whether to fix it. Account for machine load, Python version, dataset differences, and measurement noise.
 
-Do not claim formal coverage percentages without running a coverage tool.
-
-Where coverage data is useful, use an appropriate existing or freely available coverage tool and document its limitations.
-
-Avoid installing new dependencies when the existing toolchain can perform the task.
+Do not present a benchmark from one development machine as a production-capacity claim.
 
 ---
 
-# 5. M18.2 — Packet Capture and Processing Tests
+# 10. M19.7 — WebSocket Stability
 
-Audit M3–M5.
+Verify all four existing channels:
 
-Verify that tests adequately cover:
+```text
+/ws/dashboard
+/ws/packets
+/ws/alerts
+/ws/system
+```
 
-- network interface enumeration
-- interface selection
-- capture start and stop
-- invalid interface handling
-- capture lifecycle transitions
-- repeated start/stop requests
-- graceful shutdown
-- capture failures
-- malformed packets
-- unsupported protocols
-- IPv4 and IPv6
-- TCP, UDP, ICMP and DNS identification
-- missing Ethernet or network-layer information
-- packet normalization
-- timestamp handling
-- processor failure isolation
+Review:
 
-Test that malformed or unsupported packets do not crash the capture pipeline.
-
-Verify that a capture error is reported rather than silently appearing as zero traffic.
-
-Use packet fixtures and controlled local test data where appropriate.
-
-Do not require elevated privileges for ordinary unit tests.
-
-Live packet-capture tests must be optional, explicitly invoked, and limited to an authorized local interface.
-
----
-
-# 6. M18.3 — Statistics, Persistence and Database Tests
-
-Audit M6–M7 and the shared database infrastructure.
-
-Verify:
-
-- packet and byte counters
-- protocol statistics
-- time-window statistics
-- top talkers
-- bounded statistics state
-- packet persistence
-- batch writing
-- queue capacity behavior
-- retention cleanup
-- query filtering
-- pagination
-- session cleanup
-- database initialization
-- database upgrades
-- interrupted or failed writes
-- appropriate rollback behavior
-
-Confirm that the database migrations work for both:
-
-1. a fresh database
-2. an existing database that requires an upgrade
-
-Test that M17's additive report schema upgrades existing databases correctly without destroying existing records.
-
-Use isolated temporary databases for tests.
-
-Tests must never accidentally delete or modify the developer's real `backend/netwatch.db`.
-
-Keep local database files and backups out of Git.
-
----
-
-# 7. M18.4 — Device and Connection Tests
-
-Audit M8–M9.
-
-### Device discovery
-
-Test:
-
-- first observation of a device
-- updates to existing devices
-- MAC address normalization
-- multiple IPv4/IPv6 addresses
-- missing MAC or IP
-- first-seen and last-seen timestamps
-- traffic attribution
-- device status transitions
-- stale device cleanup
-- mapping conflicts
-- concurrent updates
-- registry bounds
-
-Preserve and document the known routed-traffic/next-hop identity limitation. Do not mask it with fabricated device identities.
-
-### Connection tracking
-
-Test:
-
-- canonical bidirectional flow identity
-- reversed endpoints
-- TCP connection states
-- UDP and ICMP tracking
-- connection expiration
-- active/historical transitions
-- byte and packet counters
-- device association
-- persistence and retrieval
-- capacity limits
-- thread safety
-- invalid or incomplete packet information
-
-Verify that M8 and M9 state remains consistent with the normalized packets and existing persistence rules.
-
----
-
-# 8. M18.5 — Detection, Alerting and Correlation Tests
-
-Audit M10–M12.
-
-### Detection engine
-
-Verify:
-
-- every implemented detection rule
-- threshold boundaries
-- time windows
-- repeated observations
-- false-positive-prone conditions
-- detector exceptions
-- bounded detector state
-- evidence construction
-- confidence values
-- failure isolation
-
-Test legitimate and suspicious patterns separately so that ordinary activity is not automatically treated as malicious.
-
-### Alert engine
-
-Verify:
-
-- finding-to-alert mapping
-- severity and confidence separation
-- alert evidence
-- deduplication windows
-- acknowledgement
-- resolution
-- dismissal
-- false-positive lifecycle action
-- invalid transitions
-- repeated actions
-- persistence and query behavior
-
-### Correlation and risk scoring
-
-Verify:
-
-- event normalization
-- correlation-window boundaries
-- relationship weights
-- confidence aggregation
-- anti-chaining rules
+- subscriber lifecycle
+- channel shutdown
+- ping/pong handling
+- heartbeat timeout
+- reconnect behavior
 - event deduplication
-- incident creation and updates
-- incident lifecycle restrictions
-- bounded risk values
-- risk-band boundaries
-- explanation of contributing risk factors
-- missing and unavailable context
-
-Confirm that findings, alerts, incidents, severity, confidence and risk remain separate concepts.
-
-M18 must test the existing behavior. It must not introduce a new detection or risk-scoring model.
-
----
-
-# 9. M18.6 — REST API and Database Contract Tests
-
-Audit M13 and the endpoints added by M16–M17.
-
-Cover:
-
-- HTTP methods and route registration
-- request validation
-- response schemas
-- pagination limits
-- invalid filters
-- malformed timestamps
-- inclusive and exclusive time boundaries
-- error response envelopes
-- missing resources
-- unavailable data sections
-- database failures
-- incorrect lifecycle transitions
-- report generation failures
-- report download behavior
-- safe error messages
-
-Test all API groups, including:
-
-- capture and interface management
-- packets and statistics
-- devices and connections
-- detections and alerts
-- evidence and incidents
-- analytics
-- dashboard
-- settings and system
-- notifications
-- reporting
-
-Verify the five M16 analytics endpoints and all four M17 report routes.
-
-Use the actual running backend for live API verification where appropriate.
-
-Compare real API responses with their Pydantic schemas and frontend TypeScript models.
-
-Do not assume that documentation, OpenAPI schemas and runtime behavior are identical.
-
----
-
-# 10. M18.7 — WebSocket Tests
-
-Audit M14 and the frontend integration from M15.
-
-Verify:
-
-- each supported channel
-- event envelope validation
-- event schema compatibility
-- subscriber registration and removal
-- shared connections
-- reconnect behavior
-- REST refresh after reconnect
-- duplicate event rejection
-- bounded deduplication state
-- per-channel buffering
-- drop-oldest backpressure
+- bounded queues
 - packet rate limiting
-- heartbeat and timeout behavior
-- invalid client messages
+- slow clients
 - client disconnects
-- publisher failure isolation
+- publishing failures
+- cleanup during application shutdown
 
-Confirm that publishing failures cannot interrupt packet processing, detection, alerting, or correlation.
+Verify that a WebSocket failure cannot block packet processing or cause unrelated services to fail.
 
-Test packet rate limiting without assuming the frontend receives every captured packet.
+Test repeated connect/disconnect cycles and concurrent subscribers where practical.
 
-Do not introduce external network dependencies into ordinary unit tests.
+Confirm that the frontend refreshes its REST resource after reconnect and does not assume that events lost during disconnection will be replayed.
+
+Keep the current event envelope and channel contracts backward-compatible.
+
+Do not add new channels or event types unless a genuine correctness defect requires a narrowly scoped change.
 
 ---
 
-# 11. M18.8 — Frontend Tests
+# 11. M19.8 — Frontend Stability and Build Health
 
-Audit the existing React/TypeScript tests.
+Audit the existing React/TypeScript frontend.
 
-Test:
+Review:
 
-- loading states
-- successful data display
-- empty states
-- API failures
-- unavailable data sections
-- retry actions
-- API validation errors
-- WebSocket connection status
-- reconnect behavior
-- duplicate event handling
-- bounded lists
-- alert lifecycle actions
-- incident lifecycle actions
-- analytics charts and filters
-- report generation forms
-- daily, weekly and custom reporting periods
-- CSV/PDF download actions
-- report history
-- safe rendering of unexpected server values
+- console errors and warnings
+- unhandled promise rejections
+- loading and retry states
+- WebSocket cleanup
+- repeated subscriptions
+- stale state after navigation
+- bounded client lists
+- report-generation failures
+- file downloads
+- API error messages
+- TypeScript errors
+- production build warnings
+
+The M15 and M17 records identify a JavaScript bundle larger than Vite's 500 kB advisory threshold.
+
+Determine whether code splitting would be a low-risk stabilization improvement. If so, implement it without changing application behavior; otherwise, record it as a non-blocking performance limitation.
 
 Verify that:
 
-- no mock data is activated in the live application
-- no random generators simulate network activity
-- no frontend component bypasses the shared API service layer
-- TypeScript types match actual backend responses
-- report files are downloaded from the backend, not fabricated browser URLs
+- `npm test` passes
+- `npm run test:live` passes against the running backend
+- `npm run typecheck` passes
+- `npm run build` succeeds
+- the existing visual design is preserved
+- no mock data or simulated network activity has been reintroduced
 
-Keep existing UI design changes outside M18 unless a test exposes a genuine defect that prevents correct application behavior.
+Do not redesign the frontend during M19.
 
 ---
 
-# 12. M18.9 — End-to-End Testing
+# 12. M19.9 — Report and Artifact Stability
 
-Build on the existing M13, M15, M16 and M17 verification scripts.
+Audit M17 report generation and storage.
 
-Verify the complete data flow:
+Test:
 
-```text
-Authorized Local Traffic
-          ↓
-Packet Capture
-          ↓
-Normalization
-          ↓
-Statistics + Persistence
-          ↓
-Device Discovery + Connections
-          ↓
-Detection Findings
-          ↓
-Alerts
-          ↓
-Correlated Incidents + Risk
-          ↓
-REST API + WebSockets
-          ↓
-Frontend Displays Live Data
-          ↓
-Analytics
-          ↓
-CSV/PDF Reports
-          ↓
-Report History + Download
+- repeated CSV generation
+- repeated PDF generation
+- large but permitted report content
+- a report row taller than a page
+- invalid report requests
+- unavailable analytics sections
+- missing stored artifacts
+- failed writes and renames
+- cleanup failures
+- download failures
+- report metadata consistency
+
+Confirm that:
+
+- generated files are written atomically
+- stored paths remain confined to the configured report directory
+- partial files are cleaned up safely
+- failed generation does not leave a misleading completed record
+- PDF content fits within the page layout
+- CSV formula-injection protection still works
+- downloads serve the actual generated file
+- report generation failures are visible to the operator
+
+Retain the existing metadata and file lifecycle contract.
+
+Do not add scheduled reports or notification delivery in M19.
+
+---
+
+# 13. M19.10 — Configuration and Startup Reliability
+
+Review configuration handling for local installation.
+
+Inspect:
+
+- backend settings
+- `.env.example`
+- frontend environment defaults
+- database path configuration
+- report storage configuration
+- capture-interface selection
+- logging configuration
+- CORS origins
+- host and port defaults
+- dependency versions
+
+Verify that:
+
+- missing optional settings receive safe defaults
+- invalid settings fail clearly
+- local-only deployment defaults remain intact
+- configuration changes take effect according to the documented restart behavior
+- credentials and secrets are not committed
+- frontend configuration does not contain backend secrets
+- startup failures do not leave partially initialized services running
+
+Preserve the existing configuration conventions.
+
+Do not introduce new mandatory external services.
+
+---
+
+# 14. M19.11 — Deployment Instructions
+
+Review and test the documented local startup procedure.
+
+The application should be runnable using the existing Python backend and Node-based frontend tooling.
+
+Verify the instructions against the current project structure instead of assuming older commands still work.
+
+Document:
+
+- supported Python version
+- supported Node.js/npm environment
+- backend virtual environment setup
+- dependency installation
+- environment configuration
+- database initialization and upgrades
+- backend startup
+- frontend startup
+- expected local ports
+- packet-capture permission requirements
+- test commands
+- report storage behavior
+- common troubleshooting steps
+
+Keep the instructions appropriate for the project's intended local development deployment.
+
+Do not claim that production deployment or public network exposure is supported.
+
+---
+
+# 15. M19.12 — Clean Installation Verification
+
+Verify a clean installation independently of the developer's existing environment.
+
+Use a disposable copy or a clean checkout so that existing virtual environments, build artifacts, caches, and databases cannot conceal missing dependencies.
+
+Follow the documented setup steps.
+
+Verify that:
+
+1. Python dependencies install correctly.
+2. The backend imports and starts.
+3. SQLite initializes or upgrades correctly.
+4. The API health endpoint responds.
+5. The frontend dependencies install from the documented lockfile.
+6. The frontend starts and builds.
+7. The dashboard handles empty data correctly.
+8. A controlled packet-processing test works.
+9. Analytics endpoints respond.
+10. CSV/PDF report generation and downloads work.
+11. Tests and type checks can be executed from the documented commands.
+
+Use the repository's established package manager. Investigate the existing lockfiles and document one canonical installation procedure rather than arbitrarily deleting lockfiles.
+
+Do not use the developer's production-like or working database for the test.
+
+Record every failed setup step and its resolution.
+
+---
+
+# 16. M19.13 — Repository and Git Hygiene
+
+Review the repository after the previous large-database push failure has been resolved.
+
+Verify that:
+
+- `backend/netwatch.db` is not tracked
+- local SQLite databases and backups are ignored
+- `.env` files are ignored while `.env.example` remains tracked
+- `node_modules`, build output, caches and temporary artifacts are ignored
+- generated reports are not unintentionally committed
+- local benchmark baselines remain ignored when intended
+- no credentials or sensitive data are present in tracked files
+- the working tree is understood before final commits
+- the GitHub remote points to the intended repository
+
+Use commands such as:
+
+```powershell
+git status -sb
+git remote -v
+git ls-files backend/netwatch.db
+git check-ignore -v backend/netwatch.db
+git ls-files
 ```
 
-Create or strengthen a repeatable end-to-end verification procedure that confirms:
+Inspect tracked files for oversized artifacts and investigate any file that should not be in source control.
 
-- real packets reach the pipeline
-- statistics and persistence reflect processed packets
-- device and connection state updates
-- controlled suspicious test patterns produce the expected findings
-- alerts and incidents are created by their actual engines
-- the API exposes the resulting state
-- WebSocket messages match the API's current state where applicable
-- the frontend renders the real responses
-- analytics queries return the expected aggregate values
-- reports contain values consistent with the analytics responses
-- generated CSV/PDF files can actually be retrieved
+Do not rerun `git filter-repo`, delete Git objects, or force-push during routine stabilization. Such operations require a specific, verified need and a safe backup plan.
 
-Use controlled local traffic and isolated temporary databases.
+Preserve uncommitted project work.
 
-Existing fixtures may be used for unit and integration tests, but do not use mock-generated events to claim successful real-pipeline verification.
-
-Live capture tests must be optional and authorized.
+The final repository should contain source, tests, documentation, configuration examples, and intentional assets—not local runtime databases or generated build output.
 
 ---
 
-# 13. M18.10 — Performance Regression Testing
+# 17. M19.14 — Known Limitations and Release Risks
 
-Audit benchmarks already created by earlier milestones.
+Review the limitations carried forward from M18 and previous milestones.
 
-Review existing measurements from:
+### Device identity
 
-- packet processing
-- statistics
-- persistence
-- device discovery
-- connection tracking
-- detection
-- alerts
-- correlation and risk scoring
-- REST API
-- WebSockets
-- analytics
-- report generation
+M8's MAC-first identity can associate multiple remote IP addresses with a routed next-hop device. Do not silently change the identity system in M19.
 
-Do not rebuild every benchmark if the current scripts already measure the relevant behavior.
+Document the observable behavior and whether it prevents a specific M20 acceptance criterion.
 
-Establish reproducible test inputs and record the environment.
+### Authentication and transport security
 
-Measure relevant operations such as:
+Authentication, authorization/RBAC, and TLS are not implemented.
 
-- packets processed per second
-- per-packet processing overhead
-- bounded queue behavior
-- persistence throughput
-- important API response times
-- analytics query response times
-- report generation and download costs
-- memory growth under sustained traffic
-- WebSocket behavior under controlled client load
+Verify that the local application remains bound to its documented local interface by default. Do not advertise the service as suitable for public exposure or untrusted multi-user deployments.
 
-Compare with the existing local baselines where comparable measurements are available.
+### Concurrency
+
+M18 did not include broad concurrency testing.
+
+Add targeted tests only for relevant existing shared-state and threaded paths. State clearly what remains unverified.
+
+### Reports and database growth
+
+Review the consequences of keeping packet data and report artifacts over time. Document any remaining cleanup limitations.
+
+### Frontend bundle size
+
+Decide whether the bundle warning is safely addressable in M19 or should remain a documented non-blocking limitation.
+
+For each remaining issue, record:
+
+- impact
+- workaround, if any
+- whether it blocks the M20 release
+- recommended future milestone
+
+Do not claim a limitation is resolved merely because it has been documented.
+
+---
+
+# 18. M19 Non-Goals
+
+The following remain outside M19:
+
+- ML anomaly detection
+- behavioral baselines
+- AI explanations
+- local LLM/Ollama
+- new detection rules
+- new risk-scoring models
+- automatic blocking or IPS
+- SIEM integrations
+- threat-intelligence integrations
+- distributed sensors
+- PostgreSQL migration
+- Docker adoption
+- new frontend product features
+- broad architectural refactoring
+
+Authentication/RBAC or TLS may require a separate security milestone if the intended deployment changes. Do not implement them as an unplanned side effect of stabilization.
+
+M19 should improve the reliability of existing functionality while keeping the project understandable and maintainable.
+
+---
+
+# 19. M19.15 — Repeatable Stabilization Verification
+
+Reuse the existing scripts and tests.
+
+Run the appropriate quality gates:
+
+```powershell
+python backend/scripts/run_quality_gates.py
+```
+
+Inspect the actual options before executing the full live suite.
+
+From the frontend directory, run:
+
+```powershell
+npm test
+npm run test:live
+npm run typecheck
+npm run build
+```
+
+Also execute the appropriate checks for:
+
+- clean database initialization
+- database migration
+- report artifact integrity
+- repeated capture start/stop
+- repeated WebSocket connect/disconnect
+- bounded resource use
+- the M18 end-to-end flow
+- local installation and troubleshooting instructions
+
+Run the existing benchmarks where needed rather than inventing new numbers from unrelated test conditions.
+
+After fixes, rerun the tests that cover the changed behavior and the relevant regression gates.
+
+A final full verification must be run against the final stabilized code.
 
 Record:
 
-- hardware/software environment
-- dataset and test conditions
-- warm-up and measurement procedure
-- median and tail latency where appropriate
-- observed resource consumption
-- deviations from the existing baseline
+- commands
+- environment
+- results
+- test counts
+- warnings
+- remaining failures
+- skipped checks
+- measured deviations from available baselines
 
-Do not claim production-scale capacity.
-
-Do not treat an arbitrary timing threshold as a correctness test on every machine.
-
-Performance regressions must be measured and reported, not hidden by disabling tests or weakening assertions without justification.
+Do not mark an unexecuted command as passed.
 
 ---
 
-# 14. M18.11 — Security Testing
-
-Perform defensive security tests against the local NetWatch application and its test environment.
-
-Focus on:
-
-- input validation
-- malformed packet handling
-- unsafe file paths
-- report download path traversal
-- report filename handling
-- CSV formula injection
-- PDF rendering of untrusted text
-- SQL parameterization
-- filesystem containment
-- secret and credential exposure
-- error message disclosure
-- unsafe configuration defaults
-- unexpected HTTP methods
-- WebSocket message validation
-- resource exhaustion from excessive requests or oversized inputs
-- cleanup of temporary files
-- local database and generated-artifact permissions
-
-Verify that user-controlled values cannot cause arbitrary file reads or writes through the report functionality.
-
-Check that secrets, internal paths, SQL statements and tracebacks are not exposed through API responses or generated reports.
-
-Do not run destructive security tests against external targets.
-
-Do not send uncontrolled flood traffic or run invasive scans against public infrastructure.
-
-Document that authentication/RBAC is not implemented yet, and do not claim security appropriate for public or multi-user deployment.
-
-Fix only minimal, clearly identified correctness or security defects needed to make the tested behavior safe. Record larger architectural changes for M19 or a separately scoped milestone.
-
----
-
-# 15. M18.12 — Failure and Recovery Testing
-
-Test the application under controlled failure conditions.
-
-Include:
-
-- a missing or invalid capture interface
-- malformed packets
-- database write failures
-- database read failures
-- disk write failures
-- full or unavailable report storage
-- failed CSV/PDF generation
-- missing report files
-- failed WebSocket connections
-- disconnected clients
-- unavailable API responses
-- invalid settings
-- service shutdown during activity
-
-Verify that:
-
-- errors are surfaced honestly
-- resources are released
-- state is not silently corrupted
-- partial report artifacts are cleaned up
-- unavailable values do not become misleading zeroes
-- a failure in one subsystem does not unnecessarily break unrelated components
-
-Use dependency injection, test doubles and temporary files where appropriate to reproduce failures deterministically.
-
----
-
-# 16. M18.13 — Reproducible Quality Gates
-
-Provide one documented, repeatable test workflow.
-
-Audit the existing scripts and package commands before adding new ones.
-
-The final verification process must include:
-
-1. Backend unit and integration tests
-2. Database/API contract tests
-3. WebSocket tests
-4. Reporting tests
-5. Frontend unit tests
-6. Live frontend/backend tests
-7. End-to-end verification
-8. Python type checking
-9. TypeScript type checking
-10. Frontend production build
-11. Selected performance checks
-12. Security regression tests
-
-Use the existing package scripts wherever possible.
-
-If a new project-level test runner or script would simplify verification, add it only when it can execute the existing checks reliably without duplicating their logic.
-
-Tests that require elevated privileges or live packet capture must be clearly separated from the normal unit-test command.
-
-Document the expected environment variables and prerequisites for each test group.
-
-A failed live test must not be silently skipped and counted as a pass.
-
----
-
-# 17. M18.14 — Test Quality and Maintenance
-
-Review the quality of existing tests.
-
-Check for:
-
-- tests that assert implementation details instead of behavior
-- duplicate tests with no independent value
-- weak assertions
-- nondeterministic timing
-- hidden dependence on network connectivity
-- dependence on the developer's real SQLite database
-- tests that change the working tree unexpectedly
-- resource leaks
-- background threads that remain running
-- unclosed sockets
-- temporary artifacts left behind
-- overly broad exception assertions
-- skipped or disabled tests without explanation
-
-Improve test clarity and determinism where needed.
-
-Do not delete a useful test merely because it is slow.
-
-If a test is flaky, identify and document the root cause rather than increasing retry counts until it passes.
-
----
-
-# 18. M18.15 — Documentation
+# 20. Documentation
 
 Create:
 
-`docs/22_M18_Testing_Design.md`
+`docs/23_M19_Stabilization_Design.md`
 
-Use the same numbered, detailed format as the M15–M17 milestone documents.
+Follow the numbered, detailed format used by the M16–M18 design documents.
 
 Include:
 
 1. Purpose
 2. Scope
 3. Non-goals
-4. Existing test-suite audit
-5. Coverage matrix
-6. Unit testing
-7. Database testing
-8. API contract testing
-9. WebSocket testing
-10. Frontend testing
-11. End-to-end testing
-12. Performance regression testing
-13. Security testing
-14. Failure and recovery testing
-15. Reproducible quality gates
-16. Test execution instructions
-17. Results and measurements
-18. Known limitations
-19. Completion checklist
-20. M18 closure
+4. Initial baseline
+5. Defect and risk register
+6. Logging and error handling
+7. Memory and resource stability
+8. Database and artifact growth
+9. Packet-processing stability
+10. WebSocket stability
+11. Frontend stability
+12. Configuration and startup
+13. Deployment instructions
+14. Clean-installation verification
+15. Git and repository hygiene
+16. Performance comparison
+17. Known limitations
+18. Release blockers
+19. Testing and verification
+20. Completion checklist
+21. M19 closure
 
-Record actual commands, outputs, test counts, failures and skips.
+Update only M19's section of `docs/TODO.md`.
 
-Do not invent coverage percentages or test results.
-
-Keep the document focused on M18.
-
-Update only the M18 section of `docs/TODO.md` as appropriate. Do not rewrite previous milestone records.
+Update `docs/Current_Task.md` only if that is the repository's current-task convention, preserving the separate historical milestone records.
 
 Keep the status as:
 
 **Status: design / in progress**
 
-until all completion criteria are verified.
+until implementation and verification are actually complete.
 
-Only then mark it:
+Only then change it to:
 
 **Status: implemented and verified**
 
 ---
 
-# 19. M18 Non-Goals
-
-The following are not part of M18:
-
-- new detection algorithms
-- ML anomaly detection
-- behavioral baselines
-- AI explanations
-- local LLM/Ollama
-- new risk-scoring models
-- new dashboard functionality
-- new reporting features
-- authentication/RBAC implementation
-- SIEM integrations
-- distributed sensors
-- Docker deployment
-- PostgreSQL migration
-- major architectural refactoring
-
-M18 is primarily a testing and verification milestone.
-
-Do not add application features merely to increase the number of modified files.
-
----
-
-# 20. Verification
-
-Before closing M18, run the relevant project checks from a clean, documented environment.
-
-At minimum:
-
-```text
-Full backend test suite
-Backend type checking
-Frontend unit suite
-Frontend TypeScript type checking
-Frontend production build
-Live API integration tests
-Live WebSocket tests
-Reporting tests
-End-to-end verification
-Performance regression checks
-Security regression tests
-```
-
-Also verify:
-
-- the database migrations work
-- `.env.example` contains the necessary configuration without secrets
-- local `.env` files and runtime databases are ignored by Git
-- generated reports and temporary test files do not accidentally enter the repository
-- existing M0–M17 behavior remains compatible
-
-If a test fails, investigate and report the failure.
-
-Do not mark M18 complete merely because the test command was started or because previously recorded test counts appear in the documentation.
-
----
-
 # 21. Completion Criteria
 
-M18 is complete only when:
+M19 is complete only when:
 
-- [ ] Existing test suites have been audited
-- [ ] A coverage matrix is documented
-- [ ] Packet capture and processing tests are adequate
-- [ ] Database and migration tests pass
-- [ ] Device and connection tests pass
-- [ ] Detection, alert and correlation tests pass
-- [ ] Risk-scoring boundary tests pass
-- [ ] REST API contracts are verified
-- [ ] WebSocket behavior is verified
-- [ ] Frontend behavior is verified
-- [ ] Reporting functionality is covered
-- [ ] End-to-end data flow is verified
-- [ ] Performance checks are repeatable
-- [ ] Security regression tests pass
-- [ ] Failure and recovery behavior is tested
-- [ ] The main test workflow is reproducible
-- [ ] Existing M0–M17 regression suites pass
-- [ ] Pyright passes
+- [ ] Existing quality gates have been rerun
+- [ ] A defect and risk register is documented
+- [ ] Critical and high-priority defects are fixed or explicitly recorded as release blockers
+- [ ] Logging and API error behavior have been reviewed
+- [ ] Memory and bounded-state behavior have been assessed
+- [ ] Database growth and retention have been reviewed
+- [ ] Report storage growth and failure handling have been reviewed
+- [ ] Packet-processing stability has been verified
+- [ ] WebSocket lifecycle stability has been verified
+- [ ] Frontend tests and build pass
+- [ ] Startup and configuration have been reviewed
+- [ ] Deployment instructions work on a clean setup
+- [ ] Git and repository hygiene checks pass
+- [ ] Performance results have been compared with existing baselines
+- [ ] Known limitations and release blockers are documented
+- [ ] Existing M0–M18 regression tests pass
+- [ ] Pyright/type checking passes
 - [ ] TypeScript checking passes
-- [ ] Frontend build succeeds
-- [ ] Test output contains no unexplained skips or failures
-- [ ] `docs/22_M18_Testing_Design.md` is complete
-- [ ] M18's `docs/TODO.md` checklist is updated
+- [ ] Frontend production build succeeds
+- [ ] Final end-to-end verification passes
+- [ ] `docs/23_M19_Stabilization_Design.md` is complete
+- [ ] The M19 section of `docs/TODO.md` is updated
 
 ---
 
@@ -819,24 +764,24 @@ M18 is complete only when:
 
 At completion, provide:
 
-1. Existing test suites audited
-2. Coverage matrix summary
+1. Initial baseline results
+2. Defect and risk register summary
 3. Files created
 4. Files modified
-5. New tests added and the gaps they address
-6. Backend test result
-7. Frontend test result
-8. Live integration result
-9. Type-checking and build results
-10. End-to-end verification result
-11. Performance regression measurements
-12. Security test results
-13. Known gaps and deferred defects
-14. Any failures or skipped tests
-15. Whether M18 is ready to mark implemented and verified
+5. Critical/high-priority fixes
+6. Logging and error-handling results
+7. Memory and database-growth findings
+8. WebSocket and packet-processing stability results
+9. Clean-installation result
+10. Repository hygiene result
+11. Performance comparisons
+12. Backend test results
+13. Frontend test and build results
+14. End-to-end verification result
+15. Remaining limitations
+16. Explicit M20 release blockers
+17. Whether M19 is ready to mark implemented and verified
 
-Do not claim complete coverage of the application unless the evidence supports it.
+Do not claim production readiness based solely on successful tests or local benchmarks.
 
-Do not claim production readiness based solely on successful tests.
-
-**The milestone is complete only when the actual project has passed the required checks and the results have been documented.**
+**M19 is complete when the application is more stable, the remaining limitations are understood, and a clean installation can be verified from the documented instructions.**

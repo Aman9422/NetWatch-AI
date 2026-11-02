@@ -63,6 +63,42 @@ def _shutdown_connections() -> None:
         logger.exception("Failed to flush connection tracking during shutdown")
 
 
+def _start_retention_sweep() -> None:
+    """Start the periodic retention sweep (M19.5).
+
+    Started after the schema exists and before the application accepts traffic, so
+    a configured retention window is enforced for as long as the application runs.
+    The first pass is one interval away, so startup never deletes anything.
+
+    Guarded: a retention sweep that cannot start is a policy that will not be
+    enforced, which is worth a loud log line but is not a reason to refuse to start
+    the application — capture, detection and the API all work without it.
+    """
+    from app.services.retention_scheduler import get_retention_sweeper
+
+    try:
+        get_retention_sweeper().start()
+    except Exception:  # noqa: BLE001 - startup must not fail on the sweep
+        logger.exception("Failed to start the retention sweep")
+
+
+def _stop_retention_sweep() -> None:
+    """Stop the periodic retention sweep and join its thread (M19.4).
+
+    Stopped *first* in the shutdown sequence: a pass drives the same database the
+    flushes below use, and letting a cleanup run while the persistence layer is
+    shutting down would put two writers on one SQLite file for no benefit. Guarded
+    because shutdown must never raise, and the thread is a daemon if the join
+    times out, so the process still exits.
+    """
+    from app.services.retention_scheduler import get_retention_sweeper
+
+    try:
+        get_retention_sweeper().stop()
+    except Exception:  # noqa: BLE001 - shutdown must never raise
+        logger.exception("Failed to stop the retention sweep")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager.
@@ -81,12 +117,19 @@ async def lifespan(app: FastAPI):
     logger.info("Starting %s (%s) — environment: %s", settings.app_name, settings.app_version, settings.app_env)
     if settings.app_env == "development":
         init_db()
+    # The retention sweep (M19.5). Started here, after the schema exists, because
+    # the policies it applies delete rows: running it against a database that has
+    # not been initialized yet would only produce a failure it would then have to
+    # contain. It is also started before the application serves traffic, so a
+    # configured retention window is enforced from the first interval onwards.
+    _start_retention_sweep()
     # The real-time layer (M14.20). Started after the schema exists and before
     # the application accepts traffic, so the loop is bound and the heartbeat and
     # dashboard tasks exist before the first client can dial in.
     await start_websockets()
     yield
     logger.info("Shutting down %s", settings.app_name)
+    _stop_retention_sweep()
     _stop_active_capture()
     _shutdown_persistence()
     _shutdown_connections()

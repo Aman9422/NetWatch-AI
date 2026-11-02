@@ -15,7 +15,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.persistence.retention import PacketRetentionService
+from app.persistence.retention import (
+    RETENTION_FAILURE_MESSAGE,
+    PacketRetentionService,
+)
 from app.repositories.packet import PacketRepository
 
 # A fixed "now" so every assertion is deterministic.
@@ -164,3 +167,131 @@ def test_cleanup_failure_is_isolated(session_factory) -> None:
         assert service.cleanup(now=NOW) == 0
     finally:
         engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Honest outcomes (M19.3/M19.5)
+# ---------------------------------------------------------------------------
+
+
+def _failing_engine():
+    """Return an engine with no tables, so any DELETE against it fails."""
+    return create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+
+def test_a_measured_zero_is_not_a_failure(session_factory) -> None:
+    """A cleanup that read the store and found nothing is a success (M19.5)."""
+    outcome = _service(session_factory).cleanup_outcome(now=NOW)
+
+    assert outcome.deleted == 0
+    assert outcome.failed is False
+    assert outcome.succeeded is True
+    assert outcome.removed_anything is False
+    assert outcome.error is None
+    assert outcome.enabled is True
+
+
+def test_a_successful_cleanup_reports_what_it_removed(session_factory) -> None:
+    """The outcome carries the deleted count and no error."""
+    _seed(session_factory, [NOW - timedelta(days=10), NOW - timedelta(days=9)])
+
+    outcome = _service(session_factory).cleanup_outcome(now=NOW)
+
+    assert outcome.deleted == 2
+    assert outcome.removed_anything is True
+    assert outcome.failed is False
+    assert outcome.error is None
+
+
+def test_disabled_retention_reports_a_measured_zero(session_factory) -> None:
+    """A disabled policy answers ``enabled=False`` rather than looking failed."""
+    service = _service(session_factory, retention_days=0)
+    _seed(session_factory, [NOW - timedelta(days=365)])
+
+    outcome = service.cleanup_outcome(now=NOW)
+
+    assert outcome.deleted == 0
+    assert outcome.failed is False
+    assert outcome.enabled is False
+    assert _count(session_factory) == 1
+
+
+def test_a_failed_cleanup_is_reported_as_a_failure(session_factory) -> None:
+    """A store that cannot be read is a failure, not an indistinguishable zero.
+
+    This is the defect M19.5 records: M7's ``cleanup`` returned ``0`` whether the
+    store said "nothing to delete" or could not be read at all, so a retention
+    policy that had silently stopped working looked exactly like a healthy one.
+    """
+    engine = _failing_engine()
+    try:
+        service = PacketRetentionService(
+            session_factory=lambda: Session(bind=engine),
+            retention_days=RETENTION_DAYS,
+        )
+
+        outcome = service.cleanup_outcome(now=NOW)
+
+        assert outcome.failed is True
+        assert outcome.succeeded is False
+        assert outcome.deleted == 0
+        assert outcome.error == RETENTION_FAILURE_MESSAGE
+        # The count is still 0, because nothing is known to have been removed.
+        assert service.cleanup(now=NOW) == 0
+    finally:
+        engine.dispose()
+
+
+def test_failures_are_counted_across_attempts(session_factory) -> None:
+    """Each failed attempt is counted, so a stopped policy is observable (M19.3)."""
+    engine = _failing_engine()
+    try:
+        service = PacketRetentionService(
+            session_factory=lambda: Session(bind=engine),
+            retention_days=RETENTION_DAYS,
+        )
+
+        assert service.failure_count == 0
+        service.cleanup(now=NOW)
+        service.cleanup_outcome(now=NOW)
+
+        assert service.failure_count == 2
+    finally:
+        engine.dispose()
+
+
+def test_a_success_does_not_count_as_a_failure(session_factory) -> None:
+    """A cleanup that worked never increments the failure counter."""
+    service = _service(session_factory)
+    _seed(session_factory, [NOW - timedelta(days=10)])
+
+    service.cleanup(now=NOW)
+
+    assert service.failure_count == 0
+
+
+def test_the_failure_message_names_no_internal(session_factory) -> None:
+    """The safe sentence cannot leak a path, a statement or a driver (M13.30).
+
+    The check is for *internals*, not for English: the sentence says nothing was
+    deleted, which is a fact about the operation rather than a disclosure.
+    """
+    lowered = RETENTION_FAILURE_MESSAGE.lower()
+
+    leaks = (
+        "sqlite",
+        "traceback",
+        "operationalerror",
+        "no such table",
+        "delete from",
+        "select ",
+        "c:\\",
+        "/app",
+        "/backend",
+    )
+    for leak in leaks:
+        assert leak not in lowered

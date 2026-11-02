@@ -231,6 +231,25 @@ _NO_TEST_FILES = re.compile(r"No test files found", re.IGNORECASE)
 #: vite ends with e.g. "built in 3.45s" or "built in 1.20m".
 _VITE_BUILD_SUMMARY = re.compile(r"^.*built in [\d.]+m?s\s*$", re.MULTILINE)
 
+#: A gate that is a script rather than a test runner ends with its own verdict
+#: line. ``verify_m18.py`` prints ``RESULT: PASS (sample mode)`` and
+#: ``benchmark_m18.py`` prints ``RESULT: measured``, so the shared prefix is what
+#: the report quotes. Without this the three long gates were reported as
+#: ``(no summary line recognised)`` while the exit code still decided the result
+#: (M19.2 — a gate whose real result the report cannot state is a gate a reader
+#: has to take on trust).
+_RESULT_LINE = re.compile(r"^RESULT:.*$", re.MULTILINE)
+
+#: ANSI escape sequences, e.g. ``\x1b[32m`` or ``\x1b[0m``.
+#:
+#: A command that colourises its output — Vite's build reporter and Vitest's
+#: summary both do when they believe they are writing to a terminal — wraps even
+#: its summary line in these, and a pattern anchored with ``^`` then never
+#: matches because the line does not begin with the word it is looking for. They
+#: carry no information a report should quote, so they are removed once, before
+#: any pattern is tried, rather than worked around in every pattern (M19.2).
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
 #: Used to decide whether a test gate actually ran something.
 _PASSED_COUNT = re.compile(r"[1-9]\d* passed")
 
@@ -340,7 +359,10 @@ def build_stages() -> tuple[Stage, ...]:
             closes="M18.13 item 7",
             command=(python, "scripts/verify_m18.py", "sample"),
             cwd=BACKEND_ROOT,
-            summaries=(_PYTEST_SUMMARY,),
+            # The script prints its own verdict rather than a test-runner summary
+            # (``RESULT: PASS (sample mode)``), so that line is what the report
+            # quotes. Without it this gate read as an unstated result (M19.2).
+            summaries=(_RESULT_LINE, _PYTEST_SUMMARY),
             requires=(BACKEND_ROOT / "scripts" / "verify_m18.py",),
         ),
         Stage(
@@ -349,7 +371,7 @@ def build_stages() -> tuple[Stage, ...]:
             closes="M18.13 item 6",
             command=(python, "scripts/verify_m18.py", "live"),
             cwd=BACKEND_ROOT,
-            summaries=(_PYTEST_SUMMARY,),
+            summaries=(_RESULT_LINE, _PYTEST_SUMMARY),
             requires=(BACKEND_ROOT / "scripts" / "verify_m18.py",),
         ),
         Stage(
@@ -358,6 +380,9 @@ def build_stages() -> tuple[Stage, ...]:
             closes="M18.13 item 11",
             command=(python, "scripts/benchmark_m18.py"),
             cwd=BACKEND_ROOT,
+            # ``RESULT: measured`` — the harness names its own outcome, including
+            # when it could not measure at all (M18.10).
+            summaries=(_RESULT_LINE,),
             requires=(BACKEND_ROOT / "scripts" / "benchmark_m18.py",),
         ),
     )
@@ -422,6 +447,23 @@ def _join_streams(stdout: str, stderr: str) -> str:
         if stream:
             parts.append(stream if stream.endswith("\n") else stream + "\n")
     return "".join(parts)
+
+
+def _normalise_output(text: str) -> str:
+    """Strip escapes and normalise line endings before any pattern is tried (M19.2).
+
+    Two things made the M18 report miss a gate's own summary.
+
+    A command that colourises wraps even its summary line in escape sequences, so
+    ``^`` anchored the pattern at an escape rather than at the first word and the
+    line was never matched. And a progress renderer can leave a carriage return
+    *inside* a line, which ``$`` does not accept at that position.
+
+    Both are removed once here rather than worked around in every pattern, and
+    the raw output is still what a failure tail prints — this is the text
+    matching sees, not the text the reader sees.
+    """
+    return _ANSI_ESCAPE.sub("", text).replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _extract_summary(output: str, patterns: Sequence[re.Pattern[str]]) -> str:
@@ -518,8 +560,9 @@ def _run_stage(stage: Stage) -> StageResult:
 
     duration = time.perf_counter() - started
     output = _join_streams(completed.stdout, completed.stderr)
-    summary = _extract_summary(output, stage.summaries)
-    skipped_tests = _count_skips(output)
+    matchable = _normalise_output(output)
+    summary = _extract_summary(matchable, stage.summaries)
+    skipped_tests = _count_skips(matchable)
 
     if completed.returncode != 0:
         return StageResult(
@@ -532,7 +575,7 @@ def _run_stage(stage: Stage) -> StageResult:
             skipped_tests=skipped_tests,
         )
 
-    no_tests = _no_tests_reason(stage, output)
+    no_tests = _no_tests_reason(stage, matchable)
     if no_tests:
         return StageResult(
             stage=stage,

@@ -26,6 +26,7 @@ internal filesystem location (M13.30).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import func, select
@@ -145,6 +146,61 @@ class ReportRepository(BaseRepository[Report]):
             report_format=report_format,
         )
         return int(self.db.scalar(statement) or 0)
+
+    def list_expired(
+        self,
+        *,
+        cutoff: datetime,
+        limit: int,
+        excluded_status: str,
+    ) -> list[Report]:
+        """Return the oldest report rows eligible for retention (M19.5).
+
+        Ordered ``generated_at ASC, id ASC`` — the *opposite* of the listing — so
+        a bounded pass removes the oldest reports first and each pass makes
+        progress towards the newest ones rather than repeatedly selecting the same
+        rows from the top. The order is total for the same reason the listing's is:
+        two rows sharing a timestamp are still returned in a stable order.
+
+        ``excluded_status`` is the status retention must never touch, supplied by
+        the caller that owns the vocabulary rather than imported here (see the
+        module docstring). It is used for the one state that describes work still
+        in flight: a row whose artifact is being written is not an expired report,
+        however old its timestamp looks, and deleting it would remove the record of
+        a generation happening right now.
+
+        Args:
+            cutoff: Reports generated strictly before this instant are eligible.
+            limit: Most rows to return. The caller bounds the pass with it.
+            excluded_status: A status to exclude from every candidate set.
+
+        Returns:
+            Up to ``limit`` rows, oldest first.
+        """
+        statement = (
+            select(Report)
+            .where(Report.generated_at < cutoff)
+            .where(Report.status != str(excluded_status))
+            .order_by(Report.generated_at.asc(), Report.id.asc())
+            .limit(int(limit))
+        )
+        return list(self.db.scalars(statement).all())
+
+    def delete_many(self, rows: Sequence[Report]) -> int:
+        """Delete the given rows and commit once, returning how many went (M19.5).
+
+        One commit for the whole pass rather than one per row: the pass is already
+        bounded by the caller, and a transaction per row would make a large
+        cleanup far slower while giving nothing back — the files have already been
+        removed by the time this is called, so a failure here is retried by the
+        next pass rather than lost.
+        """
+        deleted = 0
+        for row in rows:
+            self.db.delete(row)
+            deleted += 1
+        self.db.commit()
+        return deleted
 
     @staticmethod
     def _filtered(statement, *, report_type: str | None, report_format: str | None):

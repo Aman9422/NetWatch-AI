@@ -14,14 +14,19 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from app.api.v1 import packets as packets_module
 from app.config.settings import settings
 from app.database.session import get_db
 from app.main import app
 from app.persistence.mapping import to_packet_values
-from app.persistence.retention import PacketRetentionService
+from app.persistence.retention import (
+    RETENTION_FAILURE_MESSAGE,
+    PacketRetentionService,
+)
 from app.repositories.packet import PacketRepository
 from app.schemas.packet import PacketType
 from tests.fakes import PACKET_BASE_TIME, make_normalized_packet
@@ -370,3 +375,121 @@ def test_post_to_collection_is_not_allowed(client: TestClient) -> None:
 def test_unknown_route_is_404(client: TestClient) -> None:
     """An unknown packet sub-route returns 404."""
     assert client.get(f"{PACKETS_URL}/nested/path").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Retention outcomes (M19.3/M19.5)
+# ---------------------------------------------------------------------------
+
+
+def test_retention_cleanup_reports_the_policy_it_used(
+    client: TestClient, db_engine
+) -> None:
+    """A successful cleanup names the window and whether it is active.
+
+    The response used to carry only ``deleted``, so a reader could not tell a
+    zero produced by "keep forever" from one produced by a window that simply had
+    nothing to remove (M19.5).
+    """
+    body = client.post(f"{PACKETS_URL}/retention/cleanup").json()
+
+    assert body["success"] is True
+    assert body["data"]["deleted"] == 0
+    assert body["data"]["retention_days"] == RETENTION_DAYS
+    assert body["data"]["enabled"] is True
+
+
+def test_a_failed_cleanup_is_an_error_not_a_zero(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable store answers 500, never ``200 {"deleted": 0}`` (M19.5).
+
+    This is the M19.3/M19.5 defect stated as a test: an operation that could not
+    complete must not be described as an operation that completed and removed
+    nothing.
+    """
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    failing = PacketRetentionService(
+        session_factory=lambda: Session(bind=engine),
+        retention_days=RETENTION_DAYS,
+    )
+    monkeypatch.setattr(
+        packets_module, "get_packet_retention_service", lambda: failing
+    )
+    try:
+        response = client.post(f"{PACKETS_URL}/retention/cleanup")
+    finally:
+        engine.dispose()
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body["success"] is False
+    assert body["message"] == RETENTION_FAILURE_MESSAGE
+    assert body["errors"] == [{"field": "retention", "code": "INTERNAL_ERROR"}]
+
+
+def test_a_failed_cleanup_leaks_no_internal(client: TestClient, monkeypatch) -> None:
+    """The failure response carries the safe sentence and nothing else (M13.30)."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    failing = PacketRetentionService(
+        session_factory=lambda: Session(bind=engine),
+        retention_days=RETENTION_DAYS,
+    )
+    monkeypatch.setattr(
+        packets_module, "get_packet_retention_service", lambda: failing
+    )
+    try:
+        response = client.post(f"{PACKETS_URL}/retention/cleanup")
+    finally:
+        engine.dispose()
+
+    text = response.text.lower()
+    for leak in ("sqlite", "traceback", "operationalerror", "no such table", ".db"):
+        assert leak not in text
+
+
+def test_the_retention_helper_is_refused_outside_development(
+    client: TestClient,
+) -> None:
+    """The destructive helper disappears on a deployed instance (M19.3)."""
+    original = settings.app_env
+    settings.app_env = "production"
+    try:
+        response = client.post(f"{PACKETS_URL}/retention/cleanup")
+    finally:
+        settings.app_env = original
+
+    assert response.status_code == 501
+    assert response.json()["success"] is False
+    assert response.json()["errors"] == [
+        {"field": "retention", "code": "FEATURE_NOT_IMPLEMENTED"}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("app_env", "expected"),
+    [
+        ("development", True),
+        ("test", True),
+        ("DEVELOPMENT", True),
+        ("  test  ", True),
+        ("production", False),
+        ("staging", False),
+        ("", False),
+    ],
+)
+def test_retention_helper_availability_by_environment(
+    monkeypatch: pytest.MonkeyPatch, app_env: str, expected: bool
+) -> None:
+    """Only development and test environments expose the helper (M19.3)."""
+    monkeypatch.setattr(settings, "app_env", app_env)
+
+    assert packets_module._retention_helper_available() is expected

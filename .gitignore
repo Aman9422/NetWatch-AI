@@ -14,8 +14,16 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored (M19.13). `lib/` and `lib64/` come from GitHub's stock Python template,
+# where they are root-level packaging artifacts. Unanchored they match a `lib`
+# directory *at any depth*, and this repository has one in the frontend:
+# `frontend/src/lib/` holds shared source (`viewport.ts`, `format.ts`, ...) that
+# tracked components import, so the unanchored pattern silently kept six real
+# source files out of version control. A clone could not build the frontend, and
+# `git clean -xdf` would have deleted them. A packaging artifact only ever appears
+# at the repository root, so the patterns are anchored there.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
