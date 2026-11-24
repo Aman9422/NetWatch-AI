@@ -19,23 +19,40 @@
  *   connection behind (M15.35/M15.27).
  */
 
-import { useEffect, useState } from 'react'
+import { lazy, useEffect, useState } from 'react'
 import Sidebar from './components/Sidebar'
 import Navbar from './components/Navbar'
 import Toast from './components/Toast'
-import Dashboard from './pages/Dashboard'
-import LiveTraffic from './pages/LiveTraffic'
-import Devices from './pages/Devices'
-import Connections from './pages/Connections'
-import Detections from './pages/Detections'
-import Alerts from './pages/Alerts'
-import Incidents from './pages/Incidents'
-import Analytics from './pages/Analytics'
-import Reports from './pages/Reports'
-import Notifications from './pages/Notifications'
-import System from './pages/System'
-import Settings from './pages/Settings'
+import { LazyPage } from './components/PageBoundary'
 import { isNarrowViewport, onEnterNarrowViewport } from './lib/viewport'
+
+/**
+ * The pages, each in its own chunk (M19.8).
+ *
+ * M18 measured the built shell at 907.84 kB of JavaScript in a single file —
+ * every page, the charting library and the icon set, over Vite's 500 kB advisory.
+ * `lazy` keeps each page's code out of that first download, so the shell and the
+ * sidebar arrive immediately and a page's chunk follows when it is opened.
+ *
+ * Dashboard is lazy too, despite being the landing page: it is one of only two
+ * pages that import the charting library, so leaving it eager would keep that
+ * library in the entry chunk and the split would move almost nothing. The cost is
+ * a brief `LazyPage` fallback on first paint.
+ *
+ * The page modules are unchanged; this is a delivery change, not a redesign.
+ */
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const LiveTraffic = lazy(() => import('./pages/LiveTraffic'))
+const Devices = lazy(() => import('./pages/Devices'))
+const Connections = lazy(() => import('./pages/Connections'))
+const Detections = lazy(() => import('./pages/Detections'))
+const Alerts = lazy(() => import('./pages/Alerts'))
+const Incidents = lazy(() => import('./pages/Incidents'))
+const Analytics = lazy(() => import('./pages/Analytics'))
+const Reports = lazy(() => import('./pages/Reports'))
+const Notifications = lazy(() => import('./pages/Notifications'))
+const System = lazy(() => import('./pages/System'))
+const Settings = lazy(() => import('./pages/Settings'))
 
 /** Every view the shell can show. The sidebar renders this set. */
 export type Page =
@@ -121,7 +138,10 @@ export default function App() {
             page's (M15.35). */}
         <main className="flex-1 overflow-auto p-6" style={{ backgroundColor: '#020617' }}>
           <div key={page} className="fade-in-up">
-            {renderPage()}
+            {/* The route name also resets a page whose chunk failed to load, so
+                returning to it later is a fresh attempt rather than a stale error
+                (M19.8). */}
+            <LazyPage resetKey={page}>{renderPage()}</LazyPage>
           </div>
         </main>
       </div>

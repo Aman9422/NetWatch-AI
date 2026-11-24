@@ -197,7 +197,7 @@ def test_a_run_that_collected_nothing_is_still_not_a_pass() -> None:
 
 
 def test_a_suite_that_reported_no_passing_test_is_not_a_pass() -> None:
-    """A gate whose output never says "passed" is refused (M18.13)."""
+    """A gate whose output never says ``passed`` is refused (M18.13)."""
     stage = _stage("frontend-unit")
     assert runner._no_tests_reason(stage, "Test Files  no tests\n")
 
@@ -220,3 +220,70 @@ def test_only_the_silent_gate_declares_no_summary_pattern() -> None:
         if not stage.summaries and not stage.silent_on_success
     }
     assert expected == set()
+
+
+# ---------------------------------------------------------------------------
+# The report must not be able to fail the run it is describing
+# ---------------------------------------------------------------------------
+
+
+def test_a_summary_the_console_cannot_encode_does_not_crash_the_report(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A decorated summary is printed, not raised on (M19.2).
+
+    The baseline run died here. Vite's reporter prefixes its summary with a
+    check mark, the console's encoding on this machine was ``cp1252``, and
+    printing the line raised ``UnicodeEncodeError`` *inside the runner* — after
+    every gate had already run and passed. The results were lost and the process
+    exited 1 with a traceback, so a green run reported itself as a failure.
+    """
+    decorated = "\u2713 built in 714ms"
+
+    # ``print`` is what raised, so the check drives the same call the report uses.
+    runner._out(decorated)
+    captured = capsys.readouterr()
+    assert "built in 714ms" in captured.out
+
+
+def test_renderable_leaves_printable_text_unchanged() -> None:
+    """Text the console can already print is returned as it is (M19.2).
+
+    The substitution is confined to the character the console cannot represent.
+    A report that rewrote ordinary summaries would no longer be quoting the
+    gate, which is the whole of M18.13's rule.
+    """
+    ordinary = "2612 passed, 1 warning in 31.96s"
+    assert runner._renderable(ordinary) == ordinary
+
+
+def test_the_report_survives_a_gate_whose_output_the_console_rejects(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A full report containing an unencodable summary still prints (M19.2).
+
+    The end-to-end shape of the defect: not one line but the whole table, the
+    verdict and the per-gate detail. The report is asserted to *reach* its
+    verdict, because a run that dies mid-table has no verdict at all.
+    """
+    results = (
+        runner.StageResult(
+            stage=_stage("frontend-build"),
+            status=runner.PASSED,
+            duration=0.94,
+            summary="\u2713 built in 941ms",
+        ),
+        runner.StageResult(
+            stage=_stage("backend-tests"),
+            status=runner.PASSED,
+            duration=31.96,
+            summary="2612 passed, 1 warning in 31.96s",
+        ),
+    )
+
+    code = runner._report(results, tail_lines=10, verbose=False, strict_skips=False)
+
+    captured = capsys.readouterr()
+    assert code == 0, "a run in which every gate passed must not exit non-zero"
+    assert "RESULT: PASS" in captured.out
+    assert "2 passed" in captured.out

@@ -4,7 +4,7 @@
 
 **Current Stage:** Base Application Implementation
 **Base Application:** In Progress
-**Current Milestone:** M18 — Testing ✅ COMPLETE (next: M19 — Stabilization)
+**Current Milestone:** M19 — Stabilization ✅ COMPLETE (next: M20 — Base Application Release)
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -1178,18 +1178,123 @@ no guard at all:
 
 ---
 
-# M19 — Stabilization
+# M19 — Stabilization ✅ COMPLETE
 
-* [ ] Fix critical bugs
-* [ ] Fix high-priority bugs
-* [ ] Review logs
-* [ ] Review memory usage
-* [ ] Review database growth
-* [ ] Review WebSocket stability
-* [ ] Review packet processing performance
-* [ ] Verify error handling
-* [ ] Verify deployment instructions
-* [ ] Verify clean installation
+* [x] Establish the stabilization baseline (M19.1) — every existing quality gate
+      re-run on this checkout; `backend/.venv` and `frontend/node_modules` were
+      **absent** at the start, so the environment was rebuilt from scratch and that
+      became the clean-install evidence (M19.12)
+* [x] Defect and risk register (M19.2) — ten findings with priority, evidence,
+      impact, correction and regression test. Eight fixed, two documented
+* [x] **D1 (High) — the quality-gate runner crashed on its own report.** Vite's
+      `U+2713` could not be encoded by a `cp1252` console, so `print` raised *inside
+      the runner* after six gates had passed: the results were lost and the process
+      exited 1 with a traceback. A green run reported itself as red. Fixed at one
+      choke point (`_renderable`/`_out`), with 3 regression tests
+* [x] **D2 (High) — three pyright errors.** `RetentionOutcomeLike` members had
+      docstring-only bodies, so each declared a return type and returned `None`.
+      Fixed with explicit `...` bodies; pyright is now 0/0/0
+* [x] **D3 (High) — `README.md` was a one-line stub.** Rewritten as a real
+      installation guide: requirements, both installs, every consequential
+      configuration default, startup, ports, capture permissions, verification
+      commands, report storage, troubleshooting and the security limitations. Two
+      claims in the first draft were wrong and were corrected against the code
+      (`http` not `https`; `{"name": ...}` not `{"interface_name": ...}`)
+* [x] **D4 (Medium) — the 907.84 kB bundle.** All twelve routes are now lazy chunks:
+      entry **249.49 kB** (−72.5%), charts in a 338.95 kB chunk loaded on demand, no
+      chunk over Vite's 500 kB advisory. A chunk can fail, so a boundary was added
+      (`PageBoundary.tsx`, 4 tests) that keeps the shell usable and offers a reload
+* [x] **D8 (Critical, latent) — `frontend/src/lib/` was git-ignored** by GitHub's
+      unanchored `lib/` pattern, so six real source files were untracked and a clone
+      could not build the frontend. Already fixed in the tree; **verified** and
+      recorded here so it is not reintroduced
+* [x] Logging and error handling reviewed (M19.3) — the path a failure travels, in
+      every layer. No application log statement was rewritten, because none was
+      wrong; the only change in this area is the runner (§D1). Disclosure rules
+      re-verified: no stack trace, SQL, filesystem path or credential in a response
+* [x] Memory and resource stability assessed (M19.4) — every long-lived collection
+      is bounded by a configured cap with a test naming it. `tracemalloc` growth
+      falls 1 610 → 573 → 58 KiB across three identical repetitions: a working set
+      filling, not a leak. **Stated with it:** `tracemalloc` sees Python allocations
+      only, so a flat result is a negative result about Python objects, not proof
+      the process is leak-free. No memory threshold was invented
+* [x] Database growth and retention reviewed (M19.5) — packet retention deletes only
+      expired rows, in one indexed transaction, and `0` really means keep forever.
+      Report artifacts grow only on request; the retention policy is **opt-in**
+      (`REPORT_RETENTION_DAYS=0` keeps everything) because deleting an operator's
+      artifact without being asked is not stabilization. Row and file are always
+      removed together
+* [x] Packet-processing stability verified (M19.6) — a malformed frame is isolated
+      and **no traffic is invented for it**; a downstream stage failing does not
+      stop capture, detection, alerting or correlation; each layer's failure is
+      injected and asserted. No pipeline stage was added or changed
+* [x] WebSocket stability verified (M19.7) — all four channels: lifecycle,
+      unsubscribe, cleanup, heartbeat, reconnect (a new connection, no replay),
+      bounded queues with drop-oldest, the 200/s packet bucket, slow clients,
+      publishing failures and shutdown. **No WebSocket file was modified**; the
+      transport is torn down last on purpose, so the session's final events survive
+* [x] Frontend stability and build health (M19.8) — 465 unit tests, 67 live tests
+      against a real backend, `tsc --noEmit` clean, build clean. The two Vite
+      deprecation notices (`__dirname` in ESM, a JSON import without an attribute)
+      were fixed, so the build now prints neither. Four routes were checked in a
+      real browser against a real backend — including Dashboard, which proves the
+      chart chunk loads on demand
+* [x] Report storage and artifact handling (M19.9) — atomic writes, safe filenames,
+      read-time confinement, partial-artifact cleanup, honest `generating`/
+      `completed`/`failed` status, correct PDF layout, the CSV formula guard, and
+      safe downloads. No internal path reaches a client
+* [x] Configuration and startup reliability (M19.10) — every field has a documented
+      default; an invalid value fails at startup with the field named; CORS covers
+      both 5173 and 8443 for `localhost` and `127.0.0.1`; loopback binding by
+      default. **Nothing in the application was changed here**
+* [x] Deployment instructions verified (M19.11) — every claim in the new README was
+      checked against the code, not proofread. Two were wrong and were fixed
+* [x] Clean installation verified (M19.12) — a **new** venv from `requirements.txt`,
+      `npm ci` from `package-lock.json` (217 packages, now documented as the
+      canonical workflow), a real server on a throwaway database answering
+      `{"status":"healthy"}`, and the developer's `netwatch.db` never created. Three
+      setup failures were hit and are recorded with their resolutions
+* [x] Git and repository hygiene (M19.13) — `backend/netwatch.db` untracked and
+      ignored; no `.db`/`.env` tracked; all three `.env.example` files tracked;
+      `node_modules`, `dist`, `reports` and `.venv` ignored; `frontend/src/lib`
+      tracked; the largest tracked file is a lockfile (113 kB). No secrets. No
+      `filter-repo`, no force-push
+* [x] Known limitations reviewed (M19.14) — routed device identity, no auth/RBAC/TLS,
+      no concurrency coverage, opt-in report retention, one performance environment.
+      Each with impact, workaround, severity, M20 blocker status and future work
+* [x] Final stabilization verification (M19.15) — see **Verification** below
+* [x] Documentation — `docs/23_M19_Stabilization_Design.md`
+
+**Verification (this checkout, Windows 11, Python 3.13.2):**
+
+* **Full gate set: 9/9 PASS — `RESULT: PASS`** (`run_quality_gates.py --full`):
+  backend 2615 passed, pyright 0/0/0, security 145 passed, frontend 465 passed,
+  typecheck exit 0, build 774 ms, e2e `PASS (sample)`, e2e-live `PASS (live)`,
+  performance `RESULT: measured`
+* **Frontend live suite: 67 passed (3 files)** against a real backend on 8000
+* **Backend suite: 2615 passed, 0 failed, 0 skipped** — 2612 baseline + 3 (D1)
+* **Frontend suite: 465 passed (17 files)** — 461 baseline + 4 (boundary)
+* **One warning**, explained: `StarletteDeprecationWarning` from the installed
+  `fastapi.testclient`, not from project code
+* **Bundle: 249.49 kB entry / 338.95 kB chart chunk / 24.71 kB CSS** — the advisory
+  M18 recorded is gone because the cause is gone
+* **Not executed, and so not claimed:** `benchmark_m18.py --milestones`, any load or
+  soak test, any browser-driven UI test, and any multi-machine performance comparison
+
+**Files created:** `frontend/src/components/PageBoundary.tsx`,
+`frontend/src/components/PageBoundary.test.tsx`,
+`docs/23_M19_Stabilization_Design.md`.
+
+**Files modified:** `backend/scripts/run_quality_gates.py` (D1),
+`backend/app/services/retention_scheduler.py` (D2),
+`backend/tests/test_quality_gate_runner.py` (+3, and one nested-quote docstring),
+`frontend/src/App.tsx` (lazy routes), `frontend/vite.config.ts` (two deprecations,
+no vendor split), `README.md` (rewritten).
+
+**M20 release blockers (§19 of the design document):** no authentication of any
+kind; the README must stay accurate; the gate runner must keep running to its
+verdict; `backend/.venv` must exist on the release machine; and the eight route
+chunks not opened in a real browser must be checked before tagging.
 
 ---
 

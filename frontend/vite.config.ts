@@ -1,9 +1,13 @@
 import { defineConfig, type HtmlTagDescriptor, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-import siteConfiguration from './.figma/make/site.json'
+// `with { type: 'json' }` is the standard spelling for a JSON module import, and
+// the one Node and Vite accept without a deprecation notice (M19.8). Without the
+// attribute the import still resolves, but every build prints a warning that the
+// syntax is going away — noise that hides a real warning later.
+import siteConfiguration from './.figma/make/site.json' with { type: 'json' }
 
 // Vite config — https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -15,6 +19,11 @@ export default defineConfig(({ mode }) => {
     build: {
       sourcemap: emitSourcemaps ? 'inline' : false,
       minify: !emitSourcemaps,
+      // No manual chunking (M19.8). The per-route split in `App.tsx` is what brings
+      // the entry bundle under the advisory, and Rollup already hoists whatever the
+      // routes share. A hand-written vendor split would add only caching polish
+      // while introducing the chunk-initialization-order failure class, which is the
+      // wrong trade during a stabilization milestone.
     },
     plugins: [
       react(),
@@ -26,7 +35,11 @@ export default defineConfig(({ mode }) => {
     ],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, './src'),
+        // `fileURLToPath` rather than `__dirname`: this config is ESM (`type:
+        // module`), where `__dirname` is not defined — Node supplies it only through
+        // a compatibility shim that Vite 8 warns about (M19.8). This is the same
+        // conversion `vitest.config.ts` already uses, so the two configs agree.
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },
     server: {

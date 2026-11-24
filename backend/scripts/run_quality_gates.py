@@ -513,6 +513,42 @@ def _tail(text: str, lines: int) -> str:
     return "\n".join(stripped.splitlines()[-lines:])
 
 
+# -- printing, when a gate's own words do not fit the console -----------------
+
+
+def _renderable(text: str) -> str:
+    """Return ``text`` in a form this console can actually print (M19.2).
+
+    A gate is quoted rather than paraphrased (M18.13), so the report carries
+    whatever the gate wrote — and a gate that decorates its summary writes
+    characters this console may not have. Vite's build reporter prefixes its
+    summary with ``U+2713 CHECK MARK``, and a Windows console whose encoding is
+    ``cp1252`` cannot encode that character at all.
+
+    Without this, printing the summary raised ``UnicodeEncodeError`` *out of the
+    runner itself*, after the gates had run and while the report was being
+    written. The results already computed were lost and the process exited
+    non-zero with a traceback, so a run in which every gate passed was reported
+    as a failure — the one direction a verification report must never be wrong
+    in.
+
+    The substitution is confined to the console's own limitation: a character the
+    stream can encode passes through untouched, so ordinary output is unchanged,
+    and only an unrepresentable character becomes a placeholder.
+    """
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return text.encode(encoding, "replace").decode(encoding, "replace")
+    return text
+
+
+def _out(text: str = "") -> None:
+    """Print one line of the report, never raising on an odd character (M19.2)."""
+    print(_renderable(text))
+
+
 # -- running a gate -----------------------------------------------------------
 
 
@@ -603,12 +639,16 @@ def _run_stage(stage: Stage) -> StageResult:
 def _print_table(results: Sequence[StageResult]) -> None:
     """Print the one-line-per-gate summary (M18.13)."""
     key_width = max((len(result.stage.key) for result in results), default=4)
-    print()
-    print("=" * BANNER_WIDTH)
-    print(f"NetWatch AI quality gates — {len(results)} selected")
-    print("=" * BANNER_WIDTH)
-    print(f"{'gate'.ljust(key_width)}  {'result':<6}  {'time':>8}  summary")
-    print(f"{'-' * key_width}  {'-' * 6}  {'-' * 8}  {'-' * 44}")
+    # Every line goes through ``_out`` rather than ``print``: the quoted
+    # summaries carry each gate's own decorated output, and a console that cannot
+    # encode one of those characters must not be able to take the report down
+    # (M19.2).
+    _out()
+    _out("=" * BANNER_WIDTH)
+    _out(f"NetWatch AI quality gates — {len(results)} selected")
+    _out("=" * BANNER_WIDTH)
+    _out(f"{'gate'.ljust(key_width)}  {'result':<6}  {'time':>8}  summary")
+    _out(f"{'-' * key_width}  {'-' * 6}  {'-' * 8}  {'-' * 44}")
     for result in results:
         timing = f"{result.duration:8.2f}s"
         detail = result.summary or result.reason
@@ -619,23 +659,29 @@ def _print_table(results: Sequence[StageResult]) -> None:
                 else "(no summary line recognised)"
             )
         line = f"{result.stage.key.ljust(key_width)}  {result.status:<6}  {timing}"
-        print(f"{line}  {detail}")
+        _out(f"{line}  {detail}")
 
 
 def _print_detail(result: StageResult, tail_lines: int) -> None:
-    """Print the failure or skip detail for one gate (M18.13)."""
-    print()
+    """Print the failure or skip detail for one gate (M18.13).
+
+    The tail is a gate's own output, so it goes through :func:`_out` for the same
+    reason the summary line does: a failing gate's last forty lines are exactly
+    where a decorated character is most likely to appear, and a traceback raised
+    while printing a failure would hide the failure itself (M19.2).
+    """
+    _out()
     if result.status == SKIPPED:
         rule = f"---- SKIPPED {result.stage.key}: {result.reason} "
-        print(rule.ljust(BANNER_WIDTH, "-"))
-        print("     it was selected, so this run cannot pass while it is unrun")
+        _out(rule.ljust(BANNER_WIDTH, "-"))
+        _out("     it was selected, so this run cannot pass while it is unrun")
         return
     rule = f"---- FAILED {result.stage.key}: {result.reason} "
-    print(rule.ljust(BANNER_WIDTH, "-"))
-    print(f"     re-run it: {_reproduction(result.stage)}")
+    _out(rule.ljust(BANNER_WIDTH, "-"))
+    _out(f"     re-run it: {_reproduction(result.stage)}")
     body = _tail(result.output, tail_lines)
     if body:
-        print(body)
+        _out(body)
 
 
 def _print_output(result: StageResult, tail_lines: int) -> None:
@@ -643,9 +689,9 @@ def _print_output(result: StageResult, tail_lines: int) -> None:
     body = _tail(result.output, tail_lines)
     if not body:
         return
-    print()
-    print(f"---- output: {result.stage.key} ".ljust(BANNER_WIDTH, "-"))
-    print(body)
+    _out()
+    _out(f"---- output: {result.stage.key} ".ljust(BANNER_WIDTH, "-"))
+    _out(body)
 
 
 def _report(
@@ -673,14 +719,14 @@ def _report(
             _print_output(result, tail_lines)
 
     if with_skipped_tests:
-        print()
-        print("tests skipped inside a gate (reported, and never counted as a pass):")
+        _out()
+        _out("tests skipped inside a gate (reported, and never counted as a pass):")
         for result in with_skipped_tests:
-            print(f"  {result.stage.key}: {result.skipped_tests} skipped")
+            _out(f"  {result.stage.key}: {result.skipped_tests} skipped")
 
     passed = [result for result in results if result.ok]
-    print()
-    print(
+    _out()
+    _out(
         f"{len(results)} gate(s): {len(passed)} passed, {len(failures)} failed, "
         f"{len(skipped)} skipped"
     )
@@ -694,10 +740,10 @@ def _report(
         reasons.append("skipped tests reported while --strict-skips is set")
 
     if reasons:
-        print(f"RESULT: FAIL ({'; '.join(reasons)})")
+        _out(f"RESULT: FAIL ({'; '.join(reasons)})")
         return 1
 
-    print("RESULT: PASS")
+    _out("RESULT: PASS")
     return 0
 
 
@@ -821,12 +867,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     results = []
     for index, stage in enumerate(selected, start=1):
-        print(f"[{index}/{len(selected)}] {stage.key}: {_reproduction(stage)}")
+        _out(f"[{index}/{len(selected)}] {stage.key}: {_reproduction(stage)}")
         result = _run_stage(stage)
         results.append(result)
         detail = result.summary or result.reason
         suffix = f" — {detail}" if detail else ""
-        print(f"          {result.status} in {result.duration:.2f}s{suffix}")
+        _out(f"          {result.status} in {result.duration:.2f}s{suffix}")
 
     return _report(
         tuple(results),

@@ -69,13 +69,20 @@ class RetentionOutcomeLike(Protocol):
     @property
     def enabled(self) -> bool:
         """Whether the policy is switched on at all."""
+        # An ellipsis rather than a docstring alone: a protocol member whose body
+        # is only a docstring has an implicit ``return None``, so a type checker
+        # reads it as a function that does not honour its own declared return type
+        # (M19.2). The body is never executed — an implementation supplies it.
+        ...
 
     @property
     def succeeded(self) -> bool:
         """Whether the pass completed, whether or not it removed anything."""
+        ...
 
     def summary(self) -> str:
         """Return a short human description of the pass."""
+        ...
 
 
 @dataclass(frozen=True)
