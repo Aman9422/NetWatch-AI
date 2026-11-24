@@ -282,7 +282,9 @@ export default function LiveTraffic({ showToast }: Props) {
       )}
 
       {/* Stat cards */}
-      <div className="grid grid-cols-4 gap-4 shrink-0">
+      {/* Two columns below the extra-large breakpoint: four cards across a
+          laptop width leaves each caption too narrow to read. */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 shrink-0">
         <StatCard
           label="Packets / sec" value={formatItemsPerSecond(snapshot?.packets_per_second)}
           sub={ratesUnavailable ? 'snapshot unavailable' : 'M6 snapshot · polled'}

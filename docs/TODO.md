@@ -2,9 +2,10 @@
 
 ## Project Status
 
-**Current Stage:** Base Application Implementation
-**Base Application:** In Progress
-**Current Milestone:** M19 — Stabilization ✅ COMPLETE (next: M20 — Base Application Release)
+**Current Stage:** Base Application Released
+**Base Application:** ✅ RELEASED at v0.0.20
+**Current Milestone:** M20 — Base Application Release ✅ COMPLETE
+**Next Stage:** AI Intelligence Layer (not started — see "Later — Advanced Features")
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -1300,20 +1301,34 @@ chunks not opened in a real browser must be checked before tagging.
 
 # M20 — Base Application Release
 
-* [ ] Full end-to-end workflow verified
-* [ ] Real packet capture verified
-* [ ] Dashboard uses real data
-* [ ] Detection verified in lab
-* [ ] Alerts verified
-* [ ] Reports verified
-* [ ] API verified
-* [ ] WebSockets verified
-* [ ] Tests passing
-* [ ] README updated
-* [ ] Screenshots updated
-* [ ] Demo recording created
-* [ ] GitHub repository cleaned
-* [ ] Version tagged
+**Status: released and verified.** Version `v0.0.20`. Full record in
+`docs/24_M20_Base_Application_Release.md`.
+
+* [x] Full end-to-end workflow verified
+* [x] Real packet capture verified — `Wi-Fi`, unelevated, 991 packets / 12 s, 0 errors
+* [x] Dashboard uses real data
+* [x] Detection verified in lab — all five rules, positive and negative
+* [x] Alerts verified — creation, evidence, severity, confidence, lifecycle
+* [x] Reports verified — daily/weekly/custom × CSV/PDF, artifacts opened
+* [x] API verified — 24 groups, 60 OpenAPI paths, 400/404/409/422/501
+* [x] WebSockets verified — 4/4 channels, heartbeat, 1001 on silent client
+* [x] All 12 frontend routes checked in a real browser
+* [x] Clean installation verified from a disposable clone
+* [x] Tests passing — 2 615 backend, 145 security, 465 frontend unit, 67 live,
+      pyright 0 errors, tsc 0 errors, build OK, `RESULT: PASS` (9/9 gates)
+* [x] README updated — install, use, verify, security, screenshots, future work
+* [x] Screenshots updated — 12 images in `docs/assets/screenshots/`
+* [x] Reproducible demo completed — `backend/scripts/demo_m20.py`
+* [x] GitHub repository cleaned — no tracked `.db`, `.env`, `.venv`,
+      `node_modules`, `dist`, reports or scratch scripts
+* [x] Version tagged — annotated `v0.0.20`
+
+**Defects corrected during M20:** four-up card rows clipped their labels on six
+routes; five of twelve routes were unreachable at 900×600; the interface name
+rendered as `?1-Fi` because a remote webfont could not rasterise `W`; the frontend
+package was still named `figma-make-app`; two high-severity npm advisories. The
+README's "capture requires an elevated shell" claim was also wrong for a default
+Npcap install and was corrected against measured behaviour.
 
 ---
 

@@ -340,7 +340,9 @@ export default function Connections({ showToast }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-4 gap-4">
+      {/* Two columns below the extra-large breakpoint: four cards across a
+          laptop width leaves each caption too narrow to read. */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
         <div className="rounded-2xl border p-4 flex items-center gap-3"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <div className="p-2.5 rounded-xl" style={{ backgroundColor: tint(C.accent, 0.08) }}>

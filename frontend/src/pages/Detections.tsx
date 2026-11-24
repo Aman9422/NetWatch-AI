@@ -341,7 +341,9 @@ export default function Detections({ showToast }: Props) {
   return (
     <div className="space-y-4">
       {/* Executing counters, as the engine reports them */}
-      <div className="grid grid-cols-4 gap-4">
+      {/* Two columns below the extra-large breakpoint: four cards across a
+          laptop width leaves each caption too narrow to read. */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
         <div className="rounded-2xl border p-4" style={{ backgroundColor: C.card, borderColor: C.border }}>
           <div className="flex items-center gap-2">
             <Activity size={13} style={{ color: C.accent }} />

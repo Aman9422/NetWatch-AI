@@ -1,8 +1,16 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+/* Inter is the UI face. JetBrains Mono is still requested — at 400/500/600 so a
+   `.mono` element carrying `font-semibold` (600) is never given a synthesised
+   weight — but it is only the fallback for monospaced text; see `.mono` below. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import 'tailwindcss';
 
 body {
-  font-family: 'Inter', sans-serif;
+  /* Local UI faces first, webfont last, for the same reason `.mono` does it: a
+     value the operator reads must not disappear because a CDN font failed to
+     rasterise one glyph. This also means the whole interface renders with no
+     network access at all, which a loopback-only tool should not depend on. */
+  font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, 'Helvetica Neue',
+    Arial, sans-serif;
   background-color: #020617;
   color: #F8FAFC;
   overflow: hidden;
@@ -24,7 +32,22 @@ body {
 }
 
 .mono {
-  font-family: 'JetBrains Mono', monospace;
+  /* Local monospace faces come first, and the webfont is the fallback rather
+     than the other way round. `.mono` carries the values an operator acts on —
+     interface names, addresses, ports, ids — and those must render exactly as
+     the backend sent them. A screen-captured release showed `Wi-Fi` painted as
+     `?1-Fi` while the DOM held the correct codepoints: the remote webfont face
+     had been fetched but could not rasterise one glyph, and the browser had
+     nothing local to fall back to. Every platform in the support matrix ships a
+     monospace face, so preferring it makes the value readable with no network
+     at all. */
+  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', 'SF Mono', 'Menlo',
+    'DejaVu Sans Mono', 'JetBrains Mono', monospace;
+  /* Ligatures are the wrong default here: a programming font ligature rewrites
+     adjacent characters into one glyph, so a value on screen stops being the
+     value the backend sent. Monitoring output is read character for character. */
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
 }
 
 @keyframes ping-slow {

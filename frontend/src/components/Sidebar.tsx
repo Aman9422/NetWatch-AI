@@ -86,7 +86,7 @@ const NAV_GROUPS: readonly NavGroup[] = [
       { id: 'analytics', label: 'Analytics', icon: BarChart2,
         hint: 'Derived totals and rankings from the M6 snapshot, the registries and the detection layers.' },
       { id: 'reports', label: 'Reports', icon: FileText,
-        hint: 'Stored report metadata. No report writer exists yet, and no file is served.' },
+        hint: 'Generate a CSV or PDF report over a chosen period, then download the artifact that was written.' },
     ],
   },
   {
@@ -110,8 +110,11 @@ interface Props {
 
 export default function Sidebar({ currentPage, onNavigate, isOpen }: Props) {
   return (
+    // Only the horizontal axis is hidden. `overflow-hidden` also clips the
+    // vertical axis, which left the nav's lower groups laid out past the bottom
+    // of the rail with no way to scroll them into reach.
     <aside
-      className="flex flex-col shrink-0 border-r transition-all duration-300 overflow-hidden"
+      className="flex flex-col shrink-0 border-r transition-all duration-300 overflow-x-hidden"
       style={{
         width: isOpen ? '272px' : '0',
         minWidth: isOpen ? '272px' : '0',
@@ -119,7 +122,7 @@ export default function Sidebar({ currentPage, onNavigate, isOpen }: Props) {
         borderColor: C.card,
       }}>
       {/* Identity */}
-      <div className="flex items-center gap-3 px-6 py-5 border-b shrink-0"
+      <div className="flex items-center gap-3 px-5 py-3.5 border-b shrink-0"
         style={{ borderColor: C.card }}>
         <div className="flex items-center justify-center w-9 h-9 rounded-xl shrink-0"
           style={{ background: 'linear-gradient(135deg, #38BDF8, #0EA5E9)' }}>
@@ -134,10 +137,14 @@ export default function Sidebar({ currentPage, onNavigate, isOpen }: Props) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-4 overflow-y-auto">
+      {/* `min-h-0` is what lets this column scroll: a flex child sized by
+          `flex-1` still refuses to shrink below its content, so without it the
+          lower groups were laid out past the bottom edge instead of scrolling
+          into reach on a short viewport (900x600 included). */}
+      <nav className="flex-1 min-h-0 px-3 py-2 overflow-y-auto">
         {NAV_GROUPS.map(group => (
-          <div key={group.title} className="mb-4">
-            <p className="text-xs font-semibold uppercase tracking-widest px-3 mb-2"
+          <div key={group.title} className="mb-1.5 first:mt-0">
+            <p className="text-[10px] font-semibold uppercase tracking-widest px-3 py-1"
               style={{ color: C.dim }}>
               {group.title}
             </p>
@@ -149,7 +156,7 @@ export default function Sidebar({ currentPage, onNavigate, isOpen }: Props) {
                     key={id}
                     onClick={() => onNavigate(id)}
                     title={hint}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150"
+                    className="w-full flex items-center gap-3 px-3 py-1.5 rounded-xl text-sm font-medium transition-all duration-150"
                     style={{
                       backgroundColor: active ? tint(C.accent, 0.12) : 'transparent',
                       color: active ? C.accent : C.muted,
@@ -174,7 +181,11 @@ export default function Sidebar({ currentPage, onNavigate, isOpen }: Props) {
       {/* Which backend this session is pointed at. Public configuration only —
           no secret is read here, and none could be: Vite inlines VITE_* into the
           bundle, so anything here is already visible to the browser. */}
-      <div className="mx-3 mb-4 shrink-0">
+      {/* Hidden on a short viewport. The rail has to fit twelve routes, and on a
+          600px-tall window the endpoint card pushed Reports and Settings past the
+          bottom of a column that cannot scroll. What it states is also readable
+          on System, so nothing is lost where it does not fit. */}
+      <div className="mx-3 mb-4 shrink-0 hidden [@media(min-height:720px)]:block">
         <div className="px-4 py-3 rounded-xl border"
           style={{ backgroundColor: C.card, borderColor: C.border }}>
           <div className="flex items-center gap-2 mb-2">

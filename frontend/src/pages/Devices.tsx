@@ -393,7 +393,9 @@ export default function Devices({ showToast }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-4 gap-4">
+      {/* Two columns below the extra-large breakpoint: four cards across a
+          laptop width leaves each caption too narrow to read. */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Devices on this page" value={loaded.length}
           sub={resource.total === null ? 'Total unknown' : `${formatCount(resource.total)} in registry`}
           icon={<Monitor size={16} />} />

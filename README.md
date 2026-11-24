@@ -48,7 +48,7 @@ Every figure on screen came from the backend.
 | **Node.js** | 20 or newer, with `npm` | Developed and verified on Node 22 / npm 10 |
 | **OS** | Windows 10/11, or any POSIX system | The documented commands use PowerShell; the Python side is portable |
 | **Disk** | ~500 MB | Dependencies, the SQLite database and generated reports |
-| **Privileges** | **Administrator, for live capture only** | Opening an interface needs it. Every other step, and the whole test suite, does not. |
+| **Privileges** | **Administrator, for live capture only** | Whether it is required depends on how Npcap/libpcap was installed. See [Capturing packets](#54-capturing-packets). Every other step, and the whole test suite, runs unelevated. |
 
 Nothing else is required: no Docker, no database server, no external account, no
 API key.
@@ -185,8 +185,12 @@ or every page will render as an error state.
 
 ### 5.4 Capturing packets
 
-Capture is controlled from the API or the dashboard, and **requires an elevated
-shell**:
+Capture is controlled from the API or the dashboard. **Whether it needs an elevated
+shell depends on the capture driver.** An Npcap install with *"Restrict Npcap
+driver's access to Administrators only"* ticked requires one; the default install
+does not, and this release was verified capturing unelevated on Windows 11 with the
+default. On Linux, `CAP_NET_RAW` or root is normally required. Try unelevated first
+and elevate only if the start call reports a permission error.
 
 ```powershell
 # List the interfaces the machine offers (each carries an `is_up` flag)
@@ -202,9 +206,9 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/capture/start
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/capture/stop
 ```
 
-Without elevation the start call fails with a described error. Everything else —
-the API, the dashboard, analytics, reporting and the whole test suite — runs
-unelevated.
+If the start call fails with a permission error, elevate the shell and retry.
+Everything else — the API, the dashboard, analytics, reporting and the whole test
+suite — runs unelevated regardless.
 
 ---
 
@@ -309,7 +313,7 @@ docs/             design documents, one per milestone (01–23)
 | Symptom | Cause and answer |
 | --- | --- |
 | Every page shows an error state | The backend is not running, or the frontend port is not in the CORS allowlist |
-| `capture/start` fails | The shell is not elevated, or the interface name is wrong — list interfaces first |
+| `capture/start` reports a permission error | The capture driver requires elevation — elevate the shell and retry. Otherwise check the interface name against `capture/interfaces` |
 | A frontend gate reports a missing prerequisite | `frontend/node_modules` is absent: run `npm ci` in `frontend/` |
 | `npm run test:live` fails naming `127.0.0.1:8000` | No backend is listening; start one |
 | `e2e-live` cannot bind a port | A leftover server from an earlier run; it picks a free port itself |
@@ -320,7 +324,33 @@ docs/             design documents, one per milestone (01–23)
 
 ---
 
-## 10. Security limitations
+## 10. Screenshots
+
+Captured from the running release candidate at 1440×900, against a live capture on
+`Wi-Fi`. No data in any screenshot is mocked or edited.
+
+![Dashboard](docs/assets/screenshots/01-dashboard.png)
+
+![Live Traffic](docs/assets/screenshots/02-live-traffic.png)
+
+| Route | Screenshot |
+| --- | --- |
+| Dashboard | [`01-dashboard.png`](docs/assets/screenshots/01-dashboard.png) |
+| Live Traffic | [`02-live-traffic.png`](docs/assets/screenshots/02-live-traffic.png) |
+| Devices | [`03-devices.png`](docs/assets/screenshots/03-devices.png) |
+| Connections | [`04-connections.png`](docs/assets/screenshots/04-connections.png) |
+| Detections | [`05-detections.png`](docs/assets/screenshots/05-detections.png) |
+| Alerts | [`06-alerts.png`](docs/assets/screenshots/06-alerts.png) |
+| Incidents | [`07-incidents.png`](docs/assets/screenshots/07-incidents.png) |
+| Analytics | [`08-analytics.png`](docs/assets/screenshots/08-analytics.png) |
+| Reports | [`09-reports.png`](docs/assets/screenshots/09-reports.png) |
+| Notifications | [`10-notifications.png`](docs/assets/screenshots/10-notifications.png) |
+| System | [`11-system.png`](docs/assets/screenshots/11-system.png) |
+| Settings | [`12-settings.png`](docs/assets/screenshots/12-settings.png) |
+
+---
+
+## 11. Security limitations
 
 Stated plainly, because nothing else in this document should be read as a claim to
 the contrary:
@@ -339,7 +369,7 @@ Authentication, RBAC and TLS are future work and are not implemented.
 
 ---
 
-## 11. Documentation
+## 12. Documentation
 
 | Document | Subject |
 | --- | --- |
@@ -351,7 +381,33 @@ Authentication, RBAC and TLS are future work and are not implemented.
 | `docs/09_Test_Plan.md` | Testing approach |
 | `docs/12`–`22` | One design document per milestone, M8–M18 |
 | `docs/23_M19_Stabilization_Design.md` | The stabilization milestone |
+| `docs/24_M20_Base_Application_Release.md` | The base-application release record |
 | `docs/TODO.md` | Milestone-by-milestone status |
+
+---
+
+## 13. Future development
+
+The release above is the **base network-monitoring application**. It is a complete,
+working monitoring and rule-based detection platform, and it is not an AI system
+yet. Everything in this section is **planned and not implemented** — no part of it
+should be read as a current capability.
+
+| Planned capability | Description |
+| --- | --- |
+| Behavioral baseline learning | Learn per-device traffic baselines so deviation, not a fixed threshold, triggers detection |
+| ML-based anomaly detection | Replace the five static rules with models trained on the operator's own traffic |
+| Locally hosted LLM | A model served on the same machine, so no traffic metadata leaves it |
+| AI Security Analyst | Natural-language explanation of an incident and its evidence trail |
+| Intelligent sequence-based log investigation | Reason over ordered event sequences rather than isolated rules |
+| Wazuh integration | Ingest host and log telemetry alongside network flows |
+| Threat-intelligence integration | Enrich observed addresses and ports with external reputation |
+| MITRE ATT&CK integration | Map detections to techniques and tactics |
+
+The detection engine as shipped is **deterministic and rule-based**: five explicit
+rules with explicit thresholds. It detects what those rules describe, and it does
+not detect everything. The name "NetWatch AI" refers to the project's direction;
+the AI layer is the next development phase, not a description of this release.
 
 ---
 

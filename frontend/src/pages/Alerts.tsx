@@ -211,8 +211,10 @@ export default function Alerts({ showToast }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* Live counts from the backend, over the whole alert store */}
-      <div className="grid grid-cols-4 gap-4">
+      {/* Live counts from the backend, over the whole alert store. Two columns
+          below the extra-large breakpoint: a 4-up row at a narrow width squeezes
+          each card until its label clips. */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
         {ALERT_SEVERITY_ORDER.map(severity => (
           <SummaryTile key={severity} label={`${severityLabel(severity)} (all time)`}
             value={summary?.by_severity[severity] ?? 0}
