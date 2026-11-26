@@ -147,6 +147,15 @@ export type {
 
 export type {
   Baseline,
+  BaselinePage,
+  BaselineQuery,
+  BaselineResetResult,
+  BaselineWindow,
+  FeatureStatistics,
+  LearningState,
+} from './baseline'
+
+export type {
   DatabaseState,
   GeneratedReport,
   HealthCheck,

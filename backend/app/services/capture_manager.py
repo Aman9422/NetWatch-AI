@@ -138,6 +138,7 @@ class CaptureManager:
         # STOPPED, because a database problem is not a capture problem.
         self._flush_persistence()
         self._flush_connections()
+        self._flush_baselines()
 
         with self._lock:
             self._sniffer = None
@@ -294,6 +295,23 @@ class CaptureManager:
         if written:
             logger.info("Wrote %d connection aggregate(s) on capture stop", written)
 
+    def _flush_baselines(self) -> None:
+        """Write the behavioural windows the session accumulated (M21.5).
+
+        Like the two flushes above, this runs after ``sniffer.stop()`` has
+        returned, so no window can be updated while it is being written. A partial
+        window is written too, because its counters are real observations. Guarded
+        for the same reason: a storage problem must never turn a successful stop
+        into a ``CaptureStopError``.
+        """
+        try:
+            written = self._pipeline.flush_baselines()
+        except Exception:  # noqa: BLE001 - storage must not fail a stop
+            logger.exception("Failed to flush baseline windows during stop")
+            return
+        if written:
+            logger.info("Wrote %d baseline window(s) on capture stop", written)
+
     def _refresh_state(self) -> None:
         """Detect an unexpected worker termination and flag an error."""
         with self._lock:
@@ -350,6 +368,7 @@ def get_capture_manager() -> CaptureManager:
         # Direction classification (M6.7) uses the real local IP addresses.
         statistics.set_local_addresses_provider(interface_manager.get_local_addresses)
         from app.alerts import get_alert_engine
+        from app.baselines import get_baseline_engine
         from app.config.settings import settings
         from app.connections.manager import get_connection_tracker
         from app.correlation import get_correlation_engine
@@ -394,6 +413,12 @@ def get_capture_manager() -> CaptureManager:
             if settings.correlation_enabled and alerts is not None
             else None
         )
+        # The behavioural learner (M21.9). Wired exactly like the other consumers:
+        # the master switch decides only whether the capture path feeds the
+        # engine, while the read-only baseline API keeps working against what is
+        # already persisted either way. With it off, the pipeline costs one
+        # attribute read per packet rather than a feature extraction.
+        baselines = get_baseline_engine() if settings.baseline_enabled else None
 
         # The live stream (M14.13). One publisher shared by the pipeline and the
         # capture manager, both over the same process-wide manager, so a packet
@@ -411,6 +436,7 @@ def get_capture_manager() -> CaptureManager:
                 detection=detection,
                 alerts=alerts,
                 correlation=correlation,
+                baselines=baselines,
                 events=events,
             ),
             events=events,

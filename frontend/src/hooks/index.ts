@@ -61,6 +61,15 @@ export type { DashboardOptions, DashboardResource } from './useDashboard'
 export { useDevices } from './useDevices'
 export type { DeviceListOptions, DeviceListResource } from './useDevices'
 
+export { useBaselines } from './useBaselines'
+export type { BaselineListOptions, BaselineListResource } from './useBaselines'
+
+export { useBaseline } from './useBaseline'
+export type { BaselineDetailResource } from './useBaseline'
+
+export { useResetBaseline } from './useResetBaseline'
+export type { ResetBaselineResource } from './useResetBaseline'
+
 export { useConnections } from './useConnections'
 export type { ConnectionListOptions, ConnectionListResource } from './useConnections'
 

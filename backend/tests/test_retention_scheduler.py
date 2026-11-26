@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.baselines import retention as baseline_retention_module
+from app.baselines.aggregation import WindowCounters, floor_window
 from app.persistence import retention as packet_retention_module
 from app.reports import retention as report_retention_module
 from app.reports.retention import ReportRetentionService
@@ -30,6 +32,9 @@ from app.services.retention_scheduler import (
 )
 
 NOW = datetime(2025, 1, 31, 12, 0, 0, tzinfo=timezone.utc)
+
+#: The device the baseline-retention assertions read back.
+BASELINE_DEVICE_KEY = "mac:aa:bb:cc:dd:ee:10"
 
 
 @dataclass(frozen=True)
@@ -279,10 +284,19 @@ def test_the_thread_runs_a_pass_once_the_interval_elapses() -> None:
 
 
 def test_the_application_policies_are_named_and_ordered() -> None:
-    """Packet rows are the high-volume store, so they are applied first."""
+    """Packet rows are the high-volume store, so they are applied first.
+
+    M21 inserted the baseline window store between the two M19 policies: it is
+    smaller than the packet table and larger than the report table, and a pass is
+    a bounded delete. The order still puts the largest store first.
+    """
     policies = build_retention_policies()
 
-    assert [policy.name for policy in policies] == ["packets", "reports"]
+    assert [policy.name for policy in policies] == [
+        "packets",
+        "baselines",
+        "reports",
+    ]
 
 
 def test_get_retention_sweeper_returns_one_instance() -> None:
@@ -293,7 +307,11 @@ def test_get_retention_sweeper_returns_one_instance() -> None:
         second = get_retention_sweeper()
 
         assert first is second
-        assert [policy.name for policy in first.policies] == ["packets", "reports"]
+        assert [policy.name for policy in first.policies] == [
+            "packets",
+            "baselines",
+            "reports",
+        ]
     finally:
         reset_retention_sweeper()
 
@@ -336,20 +354,52 @@ def _packet_row(timestamp: datetime) -> dict[str, object]:
     }
 
 
-def test_a_pass_cleans_both_stores_through_the_real_policies(
+def _baseline_window(observed_at: datetime) -> "WindowCounters":
+    """Build one aggregated baseline window starting at ``observed_at``.
+
+    Only what the profile calculation reads is populated, and ``packet_count`` is
+    non-zero so the store treats this as a real observation rather than as a
+    silent window it must discard.
+    """
+    start = observed_at.timestamp()
+    return WindowCounters(
+        device_key=BASELINE_DEVICE_KEY,
+        identity_kind="mac",
+        window_start=floor_window(start, 60.0),
+        window_seconds=60.0,
+        packet_count=5,
+        byte_count=500,
+        tcp_packets=5,
+        first_seen=start,
+        last_seen=start,
+        mac_address="aa:bb:cc:dd:ee:10",
+        ip_address="10.0.0.30",
+        peers={"10.0.0.1"},
+        ports={443},
+    )
+
+
+def test_a_pass_cleans_every_store_through_the_real_policies(
     session_factory, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The composed pass removes an expired packet and an expired report.
+    """The composed pass removes an expired packet, window and report.
 
     This is the integration the application actually runs, so it is exercised as
-    one: both real services, both real stores, driven by one ``run_once``. The
+    one: every real service, every real store, driven by one ``run_once``. The
     factories are redirected at the test's isolated database and directory, which
     is also what proves the sweep reaches the stores through configuration rather
     than through a copy of anything.
+
+    The M21 policy is redirected the same way. Without that it would fall through
+    to the application database and this test would be deleting rows it never
+    created -- the failure mode M21.8's injection point exists to prevent.
     """
+    from app.baselines.aggregation import WindowCounters, floor_window
+    from app.baselines.retention import BaselineRetentionService
+    from app.baselines.store import BaselineStore
     from app.persistence.retention import PacketRetentionService
 
-    # Both policies derive their cutoff from the real clock when no override is
+    # Every policy derives its cutoff from the real clock when no override is
     # supplied -- which is exactly how the sweep calls them -- so the data has to
     # be placed relative to the real clock too. A fixed instant would make every
     # row look ancient (or futuristic) and the test would pass for the wrong
@@ -360,6 +410,14 @@ def test_a_pass_cleans_both_stores_through_the_real_policies(
 
     storage = ReportStorage(str(tmp_path / "artifacts"))
     storage.write(filename="old.csv", payload=b"report bytes")
+
+    baseline_store = BaselineStore(session_factory=session_factory)
+    baseline_store.write_windows(
+        [
+            _baseline_window(expired),
+            _baseline_window(recent),
+        ]
+    )
 
     session = session_factory()
     try:
@@ -385,6 +443,13 @@ def test_a_pass_cleans_both_stores_through_the_real_policies(
         ),
     )
     monkeypatch.setattr(
+        baseline_retention_module,
+        "get_baseline_retention_service",
+        lambda: BaselineRetentionService(
+            store=baseline_store, retention_days=30
+        ),
+    )
+    monkeypatch.setattr(
         report_retention_module,
         "get_report_retention_service",
         lambda: ReportRetentionService(
@@ -397,9 +462,15 @@ def test_a_pass_cleans_both_stores_through_the_real_policies(
     )
     outcomes = sweeper.run_once()
 
-    assert [outcome.succeeded for outcome in outcomes] == [True, True]
+    assert [outcome.name for outcome in outcomes] == [
+        "packets",
+        "baselines",
+        "reports",
+    ]
+    assert [outcome.succeeded for outcome in outcomes] == [True, True, True]
     assert outcomes[0].summary == "1 packet row(s) deleted"
-    assert outcomes[1].summary.startswith("1 report(s) and 1 file(s) removed")
+    assert outcomes[1].summary.startswith("deleted 1 window(s)")
+    assert outcomes[2].summary.startswith("1 report(s) and 1 file(s) removed")
     assert storage.exists("old.csv") is False
 
     session = session_factory()
@@ -408,3 +479,10 @@ def test_a_pass_cleans_both_stores_through_the_real_policies(
         assert ReportRepository(session).count() == 0
     finally:
         session.close()
+
+    # The expired window is gone and the recent one survives, and the profile is
+    # still present: retention deletes evidence, never the device's existence.
+    assert len(baseline_store.list_windows(BASELINE_DEVICE_KEY, limit=10)) == 1
+    profile = baseline_store.get_profile(BASELINE_DEVICE_KEY)
+    assert profile is not None
+    assert profile.sample_count == 1

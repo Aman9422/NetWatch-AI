@@ -313,6 +313,63 @@ class Settings(BaseSettings):
     # starting the application never deletes anything by surprise.
     retention_sweep_interval_seconds: float = 3600.0
 
+    # Behavioral baselines (M21)
+    # Master switch for the behavioural baseline consumer of the pipeline. When
+    # disabled the capture path stops learning from packets, while the read-only
+    # baseline API keeps serving the profiles already persisted (M21.9).
+    baseline_enabled: bool = True
+    # Length of one aggregation window in seconds (M21.5). The default of 60 means
+    # "one behavioural sample per device per minute": long enough that a sample
+    # describes behaviour rather than a single burst, short enough that a device
+    # which appears for one minute still produces a sample.
+    baseline_window_seconds: float = 60.0
+    # Seconds between flushes of the in-memory aggregation (M21.5). A closed
+    # window is written on the next pass, so this is the worst-case delay between
+    # a window ending and its row existing. Deliberately shorter than the window
+    # itself, so a pass always has something to write.
+    baseline_flush_interval_seconds: float = 5.0
+    # Hard cap on the number of devices whose current window is held in memory
+    # (M21.5). A flood of spoofed addresses therefore evicts the stalest device's
+    # partial window instead of growing memory without bound.
+    baseline_max_tracked_devices: int = 4096
+    # Hard cap on the distinct peers and destination ports tracked inside one
+    # in-memory window (M21.5). A peer or port flood cannot exhaust memory, and a
+    # window that reaches the cap records that it did rather than reporting a
+    # count it never measured.
+    baseline_max_peers_per_window: int = 1024
+    baseline_max_ports_per_window: int = 1024
+    # Hard cap on the conversation keys one device remembers for the
+    # "new connection" feature (M21.5), so the memory that feature costs is
+    # bounded per device.
+    baseline_max_connection_keys: int = 4096
+    # Most windows written in one transaction (M21.5). A backlog is drained over
+    # several passes rather than in one unbounded write.
+    baseline_max_windows_per_flush: int = 500
+    # Learning thresholds, counted in persisted observation windows (M21.7).
+    # Below ``provisional`` the profile is still ``learning``; between the two it
+    # is ``provisional``; at or above ``established`` it is a mature profile. The
+    # defaults are 5 and 30 minutes of observed behaviour at the default window
+    # length. They are sample counts, never elapsed time, so a device that was
+    # silent for an hour and produced two windows is still learning.
+    baseline_provisional_min_samples: int = 5
+    baseline_established_min_samples: int = 30
+    # Most recent windows the statistical profile is calculated over (M21.6).
+    # This is what keeps a baseline a summary of *recent* behaviour rather than an
+    # average of everything ever seen, and it bounds the work one recomputation
+    # does regardless of how much history was retained.
+    baseline_statistics_max_windows: int = 1440
+    # Days an observation window is kept before retention may delete it (M21.8).
+    # A profile itself is not deleted by retention: it describes an identity, and
+    # deleting it would lose the fact that this device was ever observed.
+    baseline_retention_days: int = 7
+    # Most windows one retention pass may delete, so a backlog is drained over
+    # several passes instead of holding one long write transaction open.
+    baseline_retention_max_per_run: int = 5000
+    # Default and maximum page size for baseline listings (M21.10), so a response
+    # stays bounded however many devices have been observed.
+    baseline_default_page_size: int = 100
+    baseline_max_page_size: int = 500
+
 
 @lru_cache
 def get_settings() -> Settings:

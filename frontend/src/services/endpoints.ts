@@ -153,8 +153,22 @@ export const NotificationPaths = {
   detail: (notificationId: number): string => `/notifications/${notificationId}`,
 } as const
 
-/** Per-device baselines. */
+/**
+ * Per-device behavioural baselines (M21.10).
+ *
+ * A device key is `mac:aa:bb:...` or `ip:10.0.0.7`, so it carries colons — the
+ * builders encode it as one path segment, exactly as the device and connection
+ * paths do.
+ *
+ * `reset` is a POST rather than a DELETE because it does not remove the device:
+ * it discards that one device's observation windows and profile and returns it to
+ * `learning`, which is a state change the response describes. Nothing else —
+ * packets, devices, alerts, incidents — is touched (M21.10).
+ */
 export const BaselinePaths = {
   list: '/baselines',
-  detail: (deviceId: string): string => `/baselines/${encodeURIComponent(deviceId)}`,
+  detail: (deviceKey: string): string =>
+    `/baselines/${encodeURIComponent(deviceKey)}`,
+  reset: (deviceKey: string): string =>
+    `/baselines/${encodeURIComponent(deviceKey)}/reset`,
 } as const

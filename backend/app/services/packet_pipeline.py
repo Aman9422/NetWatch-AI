@@ -57,6 +57,7 @@ import logging
 from typing import Any, Optional
 
 from app.alerts.engine import AlertEngine
+from app.baselines.engine import BaselineEngine
 from app.connections.manager import ConnectionTracker
 from app.correlation.engine import CorrelationEngine
 from app.detection.engine import DetectionEngine
@@ -83,6 +84,7 @@ class PacketPipeline:
         detection: DetectionEngine | None = None,
         alerts: AlertEngine | None = None,
         correlation: CorrelationEngine | None = None,
+        baselines: BaselineEngine | None = None,
         events: EventPublisher | None = None,
     ) -> None:
         self._processor = processor or PacketProcessor()
@@ -93,6 +95,11 @@ class PacketPipeline:
         self._detection = detection
         self._alerts = alerts
         self._correlation = correlation
+        # The M21 behavioural learner. A consumer like every other: it observes
+        # the normalized packet and aggregates it in memory, and its own thread
+        # does the writing. ``None`` when the master switch is off, so the hot
+        # path costs one attribute read rather than a feature extraction.
+        self._baselines = baselines
         self._processed_count = 0
         self._normalization_error_count = 0
         self._statistics_error_count = 0
@@ -102,6 +109,7 @@ class PacketPipeline:
         self._detection_error_count = 0
         self._alert_error_count = 0
         self._correlation_error_count = 0
+        self._baseline_error_count = 0
         # The M14 sink (M14.13). Resolved once so no call site tests it for
         # ``None``: with nothing supplied it is a null publisher whose calls
         # return False without doing anything, which is what keeps every existing
@@ -145,6 +153,19 @@ class PacketPipeline:
             except Exception:  # noqa: BLE001 - tracking must never stop capture
                 self._connection_error_count += 1
                 logger.warning("Connection tracking failed; capture continues")
+        # The behavioural learner (M21.5/M21.9). It runs after the traffic
+        # consumers and before detection, and the ordering is deliberate: it only
+        # *observes* the packet, so nothing downstream depends on it, while its
+        # own cost is one dictionary update under a lock. It never writes to the
+        # database from here — its own thread does that (M21.5 "do not block
+        # packet capture while baseline data is written") — so a slow disk cannot
+        # reach the capture callback through this call.
+        if self._baselines is not None:
+            try:
+                self._baselines.process_packet(normalized)
+            except Exception:  # noqa: BLE001 - learning must never stop capture
+                self._baseline_error_count += 1
+                logger.warning("Baseline learning failed; capture continues")
         # Detection runs last: it consumes the rates M6 maintains and the
         # devices M8 has already attributed (M10.21). It returns its findings,
         # and those findings are handed straight to the alert engine (M11.21) —
@@ -260,6 +281,15 @@ class PacketPipeline:
         """
         return self._correlation_error_count
 
+    def get_baseline_error_count(self) -> int:
+        """Return how many baseline-learning calls failed (M21.5).
+
+        The engine contains its own failure (M21.5), so this normally stays zero:
+        it records only a failure that escaped the engine entirely, which the same
+        requirement asks the pipeline to contain anyway.
+        """
+        return self._baseline_error_count
+
     def get_published_packet_count(self) -> int:
         """Return how many packets were handed to the live stream (M14.8).
 
@@ -326,3 +356,18 @@ class PacketPipeline:
     def correlation(self) -> CorrelationEngine | None:
         """Return the correlation engine fed by this pipeline, if any."""
         return self._correlation
+
+    @property
+    def baselines(self) -> BaselineEngine | None:
+        """Return the behavioural baseline engine fed by this pipeline (M21.9)."""
+        return self._baselines
+
+    def flush_baselines(self) -> int:
+        """Write every closed behavioural window (M21.5).
+
+        Called when capture stops so the last partial window is written rather
+        than held until the next interval. Returns 0 when no engine is wired.
+        """
+        if self._baselines is None:
+            return 0
+        return self._baselines.flush_all()

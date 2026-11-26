@@ -168,7 +168,7 @@ from app.statistics.manager import (  # noqa: E402
     get_statistics_manager,
 )
 from app.websockets.channels import CHANNEL_PATHS, Channel  # noqa: E402
-from app.websockets.event import EVENT_TYPES, SCHEMA_VERSION  # noqa: E402
+from app.websockets.event import EVENT_TYPES, SCHEMA_VERSION, EventType  # noqa: E402
 
 _BANNER_WIDTH = 70
 
@@ -2058,7 +2058,10 @@ def _assert_envelope(
 
 
 def _receive_frame(
-    client: TestClient, path: str, timeout: float
+    client: TestClient,
+    path: str,
+    timeout: float,
+    expected_type: str | None = None,
 ) -> tuple[dict, str]:
     """Receive one WebSocket frame, bounded by ``timeout`` (M18.9).
 
@@ -2067,26 +2070,66 @@ def _receive_frame(
     the verification, and a hang is not a result — a timeout is reported as the
     failure it is.
 
+    ``expected_type`` waits for a frame of that type and passes over the rest. It
+    is not optional polish: the manager sends a keepalive ``ping`` on *every*
+    channel (``WebSocketManager``'s heartbeat), and this run sets the keepalive
+    interval equal to the dashboard sample interval, so the first frame on
+    ``/ws/dashboard`` is a ping about as often as it is a sample. Asserting on
+    whichever arrived first would be a check of scheduling rather than of the
+    payload (M14.9) — a flaky check, and a flaky check is worse than none because
+    it teaches a reader to re-run rather than to investigate.
+
+    Args:
+        client: The test client to dial through.
+        path: The channel path.
+        timeout: How long to wait for the wanted frame, in seconds.
+        expected_type: The event type to wait for, or ``None`` to take the first
+            frame of any type.
+
     Returns:
-        The parsed frame and an empty note, or an empty mapping and the reason.
+        The parsed frame and an empty note, or an empty mapping and the reason,
+        which names the frame types that did arrive so a real regression is
+        diagnosable from the failure alone.
     """
     outcome: queue.Queue = queue.Queue()
 
     def session() -> None:
         try:
             with client.websocket_connect(path) as socket:
-                outcome.put(("frame", socket.receive_json()))
+                while True:
+                    frame = socket.receive_json()
+                    outcome.put(("frame", frame))
+                    if expected_type is None:
+                        return
+                    if isinstance(frame, dict) and frame.get("type") == expected_type:
+                        return
         except Exception as error:  # noqa: BLE001 - reported, never swallowed
             outcome.put(("error", error))
 
     threading.Thread(target=session, daemon=True).start()
-    try:
-        kind, value = outcome.get(timeout=timeout)
-    except queue.Empty:
-        return {}, f"no frame arrived within {timeout:.1f}s"
-    if kind == "error":
-        return {}, f"the connection failed: {value}"
-    return (value if isinstance(value, dict) else {}), ""
+    deadline = time.monotonic() + timeout
+    seen: list[str] = []
+
+    def timeout_note() -> str:
+        """Describe what did arrive, so the failure is diagnosable."""
+        wanted = expected_type or "any"
+        skipped = f"; saw {', '.join(seen)}" if seen else ""
+        return f"no {wanted} frame arrived within {timeout:.1f}s{skipped}"
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {}, timeout_note()
+        try:
+            kind, value = outcome.get(timeout=remaining)
+        except queue.Empty:
+            return {}, timeout_note()
+        if kind == "error":
+            return {}, f"the connection failed: {value}"
+        frame = value if isinstance(value, dict) else {}
+        if expected_type is None or frame.get("type") == expected_type:
+            return frame, ""
+        seen.append(str(frame.get("type")))
 
 
 def _check_websocket(client: TestClient, failures: list[str]) -> None:
@@ -2101,7 +2144,12 @@ def _check_websocket(client: TestClient, failures: list[str]) -> None:
     """
     _section("The WebSocket channels deliver the documented envelope (M14)")
     dashboard_path = CHANNEL_PATHS[Channel.DASHBOARD]
-    frame, note = _receive_frame(client, dashboard_path, WEBSOCKET_TIMEOUT_SECONDS)
+    frame, note = _receive_frame(
+        client,
+        dashboard_path,
+        WEBSOCKET_TIMEOUT_SECONDS,
+        expected_type=EventType.DASHBOARD_UPDATED,
+    )
     if not frame:
         failures.append(
             f"nothing arrived on {dashboard_path}: {note} (M14.7)"

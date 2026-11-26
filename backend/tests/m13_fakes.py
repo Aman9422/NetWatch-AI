@@ -141,9 +141,43 @@ def api_client(
         settings.app_env = original_env
 
 
+def make_baseline_engine(session_factory: Callable[[], Session]):
+    """Return a baseline engine over an isolated database (M21).
+
+    The real :class:`~app.baselines.engine.BaselineEngine` with its flush thread
+    not started, so a test drives ``flush_due``/``flush_all`` itself and nothing
+    writes on a timer behind the assertions. It is the production class, not a
+    stub: only the session factory is swapped for the isolated one.
+    """
+    from app.baselines.aggregation import WindowAggregator
+    from app.baselines.engine import BaselineEngine
+    from app.baselines.store import BaselineStore
+
+    return BaselineEngine(
+        store=BaselineStore(session_factory=session_factory),
+        aggregator=WindowAggregator(window_seconds=60.0),
+        autostart=False,
+    )
+
+
+def baseline_engine_override(
+    session_factory: Callable[[], Session],
+) -> Callable[[], Any]:
+    """Return a zero-argument ``get_baseline_engine`` override (M21.10).
+
+    A dependency override must be callable with no arguments, so the builder is
+    wrapped rather than passed directly — the same reason
+    :func:`capture_manager_override` exists.
+    """
+    engine = make_baseline_engine(session_factory)
+    return lambda: engine
+
+
 __all__ = [
     "api_client",
+    "baseline_engine_override",
     "capture_manager_override",
+    "make_baseline_engine",
     "make_capture_manager",
     "make_db_override",
     "make_unreadable_db_override",

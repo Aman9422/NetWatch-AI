@@ -312,14 +312,8 @@ export interface NotificationQuery {
 
 // ── Baselines (M13) ─────────────────────────────────────────────────────────
 
-/**
- * One device's observed baseline.
- *
- * Modelled loosely because M13 exposes this endpoint without documenting a strict
- * schema; the page that renders it reads named fields and tolerates a missing one
- * rather than asserting a shape the backend never promised.
- */
-export interface Baseline {
-  readonly device_id: string
-  readonly [key: string]: unknown
-}
+// Baselines live in `./baseline` (M21.11). The M13-era placeholder that stood
+// here — `{ device_id, [key: string]: unknown }` — was a loose bag that promised
+// nothing, and it described a `device_id` field the M21 API does not send: a
+// baseline is keyed by `device_key` and carries a statistical profile, both of
+// which are typed exactly there rather than guessed at here.

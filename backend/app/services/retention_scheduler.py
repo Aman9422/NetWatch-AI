@@ -280,6 +280,7 @@ def build_retention_policies() -> list[RetentionPolicy]:
     pass is going to be cut short, the largest source of growth should have been
     dealt with first.
     """
+    from app.baselines.retention import get_baseline_retention_service
     from app.persistence.retention import get_packet_retention_service
     from app.reports.retention import get_report_retention_service
 
@@ -287,6 +288,15 @@ def build_retention_policies() -> list[RetentionPolicy]:
         RetentionPolicy(
             name="packets",
             cleanup=lambda: get_packet_retention_service().cleanup_outcome(),
+        ),
+        # The M21 window store. Between packets and reports: it is a smaller
+        # store than the packet table and larger than the report table, and a
+        # bounded pass of a few thousand rows. Profiles are never deleted here —
+        # only expired windows are — so an operator's learnt baselines survive a
+        # sweep (M21.8).
+        RetentionPolicy(
+            name="baselines",
+            cleanup=lambda: get_baseline_retention_service().cleanup_outcome(),
         ),
         RetentionPolicy(
             name="reports",

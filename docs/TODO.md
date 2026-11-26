@@ -2,10 +2,10 @@
 
 ## Project Status
 
-**Current Stage:** Base Application Released
+**Current Stage:** AI Intelligence Layer — behavioural learning
 **Base Application:** ✅ RELEASED at v0.0.20
-**Current Milestone:** M20 — Base Application Release ✅ COMPLETE
-**Next Stage:** AI Intelligence Layer (not started — see "Later — Advanced Features")
+**Current Milestone:** M21 — Behavioral Baseline Engine ✅ COMPLETE
+**Next Stage:** M22 — ML Anomaly Detection (not started — see "Later — Advanced Features")
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -1332,12 +1332,77 @@ Npcap install and was corrected against measured behaviour.
 
 ---
 
+# M21 — Behavioral Baseline Engine ✅ COMPLETE
+
+**Status: implemented and verified.** Version `v0.0.21`. Full record in
+`docs/25_M21_Behavioral_Baseline_Engine.md`.
+
+* [x] Behavioral feature extraction — nine per-device metrics from the existing
+      normalized packets (M21.1) — `app/baselines/features.py`
+* [x] Per-device aggregation — bounded in-memory 60-second windows (M21.2) —
+      `app/baselines/aggregation.py`
+* [x] Time-window collection flushed in batches, never one write per packet;
+      configurable interval, default 60 s (M21.3)
+* [x] Statistical profiles — count, mean, median, MAD, MAD×1.4826, stdev, p95,
+      min, max (M21.4) — `app/baselines/statistics.py`
+* [x] Learning lifecycle — `learning` / `provisional` / `established`, driven by
+      sample count only (M21.5) — `app/baselines/states.py`
+* [x] Persistent storage — `baseline_profiles` + `baseline_windows`, unique
+      `(device_key, window_start)` so a re-flushed window is a no-op (M21.6) —
+      `app/baselines/store.py`
+* [x] Stable device identity — MAC-first with a labelled IP fallback; broadcast,
+      multicast and unattributable packets are skipped, never pooled (M21.7)
+* [x] Retention — 7-day default as a third policy on the existing M19 sweeper;
+      aged-out evidence recomputes the profile instead of silently deleting it
+      (M21.8) — `app/baselines/retention.py`
+* [x] Pipeline integration, failure-isolated — a baseline error degrades baseline
+      coverage and nothing else (M21.9) — `app/services/packet_pipeline.py`,
+      `app/services/capture_manager.py`, `app/main.py`
+* [x] REST API — `GET /api/v1/baselines`, `GET /api/v1/baselines/{device_key}`,
+      `POST /api/v1/baselines/{device_key}/reset`, standard envelopes, pagination,
+      validation and a real `404 BASELINE_NOT_FOUND` (M21.10) —
+      `app/api/v1/baselines.py`, `app/schemas/baseline.py`
+* [x] Frontend Behavioral Baselines page — list, detail, learning-state badges,
+      statistics and window tables, confirmed reset, every empty/loading/error
+      state, no mock data (M21.11) — `frontend/src/pages/Baselines.tsx`
+* [x] Tests — 177 backend, 26 frontend, plus the M0–M20 regression suites (M21.12)
+* [x] Documentation — `docs/25_M21_Behavioral_Baseline_Engine.md`; README updated
+      (M21.13)
+* [x] Quality gates — 9/9 PASS (M21.14)
+
+**Verification:** full suite **2 805 passed**; pyright **0 errors, 0 warnings**;
+security **145 passed**; frontend unit **492 passed** (18 files);
+`npm run typecheck` **0 errors**; `npm run build` clean; `RESULT: PASS` (9/9
+gates). Live run on this machine (authorized local `Wi-Fi` capture, traffic only
+toward the host's own gateway and public resolvers): 4 662 packets, 2 MAC
+identities, 9 features per device, 8 windows persisted at 60 s,
+`learning → provisional`, profile read back over REST and rendered in the browser,
+reset deleted 8 windows and the follow-up `GET` correctly answered `404`.
+
+**Known limitations:** no inbound/outbound split — direction cannot be determined
+reliably on a routed path, so a receive-only device is not profiled;
+`new_connections` is a bounded conversation-key cardinality and reports `null`
+rather than a guess; peer and port sets cap at 1 024 per window per device and a
+truncated count renders as a `≥` floor; statistics describe a bounded recent slice
+(1 440 windows by default), so `sample_count` and `statistics_sample_count` are
+reported separately.
+
+**Design:** `docs/25_M21_Behavioral_Baseline_Engine.md`.
+
+> Deliberately out of scope for M21: ML anomaly detection, anomaly scoring,
+> baseline-deviation alerts, a local LLM, LLM log analysis, the AI Security
+> Analyst, Wazuh integration and automatic blocking. M21 learns; M22 will judge.
+> An `established` baseline means the device has been observed long enough to be
+> described — never that it is safe.
+
+---
+
 # Later — Advanced Features
 
 These are intentionally excluded from the Base Application milestone.
 
-* [ ] Behavioral baselines
-* [ ] Advanced ML anomaly detection
+* [x] Behavioral baselines — shipped as M21 (`v0.0.21`)
+* [ ] Advanced ML anomaly detection — M22, consuming the M21 profiles
 * [ ] Local LLM
 * [ ] AI analyst
 * [ ] MITRE ATT&CK

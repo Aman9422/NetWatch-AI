@@ -118,6 +118,8 @@ export {
 
 export { fetchActiveDevices, fetchDevice, fetchDevices } from './devices'
 
+export { fetchBaseline, fetchBaselines, resetBaseline } from './baselines'
+
 export {
   expireConnections,
   fetchActiveConnections,

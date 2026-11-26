@@ -24,6 +24,7 @@ external endpoint.
 | Statistics | Totals, rates, protocol/direction/port/talker breakdowns over 1 s / 10 s / 60 s windows |
 | Persistence | Packet metadata is written to SQLite in bounded batches by a background worker |
 | Devices | Devices are discovered and tracked by MAC, with IP history |
+| Baselines | Per-device behavioural profiles are learnt over 60 s windows and kept across restarts |
 | Connections | Packets are grouped into bidirectional conversations with state and counters |
 | Detection | Five rules: port scan, SYN flood, ICMP flood, internal scan, high bandwidth |
 | Alerts | Findings become alerts with severity, confidence, evidence and a lifecycle |
@@ -287,6 +288,7 @@ backend/
     statistics/   traffic windows and rates
     persistence/  packet batching, retention
     devices/      discovery and identity
+    baselines/    behavioural learning: features, aggregation, statistics, retention
     connections/  conversation tracking
     detection/    rules and engine
     alerts/       alert creation, dedup, lifecycle, evidence
@@ -303,7 +305,7 @@ frontend/
   src/services/   the typed API client
   src/hooks/      data and WebSocket hooks
   tests/live/     the suite that runs against a real backend
-docs/             design documents, one per milestone (01–23)
+docs/             design documents, one per milestone (01–25)
 ```
 
 ---
@@ -379,9 +381,10 @@ Authentication, RBAC and TLS are future work and are not implemented.
 | `docs/04_API_Specification.md` | REST surface |
 | `docs/08_Deployment_Guide.md` | Deployment notes |
 | `docs/09_Test_Plan.md` | Testing approach |
-| `docs/12`–`22` | One design document per milestone, M8–M18 |
+| `docs/12`–`23` | One design document per milestone, M8–M19 |
 | `docs/23_M19_Stabilization_Design.md` | The stabilization milestone |
 | `docs/24_M20_Base_Application_Release.md` | The base-application release record |
+| `docs/25_M21_Behavioral_Baseline_Engine.md` | The behavioural baseline engine |
 | `docs/TODO.md` | Milestone-by-milestone status |
 
 ---
@@ -395,8 +398,7 @@ should be read as a current capability.
 
 | Planned capability | Description |
 | --- | --- |
-| Behavioral baseline learning | Learn per-device traffic baselines so deviation, not a fixed threshold, triggers detection |
-| ML-based anomaly detection | Replace the five static rules with models trained on the operator's own traffic |
+| ML-based anomaly detection | Compare live traffic against the learnt baselines, so deviation rather than a fixed threshold triggers a finding (**M22**) |
 | Locally hosted LLM | A model served on the same machine, so no traffic metadata leaves it |
 | AI Security Analyst | Natural-language explanation of an incident and its evidence trail |
 | Intelligent sequence-based log investigation | Reason over ordered event sequences rather than isolated rules |
@@ -406,8 +408,17 @@ should be read as a current capability.
 
 The detection engine as shipped is **deterministic and rule-based**: five explicit
 rules with explicit thresholds. It detects what those rules describe, and it does
-not detect everything. The name "NetWatch AI" refers to the project's direction;
-the AI layer is the next development phase, not a description of this release.
+not detect everything.
+
+**Behavioural baselines are implemented (M21); anomaly detection is not.** The
+engine learns a robust statistical profile of each device's normal traffic and
+persists it, and the Behavioral Baselines page shows what it learnt. It issues no
+verdict: no score, no anomaly classification, no alert. Comparing a live window
+against a profile is M22's work. An "Established" baseline means the device has
+been watched long enough to describe, never that it is safe.
+
+The name "NetWatch AI" refers to the project's direction; the AI layer is the next
+development phase, not a description of this release.
 
 ---
 

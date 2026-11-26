@@ -63,6 +63,51 @@ def _shutdown_connections() -> None:
         logger.exception("Failed to flush connection tracking during shutdown")
 
 
+def _start_baseline_engine() -> None:
+    """Start the M21 baseline flush thread (M21.9).
+
+    Started first among the background components so a window that closes while
+    the application is booting is written on the normal interval rather than
+    waiting for capture to stop. Guarded: a learner that cannot start is a
+    feature that will not run, which is worth a loud log line but is not a reason
+    to refuse to start the application — capture, detection and the API all work
+    without it.
+    """
+    from app.baselines import get_baseline_engine
+    from app.config.settings import settings as _settings
+
+    if not _settings.baseline_enabled:
+        logger.info("Behavioural baseline learning disabled by configuration")
+        return
+    try:
+        get_baseline_engine().start()
+    except Exception:  # noqa: BLE001 - startup must not fail on the learner
+        logger.exception("Failed to start the behavioural baseline engine")
+
+
+def _stop_baseline_engine() -> None:
+    """Flush every open behavioural window and stop the thread (M21.5).
+
+    A partial window is still real observation, so it is written rather than
+    discarded. Stopped *before* the other databases writers below, so the
+    baseline flush does not overlap the packet or connection flush on one SQLite
+    file. Guarded because shutdown must never raise.
+    """
+    from app.baselines import get_baseline_engine
+
+    try:
+        written = get_baseline_engine().flush_all()
+    except Exception:  # noqa: BLE001 - shutdown must never raise
+        logger.exception("Failed to flush baseline windows during shutdown")
+        written = 0
+    try:
+        get_baseline_engine().stop(flush=False)
+    except Exception:  # noqa: BLE001 - shutdown must never raise
+        logger.exception("Failed to stop the behavioural baseline engine")
+    if written:
+        logger.info("Flushed %d baseline window(s) during shutdown", written)
+
+
 def _start_retention_sweep() -> None:
     """Start the periodic retention sweep (M19.5).
 
@@ -123,6 +168,9 @@ async def lifespan(app: FastAPI):
     # contain. It is also started before the application serves traffic, so a
     # configured retention window is enforced from the first interval onwards.
     _start_retention_sweep()
+    # The behavioural learner (M21.9). Its thread is what writes an observation
+    # window, so it starts once the schema exists and before traffic can arrive.
+    _start_baseline_engine()
     # The real-time layer (M14.20). Started after the schema exists and before
     # the application accepts traffic, so the loop is bound and the heartbeat and
     # dashboard tasks exist before the first client can dial in.
@@ -131,6 +179,10 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down %s", settings.app_name)
     _stop_retention_sweep()
     _stop_active_capture()
+    # The learner is stopped after capture, so the final windows of the session
+    # are already aggregated, and before the other flushes, so two writers are
+    # never on the same SQLite file at once (M21.5).
+    _stop_baseline_engine()
     _shutdown_persistence()
     _shutdown_connections()
     # The WebSocket layer is torn down *last* (M14.20): stopping capture publishes

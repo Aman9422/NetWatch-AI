@@ -96,6 +96,20 @@ export const DEVICE_STATUS_COLORS: Readonly<Record<string, string>> = {
 }
 
 /**
+ * M21 baseline learning states, mapped to a colour the design uses.
+ *
+ * These are *maturity* observations, never verdicts: `established` is green
+ * because the profile has enough samples to be worth reading, not because the
+ * device was judged safe — and no state is red, because M21 detects nothing
+ * (`app/baselines/states.py`).
+ */
+export const LEARNING_STATE_COLORS: Readonly<Record<string, string>> = {
+  learning: C.faint,
+  provisional: C.warning,
+  established: C.success,
+}
+
+/**
  * M17 report generation states, mapped to a colour the design uses.
  *
  * `failed` is the only one that is a fault and the only one drawn in the danger

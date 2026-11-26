@@ -24,13 +24,22 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.alerts.queries import AlertQueries
-from app.api.common import ErrorCode, register_exception_handlers
+from app.api.common import (
+    ErrorCode,
+    FeatureNotImplementedError,
+    register_exception_handlers,
+)
 from app.api.common.envelope import GENERIC_CODE_STATUS
 from app.api.v1.deps import get_alert_queries
 from app.api.v1.system import API_PREFIX
+from app.baselines import get_baseline_engine
 from app.database.session import get_db
 from app.main import app
-from tests.m13_fakes import api_client, make_db_override
+from tests.m13_fakes import (
+    api_client,
+    baseline_engine_override,
+    make_db_override,
+)
 
 #: The message the API returns when it does not anticipate a failure. Constant on
 #: purpose: the real message is logged, never serialised (M13.5/M13.30).
@@ -103,6 +112,9 @@ def client(
         {
             get_db: make_db_override(db_engine),
             get_alert_queries: lambda: AlertQueries(session_factory=session_factory),
+            # M21.10: the baseline sweep in COLLECTION_URLS reads the engine, so
+            # it is pointed at the isolated database as well.
+            get_baseline_engine: baseline_engine_override(session_factory),
         }
     ) as test_client:
         yield test_client
@@ -223,16 +235,24 @@ def test_a_conflict_is_a_409(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_an_unimplemented_feature_is_a_501(client: TestClient) -> None:
-    """A surface the API exposes but does not implement says so (M13.17).
+def test_an_unimplemented_feature_is_a_501() -> None:
+    """A capability the API refuses says so with a documented 501 (M13.17).
 
-    The M13 example of this was report generation, which M17 implemented, so the
-    contract is asserted against a subsystem that is genuinely still missing -- the
-    M6 baselines engine -- rather than against a route that has since grown an
-    implementation. Asserting it here keeps the 501 mapping covered cross-cutting
-    even as individual features arrive.
+    Every M13 example of this has since been implemented -- report generation by
+    M17, baselines by M21 -- which is exactly why the mapping is now asserted
+    against a probe app rather than against whichever feature happens to be
+    missing *today*. The requirement is that the status and code exist and are
+    rendered in the envelope; it is not a statement that any surface is unbuilt.
     """
-    response = client.get("/api/v1/baselines")
+    probe = FastAPI()
+
+    @probe.get("/unbuilt")
+    def unbuilt() -> dict:
+        raise FeatureNotImplementedError("This capability is not implemented")
+
+    register_exception_handlers(probe)
+    with TestClient(probe, raise_server_exceptions=False) as probe_client:
+        response = probe_client.get("/unbuilt")
 
     assert response.status_code == 501
     assert assert_envelope(response.json())["errors"][0]["code"] == (

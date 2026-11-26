@@ -27,7 +27,7 @@
 
 import type { ElementType } from 'react'
 import {
-  Activity, BarChart2, Bell, FileText, Gauge, GitCompareArrows, Layers,
+  Activity, BarChart2, Bell, Brain, FileText, Gauge, GitCompareArrows, Layers,
   Monitor, Radar, Server, Settings as Cog, Shield, ShieldAlert, TriangleAlert,
 } from 'lucide-react'
 import { environment } from '../config/env'
@@ -67,6 +67,8 @@ const NAV_GROUPS: readonly NavGroup[] = [
         hint: 'Devices the registry has observed. Activity state only — M8 scores nothing.' },
       { id: 'connections', label: 'Connections', icon: GitCompareArrows,
         hint: 'Conversations the tracker follows, with the tracker\'s own expiry state.' },
+      { id: 'baselines', label: 'Behavioral Baselines', icon: Brain,
+        hint: 'Statistical profiles the M21 engine has learnt per device. A baseline describes previously observed behaviour — it is never an anomaly verdict.' },
     ],
   },
   {

@@ -114,6 +114,10 @@ def _capture_state(manager: CaptureManager) -> CaptureStateView:
         "statistics": manager.get_statistics_error_count(),
         "devices": manager.get_device_error_count(),
         "connections": manager.get_connection_error_count(),
+        # The M21 learner (M21.5). Always reported, because it is the last
+        # observing stage in the pipeline and a silent failure there would be
+        # invisible from every other counter.
+        "baselines": pipeline.get_baseline_error_count(),
         "detection": manager.get_detection_error_count(),
         "alerts": manager.get_alert_error_count(),
         "correlation": manager.get_correlation_error_count(),
@@ -167,6 +171,11 @@ def _service_states(pipeline: PacketPipeline) -> list[ServiceStateView]:
             name="correlation",
             enabled=bool(settings.correlation_enabled),
             attached=pipeline.correlation is not None,
+        ),
+        ServiceStateView(
+            name="baselines",
+            enabled=bool(settings.baseline_enabled),
+            attached=pipeline.baselines is not None,
         ),
     ]
 

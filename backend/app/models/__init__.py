@@ -8,6 +8,7 @@ from app.models.ai_insight import AiInsight
 from app.models.alert import Alert
 from app.models.alert_evidence import AlertEvidence
 from app.models.baseline import BehavioralBaseline
+from app.models.baseline_observation import BaselineProfile, BaselineWindow
 from app.models.connection import NetworkConnection
 from app.models.detection_rule import DetectionRule
 from app.models.device import Device
@@ -23,6 +24,8 @@ __all__ = [
     "AiInsight",
     "Alert",
     "AlertEvidence",
+    "BaselineProfile",
+    "BaselineWindow",
     "BehavioralBaseline",
     "DetectionRule",
     "Device",

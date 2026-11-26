@@ -1,592 +1,413 @@
-# NetWatch AI — M20 Base Application Release
+# M21 — Behavioral Baseline Engine
 
-**Milestone:** M20 — Base Application Release  
-**Scope:** final release acceptance, clean installation, end-to-end verification, documentation, demonstration, GitHub repository cleanup and version tagging.  
-**Status:** **released and verified** — tagged `v0.0.20`
-
-> **Record.** This file holds the M20 brief. The outcome is recorded in
-> `docs/24_M20_Base_Application_Release.md`: what was verified, with what
-> measurement, and what remains a limitation. The completion criteria in §22 are
-> all satisfied; the §23 final report is reproduced at the end of this file.
+**Project:** NetWatch AI  
+**Milestone:** M21  
+**Suggested version:** v0.0.21  
+**Base version:** v0.0.20  
+**Status:** Planned  
+**Primary objective:** Implement a persistent, per-device behavioral baseline learning engine.
 
 ---
 
-# 1. Purpose
+## 1. Context and instructions
 
-NetWatch AI has completed M0–M19.
+M0–M20 are complete. The base application has been released as `v0.0.20`.
 
-The application now includes:
+Before modifying anything:
 
-- Network packet capture and processing
-- Traffic statistics and persistence
-- Device discovery and connection tracking
-- Detection and alert management
-- Event correlation and risk scoring
-- REST API and WebSocket communication
-- React/TypeScript frontend
-- Historical analytics
-- CSV/PDF report generation
-- Project-wide testing
-- Stabilization and clean-installation verification
+1. Inspect the current repository, source code, database models, packet-processing pipeline, device registry, connection tracker, statistics services, API conventions, frontend architecture, configuration, tests, and documentation.
+2. Confirm the current branch and working-tree status.
+3. Review the M20 release documentation and existing architecture.
+4. Understand how normalized packets and device identities move through the application.
+5. Reuse existing services and patterns wherever possible.
 
-M20 is the final milestone for releasing the **base NetWatch AI application**.
+Do not assume that an earlier milestone's proposed architecture matches the exact current implementation. Inspect the actual code before deciding where to integrate the new functionality.
 
-It must verify that a developer can clone the repository, install the dependencies, configure the application, start it, capture authorized network traffic, view real data, verify detections, generate reports and reproduce the documented tests.
+**Preserve all completed M0–M20 functionality.** Do not rewrite working modules unnecessarily. Do not remove existing APIs, tests, frontend pages, or database records.
 
-M20 is a release milestone, not another feature-development milestone.
+This project must remain free and locally hosted. Do not introduce paid APIs, cloud AI services, external hosted databases, or mandatory third-party services.
 
-The goal is to release a stable and demonstrable base application without introducing unnecessary functionality.
+## 2. Objective
 
----
+Build a Behavioral Baseline Engine that learns what normal network activity looks like for each discovered device.
 
-# 2. Important Release Scope
+The engine should observe network activity over time, extract meaningful behavioral features, aggregate them into time windows, and maintain statistical profiles.
 
-M20 releases the existing network-monitoring and security-analysis platform.
+For example:
 
-It does NOT represent completion of the originally planned AI intelligence layer.
+- How many packets does a device normally transmit?
+- How much data does it normally transfer?
+- Which protocols does it regularly use?
+- How many unique peers does it normally communicate with?
+- How many destination ports does it normally contact?
+- How frequently does it establish connections?
 
-The following capabilities remain future work:
+The engine should gradually develop an understanding of each device's observed behavior.
 
-- Behavioral baseline learning
-- ML-based anomaly detection
-- Locally hosted LLM
-- AI Security Analyst
-- Intelligent sequence-based log investigation
-- Wazuh integration
-- Advanced threat intelligence
-- MITRE ATT&CK integration
+The resulting profiles will become an input to M22, which will implement ML-based anomaly detection.
 
-Do not describe these features as implemented.
+**Important:** M21 implements behavioral learning only. It does not yet identify anomalies or generate security alerts.
 
-After M20, the next development phase will focus on the actual AI capabilities that give NetWatch AI its name.
+## 3. Scope boundaries
 
----
+### Implement in M21
 
-# 3. M20 Goals
+1. Behavioral feature extraction.
+2. Per-device behavioral aggregation.
+3. Time-window-based collection.
+4. Persistent baseline storage using SQLite.
+5. Statistical baseline calculations.
+6. Baseline learning and maturity states.
+7. Baseline history management and retention.
+8. REST APIs for baseline information.
+9. A frontend page for inspecting learned baselines.
+10. Baseline tests, documentation, and quality-gate integration.
 
-M20 must deliver:
+### Do not implement in M21
 
-1. Final project-wide acceptance testing
-2. Real network-capture verification
-3. Detection and alert verification
-4. Frontend verification using real backend data
-5. REST API verification
-6. WebSocket verification
-7. Analytics and report verification
-8. All 12 frontend routes checked in a real browser
-9. Clean-installation verification against the release candidate
-10. Accurate README and project documentation
-11. Updated project screenshots
-12. A reproducible demo recording
-13. GitHub repository cleanup
-14. Release notes
-15. Version tagging
+- ML anomaly detection.
+- Isolation Forest, One-Class SVM, Autoencoders, or other anomaly-detection models.
+- Anomaly scoring or automatic suspicious-activity classification.
+- Automatic security alerts based on baseline deviations.
+- A locally hosted LLM.
+- LLM-based log analysis.
+- AI Security Analyst.
+- Wazuh integration.
+- Automatic traffic blocking or IPS functionality.
+- External cloud-based learning services.
 
-Do not add unnecessary new features.
+These belong to later milestones.
 
----
+## 4. Behavioral feature extraction
 
-# 4. M20.1 — Final Repository Audit
+Integrate with the existing normalized packet-processing and device-discovery pipeline.
 
-Inspect the actual repository before beginning release preparation.
+Do not introduce another packet-capture implementation. Do not independently capture traffic.
 
-Review:
+Extract features using information actually available in the current application.
 
-```text
-README.md
-docs/TODO.md
-docs/Current_Task.md
-docs/11_Base_App_Roadmap.md
-docs/20_M16_Analytics_Design.md
-docs/21_M17_Reports_Design.md
-docs/22_M18_Testing_Design.md
-docs/23_M19_Stabilization_Design.md
-```
+Start with these per-device behavioral metrics:
 
-Inspect:
+| Feature | Description |
+|---|---|
+| Packet count | Number of observed packets |
+| Byte count | Total observed bytes |
+| TCP packets | TCP packet count |
+| UDP packets | UDP packet count |
+| ICMP packets | ICMP packet count |
+| DNS packets | DNS packet count |
+| Unique peers | Number of distinct observed communication peers |
+| Unique destination ports | Number of distinct destination ports |
+| New connections | Number of newly observed connections, when reliably available |
 
-- backend application structure
-- frontend application structure
-- backend dependencies
-- frontend dependencies
-- environment examples
-- database migration and initialization
-- reporting configuration
-- GitHub repository configuration
-- current Git branch
-- existing version tags
-- current working-tree state
+Add inbound/outbound metrics only if the current architecture can determine direction accurately. Do not guess packet direction.
 
-Confirm that M0–M19 are recorded accurately.
+Do not invent metrics when the underlying information is unavailable. Document unavailable or unsupported features.
 
-Determine:
+### Device identity
 
-- current application version
-- last committed version tag
-- latest commit
-- uncommitted changes
-- existing release documentation
-- remaining release blockers
+The existing M8 implementation uses MAC-based device identity with IP history.
 
-Do not overwrite historical milestone records.
-
-Do not assume that the version number is correct merely because an earlier milestone document mentions it.
-
----
-
-# 5. M20.2 — Release Acceptance and Known Limitations
-
-Review all release blockers carried forward from M19.
-
-### B1 — Authentication and security scope
-
-Authentication, authorization/RBAC and TLS are not implemented.
-
-The base application must therefore be explicitly released as a **local, single-operator application**.
+Use the existing device identity model wherever possible.
 
 Requirements:
 
-- Do not advertise public internet deployment.
-- Do not advertise untrusted multi-user deployment.
-- Preserve the documented loopback backend binding.
-- Verify CORS and local API configuration.
-- Document the security limitations prominently.
-- Do not claim production-grade enterprise security.
+- A device changing its IP address should retain its baseline when its stable MAC identity remains the same.
+- Do not accidentally combine unrelated devices.
+- Do not treat a router's MAC address as proof that every remote IP behind it is the same physical device.
+- Handle missing, invalid, multicast, and broadcast identities safely.
+- Use a clearly documented fallback policy when a stable identity cannot be established.
 
-### B2 — README accuracy
+The baseline engine must not depend on the `devices` database table being populated. M20 documents that the live device registry is held in memory.
 
-The README must remain the canonical installation guide.
+## 5. Time-window aggregation
 
-Verify it against the actual application.
+Use a configurable aggregation interval, with a default of **60 seconds**.
 
-Perform a fresh installation using the final release candidate.
+For every device, collect behavioral feature values over each interval.
 
-### B3 — Quality-gate reliability
+Requirements:
 
-The documented quality-gate command must complete successfully.
+1. Aggregate metrics in memory before writing them to SQLite.
+2. Do not perform an individual database write for every captured packet.
+3. Flush aggregated windows through a controlled background process.
+4. Flush pending data during graceful application shutdown.
+5. Keep memory usage bounded.
+6. Do not block packet capture while baseline data is written.
+7. Handle malformed packets and missing fields without interrupting packet processing.
+8. Isolate baseline-engine failures from the existing capture and detection pipeline.
+9. Record appropriate internal errors and counters when data cannot be processed or persisted.
 
-Run:
+Only persist useful observation windows. Do not silently convert missing data into zero-valued behavior.
+
+## 6. Statistical baseline calculation
+
+For each device, calculate a statistical profile from its collected behavioral samples.
+
+Use robust statistical measurements:
+
+- Sample count.
+- Mean.
+- Median.
+- Median Absolute Deviation (MAD).
+- Standard deviation, where useful.
+- 95th percentile.
+- Minimum and maximum.
+- First observed timestamp.
+- Latest observed timestamp.
+
+Calculate these statistics for the supported numeric behavioral features.
+
+Use an implementation that is computationally reasonable and memory-bounded.
+
+Document how the statistics are calculated and how missing observations are handled.
+
+The baseline should not be influenced by an unbounded accumulation of raw packet data. Keep the design based on aggregated behavioral windows.
+
+## 7. Learning lifecycle and maturity
+
+Implement clear baseline learning states.
+
+Suggested states:
+
+- `learning`: insufficient observations to produce a useful profile.
+- `provisional`: the minimum sample requirement has been reached, but the profile is still developing.
+- `established`: sufficient observations have been collected for a mature statistical profile.
+
+Choose and document sensible default sample thresholds. Make them configurable where appropriate.
+
+The frontend must clearly show the current learning state and sample count.
+
+Important requirements:
+
+- A new device must not receive a fabricated baseline.
+- A baseline must not be marked established merely because the device exists.
+- Missing data must not be interpreted as zero traffic.
+- Baseline maturity must be based on actual collected observations.
+- A restarted backend must not unnecessarily discard previously persisted baselines.
+- A baseline must be resettable without deleting unrelated packet, device, alert, or incident data.
+
+Do not present an established baseline as proof that the device is safe. It only describes its previously observed behavior.
+
+## 8. Persistent storage
+
+Extend the existing SQLAlchemy and SQLite architecture.
+
+Design suitable database models for:
+
+1. Per-device baseline metadata and learning state.
+2. Aggregated behavioral observation windows.
+3. Statistical profile information, if required by the design.
+
+Use appropriate indexes and uniqueness constraints.
+
+Requirements:
+
+- Stable device identity.
+- Timestamps stored consistently using the project's UTC conventions.
+- Transaction-safe writes.
+- Database migrations or the repository's established schema-initialization approach.
+- Bounded historical retention.
+- Configurable retention settings.
+- Safe handling of duplicate windows.
+- No raw packet payload storage in the baseline tables.
+
+Start with a documented default history-retention period, such as seven days, and make it configurable.
+
+Preserve baseline profile continuity across application restarts when a stable device identity is available.
+
+## 9. Backend service architecture
+
+Create a dedicated behavioral baseline module or service following the repository's existing organization.
+
+Separate responsibilities where appropriate:
+
+- Feature extraction.
+- Per-device aggregation.
+- Baseline sample persistence.
+- Statistical calculations.
+- Learning-state management.
+- Retention and lifecycle management.
+
+Use existing application startup and shutdown mechanisms.
+
+Do not introduce unnecessary threads, processes, event brokers, or services.
+
+The baseline engine must operate as an additional component in the current monitoring pipeline. Existing packet capture, statistics, persistence, detection, alerting, and correlation must continue working as before.
+
+## 10. REST API
+
+Add versioned endpoints following the existing `/api/v1` conventions.
+
+Suggested endpoints:
+
+```http
+GET  /api/v1/baselines
+GET  /api/v1/baselines/{device_key}
+POST /api/v1/baselines/{device_key}/reset
+```
+
+Implement:
+
+- Paginated baseline listing.
+- Individual device baseline details.
+- Current learning state.
+- Sample count and observation timestamps.
+- Statistical values for supported features.
+- Clear behavior when a baseline does not exist.
+- Input validation.
+- Existing standardized response envelopes.
+- Correct HTTP status codes and error responses.
+
+The reset operation must delete only the selected device's baseline history and profile, then allow learning to restart.
+
+Do not expose internal database paths, stack traces, or private implementation details.
+
+Verify every endpoint against the running backend. Do not assume response shapes from frontend expectations.
+
+## 11. Frontend — Behavioral Baselines
+
+Add a dedicated **Behavioral Baselines** page to the existing React/TypeScript application.
+
+Follow the existing design system, navigation, reusable components, API client, loading states, error handling, and page-boundary architecture.
+
+The page should display:
+
+- Discovered device identity.
+- Baseline learning status.
+- Number of collected samples.
+- First and latest observation times.
+- Packet and byte statistics.
+- Protocol behavior.
+- Peer and destination-port statistics when available.
+- Statistical baseline summaries.
+
+Add a device-level detail view so the user can inspect its behavioral profile.
+
+Provide a baseline reset action with a clear confirmation step.
+
+Handle these states properly:
+
+- No devices discovered.
+- Device discovered but no observations collected.
+- Learning in progress.
+- Provisional baseline.
+- Established baseline.
+- API unavailable.
+- Baseline data unavailable.
+- Failed baseline retrieval.
+
+Do not use mock data in the completed integration.
+
+The page must explain that a baseline describes previously observed behavior and is not itself an anomaly verdict.
+
+## 12. Performance and reliability
+
+Baseline collection must not destabilize the existing application.
+
+Verify:
+
+- Packet capture continues during baseline collection.
+- Packet-processing errors do not increase because of baseline failures.
+- SQLite writes remain controlled and batched.
+- Aggregation structures are bounded.
+- Retention removes expired observation windows correctly.
+- Graceful shutdown flushes pending data.
+- Database failures do not silently corrupt profile information.
+- Multiple devices can be tracked independently.
+- Restarting the application preserves stored baseline history.
+- Existing detection and alerting continue to work.
+
+Measure relevant performance before and after enabling the baseline engine using the available project benchmarks.
+
+Record actual measurements. Do not invent improvements or claim production-scale performance based on a local test.
+
+## 13. Testing
+
+Add comprehensive backend and frontend tests.
+
+### Backend tests
+
+Test at least:
+
+1. Feature extraction from normalized packets.
+2. Feature extraction with missing or malformed fields.
+3. Correct per-device aggregation.
+4. Separation of two different devices.
+5. IP changes for an existing MAC identity.
+6. Aggregation-window boundaries.
+7. Duplicate-window protection.
+8. Statistical calculations.
+9. Learning-state transitions.
+10. Empty and insufficient observation histories.
+11. Persistent baseline recovery after application restart.
+12. Baseline reset.
+13. Historical retention.
+14. Graceful shutdown flushing.
+15. Database write failures.
+16. Bounded aggregation behavior.
+17. REST endpoint response envelopes.
+18. Pagination and validation.
+19. Missing baseline responses.
+20. Regression of existing capture, statistics, detection, alert, and incident functionality.
+
+### Frontend tests
+
+Test:
+
+- Baseline list rendering.
+- Loading and error states.
+- Learning, provisional, and established states.
+- Device detail rendering.
+- Empty baseline data.
+- Reset confirmation and successful reset.
+- Reset failures.
+- Correct API integration.
+- Navigation to the new page.
+
+### Integration tests
+
+Demonstrate the complete workflow:
+
+```text
+Start backend
+    ↓
+Start authorized packet capture
+    ↓
+Observe normalized packets
+    ↓
+Identify devices
+    ↓
+Extract behavioral features
+    ↓
+Aggregate observation windows
+    ↓
+Persist baseline samples
+    ↓
+Calculate statistical profiles
+    ↓
+Retrieve profiles through REST API
+    ↓
+Display profiles in the frontend
+    ↓
+Reset one device's baseline
+    ↓
+Verify that learning starts again
+```
+
+Use controlled local traffic and do not generate traffic against systems without authorization.
+
+## 14. Quality gates
+
+Update the existing quality-gate system to include any new required checks.
+
+Run the complete existing verification process, including:
 
 ```powershell
 python backend/scripts/run_quality_gates.py --full
 ```
 
-Use the actual supported command and verify its output.
-
-The final release notes must include the genuine:
-
-```text
-RESULT: PASS
-```
-
-line from the final release verification.
-
-### B4 — Backend environment
-
-The backend virtual environment must be created on the release machine.
-
-Do not commit `.venv`.
-
-Document the command required to create it:
-
-```powershell
-cd backend
-python -m venv .venv
-```
-
-Install the backend dependencies and the separately documented Pyright development dependency.
-
-The final release verification must not silently skip the backend type-checking gate.
-
-### B5 — All frontend routes
-
-All 12 frontend routes must be opened and verified in a real browser against a running backend.
-
-A passing component test alone is not sufficient to close this requirement.
-
----
-
-# 6. M20.3 — Full End-to-End Application Verification
-
-Verify the entire application workflow:
-
-```text
-Authorized Local Network
-        ↓
-Packet Capture
-        ↓
-Packet Processing
-        ↓
-Traffic Statistics
-        ↓
-Packet Persistence
-        ↓
-Device Discovery
-        ↓
-Connection Tracking
-        ↓
-Detection Engine
-        ↓
-Alert Engine
-        ↓
-Correlation + Risk Scoring
-        ↓
-REST API + WebSockets
-        ↓
-React Dashboard
-        ↓
-Analytics
-        ↓
-CSV/PDF Reports
-        ↓
-Report Download
-```
-
-Verify that every stage receives and produces the expected real data.
-
-Use the existing M18 end-to-end verification scripts where appropriate.
-
-Do not replace real pipeline verification with mock data or manually fabricated API responses.
-
-Keep tests isolated from the developer's working SQLite database.
-
----
-
-# 7. M20.4 — Real Network Capture Verification
-
-Perform an authorized local packet-capture test.
-
-Verify:
-
-- network interface enumeration
-- interface selection
-- capture start
-- capture status
-- packet reception
-- packet normalization
-- traffic counter updates
-- packet persistence
-- capture stop
-- correct final capture state
-- graceful application shutdown
-
-Use a local interface that the operator is authorized to monitor.
-
-Use harmless traffic generated from the local machine or an authorized lab environment.
-
-Do not perform disruptive scans or generate uncontrolled flood traffic.
-
-Verify that:
-
-- packet counts increase when traffic is captured
-- byte counts reflect processed packets
-- protocol statistics update
-- persisted records are queryable
-- malformed packets do not stop capture
-- capture errors are reported honestly
-
-Record:
-
-- interface used
-- operating environment
-- test duration
-- packet count
-- processed packet count
-- processing errors
-- persistence result
-
-Do not claim that packet capture works on every network adapter or operating system.
-
----
-
-# 8. M20.5 — Detection and Alert Verification
-
-Verify the existing detection engine using controlled lab traffic.
-
-Test the implemented detection categories:
-
-- Port scan
-- SYN flood detection
-- ICMP flood detection
-- Internal scan
-- High-bandwidth/traffic spike detection
-
-Use safe, controlled test inputs.
-
-Verify both:
-
-1. Suspicious scenarios that should produce findings
-2. Benign scenarios that should not produce findings
-
-For detected activity, verify:
-
-```text
-Detection Finding
-       ↓
-Alert Creation
-       ↓
-Evidence Association
-       ↓
-Severity + Confidence
-       ↓
-Correlation
-       ↓
-Incident Creation
-       ↓
-Risk Score + Risk Band
-```
-
-Verify alert lifecycle actions:
-
-- Acknowledge
-- Resolve
-- Dismiss
-- False positive
-
-Do not claim that all malicious network behavior is detected.
-
-Document the actual detection rules and their limitations.
-
----
-
-# 9. M20.6 — REST API Verification
-
-Verify the complete documented REST API.
-
-Check the major API groups:
-
-- Health
-- Capture
-- Packets
-- Statistics
-- Devices
-- Connections
-- Detections
-- Alerts
-- Evidence
-- Incidents
-- Analytics
-- Dashboard
-- Settings
-- System
-- Notifications
-- Reports
-
-Verify the important reporting endpoints:
-
-```text
-GET  /api/v1/reports
-GET  /api/v1/reports/{id}
-POST /api/v1/reports/generate
-GET  /api/v1/reports/{id}/download
-```
-
-Verify:
-
-- successful responses
-- response envelope
-- validation
-- invalid filters
-- missing resources
-- pagination
-- error handling
-- correct status codes
-- absence of internal paths or stack traces
-
-Check the OpenAPI documentation at:
-
-```text
-http://127.0.0.1:8000/docs
-http://127.0.0.1:8000/redoc
-http://127.0.0.1:8000/openapi.json
-```
-
-Compare actual API responses against the frontend TypeScript models.
-
-Do not assume that all routes work merely because the health endpoint responds.
-
----
-
-# 10. M20.7 — WebSocket Verification
-
-Verify all four channels:
-
-```text
-/ws/dashboard
-/ws/packets
-/ws/alerts
-/ws/system
-```
-
-Confirm:
-
-- clients connect successfully
-- actual events are received
-- event envelopes are valid
-- dashboard updates reflect backend state
-- packet updates correspond to real packet processing
-- alert events correspond to persisted alerts
-- system events reflect actual system state
-- heartbeat works
-- disconnected clients are cleaned up
-- reconnect performs REST refresh
-- queues remain bounded
-
-Verify the frontend does not present stale data as live data when a connection has failed.
-
-Record the behavior when capture is stopped.
-
-Do not claim historical WebSocket event replay, because the existing implementation starts a new connection with fresh counters.
-
----
-
-# 11. M20.8 — Frontend Real-Browser Verification
-
-Start the actual backend and frontend.
-
-Open the application in a real browser.
-
-Verify every route:
-
-1. Dashboard
-2. Live Traffic
-3. Devices
-4. Connections
-5. Detections
-6. Alerts
-7. Incidents
-8. Analytics
-9. Reports
-10. Notifications
-11. System
-12. Settings
-
-For each route, verify:
-
-- navigation works
-- the correct page loads
-- required JavaScript chunks load
-- real API data appears where available
-- loading state behaves correctly
-- empty state is understandable
-- errors are displayed safely
-- no unexpected blank page appears
-- browser console does not show unexplained application errors
-
-Test the route transitions that use lazy-loaded chunks.
-
-Verify that a failed chunk does not remove the navigation shell and that the page recovery action works.
-
-For the Dashboard and Live Traffic pages, perform a controlled capture session and verify that real data appears.
-
-For Alerts and Incidents, use controlled test events from the actual backend.
-
-For Analytics and Reports, verify real backend responses.
-
-For Settings and System, verify actual API responses rather than fixtures.
-
-Capture updated screenshots of the application.
-
-Do not use fabricated data for release screenshots.
-
----
-
-# 12. M20.9 — Analytics and Reporting Verification
-
-Verify all five analytics endpoints:
-
-```text
-GET /api/v1/analytics/traffic
-GET /api/v1/analytics/protocols
-GET /api/v1/analytics/devices
-GET /api/v1/analytics/connections
-GET /api/v1/analytics/threats
-```
-
-Confirm that:
-
-- the resolved period is displayed
-- time filtering works
-- stored and live figures retain their documented distinction
-- empty datasets are represented correctly
-- unavailable data is not represented as zero
-- charts display real response values
-
-Verify M17 reporting:
-
-- Daily CSV generation
-- Daily PDF generation
-- Weekly CSV generation
-- Weekly PDF generation
-- Custom-period CSV generation
-- Custom-period PDF generation
-- Report history
-- Individual report metadata
-- Report downloads
-- Correct media types
-- Correct file sizes
-- Safe storage behavior
-
-Open the downloaded CSV and PDF files to verify their contents.
-
-Do not claim a report is generated just because the API returned metadata.
-
-The actual artifact must exist and be downloadable.
-
----
-
-# 13. M20.10 — Clean-Installation Verification
-
-Create a clean clone or disposable checkout of the final release candidate.
-
-Do not rely on:
-
-- existing virtual environments
-- existing `node_modules`
-- old build output
-- local databases
-- cached report files
-- machine-specific configuration
-- manually copied runtime data
-
-Follow the README exactly.
-
-Verify:
-
-1. Clone the repository.
-2. Create the backend virtual environment.
-3. Install backend dependencies.
-4. Install the documented Pyright dependency.
-5. Configure backend environment variables.
-6. Initialize SQLite.
-7. Start FastAPI.
-8. Confirm the health endpoint.
-9. Install frontend dependencies with `npm ci`.
-10. Start the frontend.
-11. Build the frontend.
-12. Open the application.
-13. Verify all 12 routes.
-14. Perform authorized packet-processing verification.
-15. Generate and download a report.
-16. Run the quality gates.
-
-Record every failure and the correction.
-
-The clean installation must use the committed source and documentation, not the developer's working directory.
-
-Verify that the developer's actual database is untouched.
-
----
-
-# 14. M20.11 — Final Quality Gates
-
-Run:
-
-```powershell
-python backend/scripts/run_quality_gates.py --full
-```
-
-Run the frontend checks:
+Also run the applicable frontend commands:
 
 ```powershell
 cd frontend
@@ -596,513 +417,110 @@ npm run typecheck
 npm run build
 ```
 
-Confirm:
+Run all existing backend tests and the new M21 tests.
 
-- all backend tests pass
-- security tests pass
-- Pyright passes
-- frontend unit tests pass
-- live integration tests pass
-- TypeScript checking passes
-- frontend build succeeds
-- sample end-to-end verification passes
-- live end-to-end verification passes
-- performance harness completes
+Record the actual test counts and results.
 
-Record exact test counts and results from the final release candidate.
+Do not skip, suppress, or exclude failing tests to obtain a passing result.
 
-Do not copy M19 test counts as the M20 result.
+Preserve all M0–M20 quality gates.
 
-Do not suppress warnings or skip failures to obtain a passing release.
-
----
-
-# 15. M20.12 — README and Documentation Finalization
-
-Review the README and make it suitable as the main entry point for a new developer.
-
-It must clearly explain:
-
-### Project overview
-
-- What NetWatch AI does today
-- Its architecture
-- Implemented capabilities
-- Current limitations
-- What remains future work
-
-### Installation
-
-- Requirements
-- Backend installation
-- Frontend installation
-- Configuration
-- Database initialization
-- Startup commands
-
-### Usage
-
-- Start packet capture
-- Select a network interface
-- View live traffic
-- View devices and connections
-- Inspect findings and alerts
-- Investigate incidents
-- View analytics
-- Generate reports
-- Download reports
-
-### Verification
-
-- Run backend tests
-- Run frontend tests
-- Run live tests
-- Run type checks
-- Run full quality gates
-- Run end-to-end verification
-
-### Security limitations
-
-Explicitly state:
-
-- No authentication
-- No RBAC
-- No TLS
-- Local single-operator scope
-- No public or untrusted multi-user deployment support
-
-### Future development
-
-Clearly distinguish planned capabilities:
-
-- Behavioral baselines
-- ML anomaly detection
-- Local LLM
-- AI Security Analyst
-- Intelligent log analysis
-- Wazuh integration
-
-Do not describe planned features as implemented.
-
----
-
-# 16. M20.13 — Architecture and Project Screenshots
-
-Review existing architecture diagrams and project screenshots.
-
-Prepare an updated set of genuine screenshots representing:
-
-- Dashboard
-- Live Traffic
-- Devices
-- Connections
-- Detections
-- Alerts
-- Incidents
-- Analytics
-- Reports
-- Settings or System
-
-Capture screenshots from the running release candidate.
-
-Do not fabricate data or alter screenshots to misrepresent capabilities.
-
-Ensure screenshots:
-
-- show the actual interface
-- use consistent application dimensions
-- are readable
-- do not expose private paths, credentials or personal information
-- do not show accidental errors or development tools
-
-Update the README with a small number of the most useful screenshots.
-
-Keep the remaining screenshots in an organized documentation/assets directory.
-
----
-
-# 17. M20.14 — Demo Recording
-
-Create a reproducible demonstration of the base NetWatch AI application.
-
-Suggested sequence:
-
-```text
-1. Introduce NetWatch AI
-2. Explain the application architecture
-3. Start the backend
-4. Start the frontend
-5. Select an authorized network interface
-6. Start packet capture
-7. Generate harmless network traffic
-8. Show real-time traffic updates
-9. Show device discovery
-10. Show connection tracking
-11. Demonstrate a controlled detection scenario
-12. Show the resulting alert
-13. Show the correlated incident
-14. Open analytics
-15. Generate a CSV report
-16. Generate a PDF report
-17. Download a report
-18. Show the testing and verification results
-19. Explain current limitations and future AI development
-```
-
-Use real data generated during the demonstration.
-
-Do not claim that the platform has ML or AI capabilities that are not yet implemented.
-
-Keep the recording clear and focused.
-
-Store the final demo in an intentional location and do not commit unnecessary large raw recordings to the source repository unless that is the chosen distribution approach.
-
----
-
-# 18. M20.15 — GitHub Repository Cleanup
-
-Review the complete repository before release.
-
-Verify:
-
-- source files are tracked
-- tests are tracked
-- milestone documents are organized
-- README is updated
-- `.env.example` files are tracked
-- `.env` files are not tracked
-- SQLite databases are not tracked
-- database backups are not tracked
-- `.venv` is not tracked
-- `node_modules` is not tracked
-- `dist` is not tracked
-- temporary files are removed
-- generated report artifacts are excluded
-- local benchmark baselines are excluded
-- no credentials or secrets are present
-- no accidental large binary files are committed
-
-Run:
-
-```powershell
-git status -sb
-git remote -v
-git ls-files backend/netwatch.db
-git check-ignore -v backend/netwatch.db
-```
-
-Inspect tracked repository contents for files exceeding GitHub's 100 MB file limit.
-
-Pay special attention to:
-
-- `.db`
-- `.sqlite`
-- `.pdf`
-- `.zip`
-- `.mp4`
-- `.log`
-- generated reports
-- model files
-
-Keep source code, documentation and intentional project assets.
-
-Do not run `git filter-repo`, delete Git objects, or force-push as a routine cleanup operation.
-
-If a large tracked file or leaked secret is discovered:
-
-1. stop release preparation
-2. identify the affected file and commits
-3. make a verified backup
-4. determine whether history rewriting is necessary
-5. document the recovery procedure
-6. only then perform the required correction
-
-Preserve all valid project work.
-
----
-
-# 19. M20.16 — Version and Release Management
-
-Inspect existing version tags before selecting a release version.
-
-Follow the project's existing semantic-version naming convention.
-
-If the current release sequence ends at `v0.0.19`, and that is confirmed to be the latest valid tag, the proposed next tag is:
-
-```text
-v0.0.20
-```
-
-Do not assume this version if the repository has moved beyond it.
-
-Before tagging:
-
-- confirm the correct branch
-- ensure working-tree changes are understood
-- ensure all release commits are committed
-- run the final full quality gates
-- complete the clean installation
-- complete all browser-route checks
-- complete end-to-end verification
-- review release notes
-
-Create an annotated Git tag only after all acceptance criteria pass.
-
-For example, when the final version has been verified:
-
-```powershell
-git tag -a v0.0.20 -m "NetWatch AI Base Application Release v0.0.20"
-```
-
-Push the intended branch and tag:
-
-```powershell
-git push origin main
-git push origin v0.0.20
-```
-
-Do not force-push.
-
-Verify that the tag and release commit exist on GitHub.
-
-Prepare GitHub release notes with:
-
-- release version
-- implemented features
-- testing results
-- installation instructions
-- known limitations
-- local-only deployment warning
-- future AI development roadmap
-
-Do not publish or tag an unverified build.
-
----
-
-# 20. M20.17 — Release Acceptance Report
+## 15. Documentation
 
 Create:
 
 ```text
-docs/24_M20_Base_Application_Release.md
+docs/25_M21_Behavioral_Baseline_Engine.md
 ```
 
-Use the same numbered design-document style as earlier milestones.
+Document:
 
-Include:
+- M21 purpose and scope.
+- Architecture and data flow.
+- Behavioral features.
+- Device identity handling.
+- Aggregation interval.
+- Statistical calculations.
+- Learning lifecycle.
+- Database schema.
+- Retention configuration.
+- API endpoints and response examples.
+- Frontend implementation.
+- Testing and verification.
+- Performance measurements.
+- Known limitations.
+- Deferred functionality for M22 and later.
 
-1. Purpose
-2. Release scope
-3. Version information
-4. Architecture summary
-5. Implemented capabilities
-6. Installation requirements
-7. Installation verification
-8. Real packet-capture results
-9. Detection and alert results
-10. REST API verification
-11. WebSocket verification
-12. Frontend browser verification
-13. Analytics verification
-14. Reporting verification
-15. Quality-gate results
-16. Performance measurements
-17. Screenshots and demo
-18. GitHub repository state
-19. Known limitations
-20. Security scope
-21. Release checklist
-22. M20 closure
+Update the main README where appropriate.
 
-Update the M20 section of `docs/TODO.md`.
+Update `docs/TODO.md` to record M21 completion and the remaining roadmap.
 
-Update `docs/Current_Task.md` using the established project convention.
+Do not rewrite the M20 release report. It must remain an accurate historical record of the v0.0.20 base release.
 
-Preserve previous milestone records.
+## 16. Git and version control
 
-The document status must remain:
+Inspect Git status before making changes.
 
-**Status: design / in progress**
+- Preserve the M20 `v0.0.20` tag.
+- Do not rewrite existing history.
+- Do not force-push.
+- Do not commit databases, virtual environments, generated reports, temporary files, secrets, or credentials.
+- Follow the repository's existing commit conventions.
+- Verify tracked files before committing.
 
-until the release candidate has passed every required check.
+Use `v0.0.21` only after confirming the existing tag convention and successful M21 acceptance checks.
 
-Only then change it to:
+Do not create a release tag while required tests are failing.
 
-**Status: released and verified**
+## 17. M21 acceptance criteria
 
----
+M21 is complete only when:
 
-# 21. M20 Non-Goals
+- [ ] The behavioral baseline engine is implemented.
+- [ ] Existing normalized packet processing is reused.
+- [ ] Behavioral features are extracted correctly.
+- [ ] Per-device aggregation works.
+- [ ] Statistical profiles are calculated correctly.
+- [ ] Learning states work correctly.
+- [ ] Baseline data persists across restarts.
+- [ ] Stable device identity is handled correctly.
+- [ ] Historical retention works.
+- [ ] Reset functionality works.
+- [ ] Backend REST endpoints work.
+- [ ] The Behavioral Baselines frontend page works.
+- [ ] Frontend uses real backend data.
+- [ ] Performance and bounded-state behavior are verified.
+- [ ] New backend tests pass.
+- [ ] New frontend tests pass.
+- [ ] Existing M0–M20 regression suites pass.
+- [ ] Full quality gates pass.
+- [ ] README and architecture documentation are updated.
+- [ ] `docs/25_M21_Behavioral_Baseline_Engine.md` is complete.
+- [ ] `docs/TODO.md` is updated.
+- [ ] Git repository contains no accidental generated data or secrets.
 
-The following capabilities are explicitly outside M20:
+## 18. Final milestone report
 
-- Behavioral baseline engine
-- ML anomaly detection
-- AI explanations
-- Local LLM/Ollama
-- AI Security Analyst
-- Intelligent sequence analysis
-- Wazuh integration
-- SIEM integration
-- Threat-intelligence integration
-- MITRE ATT&CK integration
-- IPS or automatic blocking
-- Authentication/RBAC
-- Distributed sensors
-- PostgreSQL migration
-- Docker deployment
+At completion, provide a detailed report containing:
 
-M20 completes the base network-monitoring application.
+1. What was implemented.
+2. Architecture and file changes.
+3. Database changes.
+4. Behavioral features collected.
+5. Statistical methods used.
+6. Learning-state thresholds.
+7. API endpoints and verified response examples.
+8. Frontend changes.
+9. Test counts and quality-gate results.
+10. Performance measurements.
+11. Known limitations.
+12. Deferred M22 functionality.
+13. Git status and version/tag information.
 
-It does not complete the future AI intelligence phase.
+Clearly distinguish implemented functionality from planned functionality.
 
----
-
-# 22. Completion Criteria
-
-M20 is complete only when — **all satisfied**:
-
-- [x] M0–M19 documentation has been reviewed
-- [x] All five M19 release blockers are resolved or explicitly accepted
-- [x] Local-only release scope is stated
-- [x] Full end-to-end workflow is verified
-- [x] Real packet capture works in an authorized environment
-- [x] Detection is verified using controlled lab traffic
-- [x] Alerts and incidents are verified
-- [x] REST API is verified
-- [x] All four WebSocket channels are verified
-- [x] Dashboard uses real data
-- [x] All 12 frontend routes are checked in a real browser
-- [x] Analytics use real backend data
-- [x] CSV/PDF reports work
-- [x] Report downloads work
-- [x] Clean installation succeeds
-- [x] Full quality gates pass
-- [x] Pyright passes
-- [x] TypeScript checking passes
-- [x] Frontend build succeeds
-- [x] README is accurate
-- [x] Architecture documentation is updated
-- [x] Screenshots are updated
-- [x] Demo recording is completed
-- [x] GitHub repository is clean
-- [x] No accidental large files or secrets are tracked
-- [x] Version is verified
-- [x] Annotated release tag is created
-- [x] GitHub contains the intended release commit and tag
-- [x] `docs/24_M20_Base_Application_Release.md` is complete
-- [x] M20's `docs/TODO.md` checklist is updated
+**Do not claim that NetWatch AI now detects anomalies using ML.** M21 builds the behavioral knowledge that M22 will use to implement anomaly detection.
 
 ---
 
-# 23. Final Implementation Report
-
-At completion, provide:
-
-1. Final application version
-2. Final release commit
-3. Git tag
-4. Files created
-5. Files modified
-6. Final backend test results
-7. Final frontend test results
-8. Type-check results
-9. Full quality-gate result
-10. Real packet-capture verification
-11. Detection and alert verification
-12. REST API results
-13. WebSocket results
-14. Browser verification of all 12 routes
-15. Analytics and reporting verification
-16. Clean-installation results
-17. Performance measurements
-18. README and documentation changes
-19. Screenshots and demo location
-20. GitHub repository cleanup results
-21. Remaining limitations
-22. Final release acceptance decision
-
-Do not claim production readiness.
-
-Do not claim AI/ML capabilities that have not been implemented.
-
-Do not mark the application released unless the release candidate has passed the required checks.
-
-**M20 is complete when NetWatch AI's base application can be installed, run, demonstrated, tested and reproduced from its released GitHub source.**
-
----
-
-# 24. Final Implementation Report — as delivered
-
-1. **Final application version.** Git tag `v0.0.20`; `/api/v1/system/info`
-   reports `app_version: 0.1.0`, `api_version: v1`. The two are separate sequences.
-2. **Final release commit.** The `main` commit carrying this document, tagged
-   `v0.0.20`.
-3. **Git tag.** Annotated, `v0.0.20`, message
-   `NetWatch AI Base Application Release v0.0.20`.
-4. **Files created.** `backend/scripts/demo_m20.py`,
-   `docs/24_M20_Base_Application_Release.md`, `docs/assets/screenshots/` with 12
-   PNGs (`01-dashboard` … `12-settings`).
-5. **Files modified.** `README.md` (install/use/verify accuracy, corrected
-   privilege claim, screenshots section, future-development roadmap),
-   `frontend/src/index.css` (local-first font stack, ligatures off),
-   `frontend/src/components/Sidebar.tsx` (route reachability),
-   `frontend/src/pages/{Alerts,Connections,Detections,Devices,Incidents,LiveTraffic}.tsx`
-   (responsive card grid), `frontend/package.json` + `package-lock.json` (package
-   renamed to `netwatch-ai-frontend`, advisories resolved), `docs/TODO.md`,
-   `docs/Current_Task.md`.
-6. **Final backend test results.** 2 615 passed in the backend suite; 145 passed in
-   the security suite.
-7. **Final frontend test results.** 465 passed across 17 files; 67 passed in the
-   live suite against a running backend.
-8. **Type-check results.** Backend pyright **0 errors, 0 warnings,
-   0 informations** (pyright 1.1.414). Frontend `tsc --noEmit` **exit 0**.
-9. **Full quality-gate result.** 9/9 gates ran and passed;
-   ```text
-   RESULT: PASS
-   ```
-10. **Real packet-capture verification.** `Wi-Fi`, Windows 11, **unelevated**,
-    12 s, 991 packets captured and 991 processed, **0 processing errors**, rows
-    persisted and queryable, second stop refused with `CaptureNotRunningError`,
-    clean shutdown. A longer session reached 603 845 packets / 319 MB with 0
-    errors.
-11. **Detection and alert verification.** All five rules exercised positively and
-    negatively; finding → alert → evidence → severity/confidence → correlation →
-    incident → risk score/band verified end to end; acknowledge, resolve, dismiss
-    and false-positive all verified.
-12. **REST API results.** 24/24 groups, 60 OpenAPI paths, `/docs`, `/redoc` and
-    `/openapi.json` all 200; envelope consistent; 400/404/409/422/501 correct; no
-    internal path or stack trace in any response.
-13. **WebSocket results.** 4/4 channels connect and deliver real events; heartbeat
-    works; a silent client is retired with 1001; queues bounded; no replay claimed.
-14. **Browser verification of all 12 routes.** All opened in a real browser against
-    the live backend; no blank pages, no unexplained console errors. Five routes
-    were unreachable at 900×600 before the fix.
-15. **Analytics and reporting verification.** Five analytics views with resolved
-    periods and the stored/live distinction intact; six report combinations
-    generated, downloaded and opened — CSV 40 361 B, PDF 117 452 B.
-16. **Clean-installation results.** Disposable clone, README followed exactly,
-    **6/6 gates PASS, `RESULT: PASS`**; the developer's database untouched.
-17. **Performance measurements.** Build ~700 ms; sustained capture 603 845 packets
-    / 319 MB / ~148 pkt/s; 863 pkt/s peak observed; 0 processing errors; memory
-    bounded. No load, soak or multi-machine test was run.
-18. **README and documentation changes.** README corrected against measured
-    behaviour, screenshots added, future-development section added; `docs/24`
-    created; `docs/TODO.md` and `docs/Current_Task.md` updated. All earlier
-    milestone records preserved.
-19. **Screenshots and demo location.** `docs/assets/screenshots/`;
-    `backend/scripts/demo_m20.py`. The raw video is intentionally not committed.
-20. **GitHub repository cleanup results.** No tracked `.db`, `.env`, `.venv`,
-    `node_modules`, `dist`, report artifact or scratch script; three
-    `.env.example` files tracked; largest tracked file 117 156 B. No history
-    rewrite or force-push performed.
-21. **Remaining limitations.** No authentication, RBAC or TLS; local
-    single-operator scope only; five fixed detection rules; devices memory-only;
-    no WebSocket replay; SQLite only; capture verified on one adapter on one OS;
-    no distributed sensors.
-22. **Final release acceptance decision.** **Accepted for release as `v0.0.20`**,
-    scoped to local single-operator use.
-
-**Not claimed:** production readiness, enterprise security, safe internet
-exposure, or any AI/ML capability. None of the planned AI features exist in this
-tag.
+**Milestone completion definition:** NetWatch AI can continuously learn and persist statistical behavioral profiles for observed devices, display those profiles through its backend and frontend, and preserve the reliability of the existing M20 application.

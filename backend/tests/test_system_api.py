@@ -45,6 +45,7 @@ SERVICE_NAMES = (
     "detection",
     "alerts",
     "correlation",
+    "baselines",
 )
 
 
@@ -258,9 +259,10 @@ def test_status_reports_every_block(client: TestClient) -> None:
 def test_status_reports_each_pipeline_stage(client: TestClient) -> None:
     """Every stage is named, and attachment reflects the live pipeline.
 
-    The fake pipeline holds no persistence, connections, detection, alerting or
-    correlation, so those stages report themselves as configured-on but not
-    attached — the disagreement the two fields exist to expose (M13.22).
+    The fake pipeline holds no persistence, connections, detection, alerting,
+    correlation or baseline learner, so those stages report themselves as
+    configured-on but not attached — the disagreement the two fields exist to
+    expose (M13.22).
     """
     services = client.get(STATUS_URL).json()["data"]["services"]
     by_name = {service["name"]: service for service in services}
@@ -270,6 +272,7 @@ def test_status_reports_each_pipeline_stage(client: TestClient) -> None:
     assert by_name["devices"]["attached"] is True
     assert by_name["persistence"]["attached"] is False
     assert by_name["correlation"]["attached"] is False
+    assert by_name["baselines"]["attached"] is False
 
 
 def test_status_reports_capture_state(client: TestClient) -> None:

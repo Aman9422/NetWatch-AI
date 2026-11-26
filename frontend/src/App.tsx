@@ -45,6 +45,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'))
 const LiveTraffic = lazy(() => import('./pages/LiveTraffic'))
 const Devices = lazy(() => import('./pages/Devices'))
 const Connections = lazy(() => import('./pages/Connections'))
+const Baselines = lazy(() => import('./pages/Baselines'))
 const Detections = lazy(() => import('./pages/Detections'))
 const Alerts = lazy(() => import('./pages/Alerts'))
 const Incidents = lazy(() => import('./pages/Incidents'))
@@ -60,6 +61,7 @@ export type Page =
   | 'live-traffic'
   | 'devices'
   | 'connections'
+  | 'baselines'
   | 'detections'
   | 'alerts'
   | 'incidents'
@@ -105,6 +107,8 @@ export default function App() {
         return <Devices showToast={showToast} />
       case 'connections':
         return <Connections showToast={showToast} />
+      case 'baselines':
+        return <Baselines showToast={showToast} />
       case 'detections':
         return <Detections showToast={showToast} />
       case 'alerts':

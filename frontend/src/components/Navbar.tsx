@@ -36,6 +36,7 @@ const TITLES: Readonly<Record<Page, string>> = {
   'live-traffic': 'Live Traffic',
   'devices': 'Devices',
   'connections': 'Connections',
+  'baselines': 'Behavioral Baselines',
   'detections': 'Detections',
   'alerts': 'Alerts',
   'incidents': 'Incidents',

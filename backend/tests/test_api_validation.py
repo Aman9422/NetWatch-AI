@@ -44,10 +44,15 @@ from app.api.common.validation import (
 )
 from app.api.v1.deps import get_alert_queries
 from app.api.v1.incidents import MAX_INCIDENT_PAGE_SIZE
+from app.baselines import get_baseline_engine
 from app.database.session import get_db
 from app.models.notification import Notification
 from app.models.report import Report
-from tests.m13_fakes import api_client, make_db_override
+from tests.m13_fakes import (
+    api_client,
+    baseline_engine_override,
+    make_db_override,
+)
 
 #: Matches the start of an ISO-8601 datetime, so a response can be searched for
 #: timestamps without knowing which field holds one.
@@ -72,6 +77,9 @@ PAGINATED_COLLECTIONS = {
     "/api/v1/incidents": MAX_INCIDENT_PAGE_SIZE,
     "/api/v1/reports": MAX_PAGE_SIZE,
     "/api/v1/notifications": MAX_PAGE_SIZE,
+    # M21 gave the reserved baseline surface a real engine, so it is now a
+    # paginated collection like the rest rather than an excluded 501 (M21.10).
+    "/api/v1/baselines": MAX_PAGE_SIZE,
 }
 
 #: The collection URLs alone, for the tests that do not bound a page.
@@ -102,6 +110,10 @@ def client(
         {
             get_db: make_db_override(db_engine),
             get_alert_queries: lambda: AlertQueries(session_factory=session_factory),
+            # M21.10: the baseline routes read the engine, so it is pointed at
+            # the isolated database too. Without this the listing would reach the
+            # developer's own ``netwatch.db``.
+            get_baseline_engine: baseline_engine_override(session_factory),
         }
     ) as test_client:
         yield test_client
@@ -311,17 +323,24 @@ def test_the_incident_cap_is_enforced_by_request_validation(
     )
 
 
-def test_baselines_reports_unavailable_rather_than_fake_data(
+def test_baselines_is_an_empty_page_before_anything_is_learnt(
     client: TestClient,
 ) -> None:
-    """The reserved baseline API answers 501 until a baseline engine exists.
+    """The baseline listing is a real, empty page -- not fake data (M21.10).
 
-    Excluded from the paginated set on purpose (M13.17). It serves no page at
-    all, and returning an empty one would assert that no behavioural baseline was
-    breached when none has ever been computed — the "fake data" the milestone
-    explicitly forbids.
+    Before M21 this answered ``501`` because no engine existed and serving the M2
+    seed rows would have presented a placeholder as an analysed profile. M21
+    implements the engine, so the honest answer for a database with no observation
+    windows is an empty page with a real total of zero: nothing has been learnt
+    yet, and the response says exactly that.
     """
-    assert client.get("/api/v1/baselines").status_code == 501
+    response = client.get("/api/v1/baselines")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["baselines"] == []
+    assert data["total"] == 0
+    assert data["has_more"] is False
 
 
 @pytest.mark.parametrize("url", PAGINATED_URLS)
