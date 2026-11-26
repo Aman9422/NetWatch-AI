@@ -280,6 +280,7 @@ def build_retention_policies() -> list[RetentionPolicy]:
     pass is going to be cut short, the largest source of growth should have been
     dealt with first.
     """
+    from app.anomaly_detection.retention import get_anomaly_retention_service
     from app.baselines.retention import get_baseline_retention_service
     from app.persistence.retention import get_packet_retention_service
     from app.reports.retention import get_report_retention_service
@@ -297,6 +298,14 @@ def build_retention_policies() -> list[RetentionPolicy]:
         RetentionPolicy(
             name="baselines",
             cleanup=lambda: get_baseline_retention_service().cleanup_outcome(),
+        ),
+        # The M22 evaluation store. Last because it is the smallest table and the
+        # one whose rows matter least to a running system: deleting a verdict
+        # never affects capture, detection or M21 learning. Model metadata is not
+        # touched here — a model survives its verdicts (M22.10).
+        RetentionPolicy(
+            name="anomalies",
+            cleanup=lambda: get_anomaly_retention_service().cleanup_outcome(),
         ),
         RetentionPolicy(
             name="reports",

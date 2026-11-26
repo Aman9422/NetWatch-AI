@@ -41,6 +41,8 @@ import { formatCount } from '@/lib/format'
 import {
   channelHub,
   fetchAlerts,
+  fetchAnomalies,
+  fetchAnomalyModels,
   fetchDashboardSummary,
   fetchDevices,
   fetchReports,
@@ -80,7 +82,13 @@ describe('the application against the live backend', () => {
     // The endpoint is shown twice on purpose — the rail's "Connected backend" card
     // and the header's endpoint chip (M15.37) — so both are expected, not one.
     expect(screen.getAllByText(environment.apiBaseUrl).length).toBeGreaterThan(0)
-    expect(await screen.findByText('Live Throughput')).toBeInTheDocument()
+
+    // The landing page arrived and left its loading state. Dashboard is a lazy
+    // chunk (M19.8), so the first time this file runs it also pays that chunk's
+    // transform cost — the default one-second `findBy` budget is not enough on a
+    // cold transform, and a timeout here would report a slow build as a broken
+    // page.
+    expect(await screen.findByText('Live Throughput', {}, { timeout: 10_000 })).toBeInTheDocument()
 
     const alerts = summary.alerts.data
     if (alerts === null) {
@@ -200,6 +208,61 @@ describe('the application against the live backend', () => {
     expect(await screen.findByText('Runtime settings')).toBeInTheDocument()
     if (page.count === 0) {
       expect(await screen.findByText('No readable settings')).toBeInTheDocument()
+    }
+  })
+
+  it('renders the anomalies page from the real M22 endpoints (M22.13)', async () => {
+    const [page, models] = await Promise.all([
+      fetchAnomalies({}, { limit: 5 }),
+      fetchAnomalyModels({}, { limit: 5 }),
+    ])
+    render(<App />)
+    await navigateTo('Anomalies')
+
+    // The page names itself and the shell names the route, so more than one
+    // heading reading `ML Anomalies` is the correct state.
+    expect(
+      (await screen.findAllByRole('heading', { name: 'ML Anomalies' })).length,
+    ).toBeGreaterThan(0)
+
+    // The disclaimer is the page's central obligation (M22.13): an anomaly is a
+    // deviation from learned behaviour, never a finding of malice.
+    expect(
+      await screen.findByText(/not confirmation of malicious activity/i),
+    ).toBeInTheDocument()
+
+    // The evaluations tile, counted by the backend and formatted by the page.
+    expect(
+      await screen.findByText(formatCount(page.summary.evaluations)),
+    ).toBeInTheDocument()
+
+    // An empty store is an honest state, stated rather than rendered as a calm
+    // zero that reads like a clean bill of health.
+    if (page.anomalies.length === 0) {
+      expect(
+        await screen.findByText(/No windows evaluated yet|No results match this filter/),
+      ).toBeInTheDocument()
+    } else {
+      const first = page.anomalies[0]
+      if (first !== undefined) {
+        expect((await screen.findAllByText(first.device_key)).length).toBeGreaterThan(0)
+      }
+    }
+
+    // The models tab lists devices still collecting history, because "no model
+    // yet" must never look like "no anomalies".
+    if (models.models.length > 0) {
+      const user = userEvent.setup()
+      // The tab button and the table's own `<h2>` share the same words, so the
+      // click targets the button role specifically rather than the text.
+      await user.click(screen.getByRole('button', { name: 'Device models' }))
+      expect(
+        (await screen.findAllByText('Device models')).length,
+      ).toBeGreaterThanOrEqual(2)
+      const model = models.models[0]
+      if (model !== undefined) {
+        expect((await screen.findAllByText(model.device_key)).length).toBeGreaterThan(0)
+      }
     }
   })
 

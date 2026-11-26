@@ -96,8 +96,18 @@ class BaselineEngine:
         aggregator: WindowAggregator | None = None,
         autostart: bool = True,
         clock: Callable[[], float] | None = None,
+        window_listener: Callable[[list[WindowCounters]], None] | None = None,
     ) -> None:
         """Create the engine.
+
+        Args:
+            window_listener: Called with each batch of windows that reached the
+                database, so a downstream consumer (M22's anomaly engine) can
+                evaluate *completed* windows without this engine knowing what that
+                consumer does. The callback runs after the rows are committed, so
+                a consumer reading them back finds them, and its failure is
+                contained here — M21 learning must never depend on a consumer
+                existing or succeeding (M22.8).
 
         Raises:
             ValueError: If the window length or flush interval is not positive, or
@@ -133,6 +143,10 @@ class BaselineEngine:
         # Held around a write so a shutdown drain cannot interleave with a
         # scheduled pass and commit the same window twice.
         self._flush_lock = threading.Lock()
+        # Whoever consumes closed windows (M22). ``None`` when nothing does, in
+        # which case notifying them is one attribute test.
+        self._window_listener = window_listener
+        self._listener_error_count = 0
         if autostart:
             self.start()
 
@@ -234,7 +248,42 @@ class BaselineEngine:
                 self._flush_pass_count += 1
             if written:
                 self._last_flush_at = self._clock()
-            return written
+        # Outside the flush lock: a consumer must not extend the window during
+        # which a concurrent pass is blocked from writing.
+        if written:
+            self._notify_listener(batch)
+        return written
+
+    def _notify_listener(self, windows: Sequence[WindowCounters]) -> None:
+        """Hand committed windows to the downstream consumer (M22.8).
+
+        The rows are already in the database, so a consumer that reads them back
+        finds them. Any failure is counted and logged here and goes no further:
+        M21 learning must survive a broken consumer.
+        """
+        listener = self._window_listener
+        if listener is None:
+            return
+        try:
+            listener(list(windows))
+        except Exception:  # noqa: BLE001 - a consumer must not break learning
+            with self._counter_lock:
+                self._listener_error_count += 1
+            logger.exception(
+                "Baseline window listener failed for %d window(s); learning continues",
+                len(windows),
+            )
+
+    def attach_window_listener(
+        self, listener: Callable[[list[WindowCounters]], None] | None
+    ) -> None:
+        """Set the consumer that receives committed windows (M22.8).
+
+        The application lifespan calls this before :meth:`start`, so the learner
+        never has to know which consumer exists — or that one exists at all. A
+        later call replaces the listener; ``None`` detaches it.
+        """
+        self._window_listener = listener
 
     # -- lifecycle --------------------------------------------------------
 
@@ -361,6 +410,11 @@ class BaselineEngine:
         with self._counter_lock:
             return self._flush_pass_count
 
+    def get_listener_error_count(self) -> int:
+        """Return how many times the window listener raised."""
+        with self._counter_lock:
+            return self._listener_error_count
+
     def get_last_flush_at(self) -> float | None:
         """Return when a flush last wrote rows, or ``None``."""
         return self._last_flush_at
@@ -385,6 +439,7 @@ class BaselineEngine:
             self._persisted_window_count = 0
             self._persist_error_count = 0
             self._flush_pass_count = 0
+            self._listener_error_count = 0
             self._last_flush_at = None
 
 

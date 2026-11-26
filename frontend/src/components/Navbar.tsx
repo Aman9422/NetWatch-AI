@@ -37,6 +37,7 @@ const TITLES: Readonly<Record<Page, string>> = {
   'devices': 'Devices',
   'connections': 'Connections',
   'baselines': 'Behavioral Baselines',
+  'anomalies': 'ML Anomalies',
   'detections': 'Detections',
   'alerts': 'Alerts',
   'incidents': 'Incidents',

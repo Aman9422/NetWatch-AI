@@ -25,6 +25,7 @@ external endpoint.
 | Persistence | Packet metadata is written to SQLite in bounded batches by a background worker |
 | Devices | Devices are discovered and tracked by MAC, with IP history |
 | Baselines | Per-device behavioural profiles are learnt over 60 s windows and kept across restarts |
+| Anomalies | A per-device Isolation Forest scores each completed window against what that device previously looked like |
 | Connections | Packets are grouped into bidirectional conversations with state and counters |
 | Detection | Five rules: port scan, SYN flood, ICMP flood, internal scan, high bandwidth |
 | Alerts | Findings become alerts with severity, confidence, evidence and a lifecycle |
@@ -385,6 +386,7 @@ Authentication, RBAC and TLS are future work and are not implemented.
 | `docs/23_M19_Stabilization_Design.md` | The stabilization milestone |
 | `docs/24_M20_Base_Application_Release.md` | The base-application release record |
 | `docs/25_M21_Behavioral_Baseline_Engine.md` | The behavioural baseline engine |
+| `docs/26_M22_ML_Anomaly_Detection.md` | The ML anomaly-detection engine |
 | `docs/TODO.md` | Milestone-by-milestone status |
 
 ---
@@ -398,7 +400,6 @@ should be read as a current capability.
 
 | Planned capability | Description |
 | --- | --- |
-| ML-based anomaly detection | Compare live traffic against the learnt baselines, so deviation rather than a fixed threshold triggers a finding (**M22**) |
 | Locally hosted LLM | A model served on the same machine, so no traffic metadata leaves it |
 | AI Security Analyst | Natural-language explanation of an incident and its evidence trail |
 | Intelligent sequence-based log investigation | Reason over ordered event sequences rather than isolated rules |
@@ -410,11 +411,22 @@ The detection engine as shipped is **deterministic and rule-based**: five explic
 rules with explicit thresholds. It detects what those rules describe, and it does
 not detect everything.
 
-**Behavioural baselines are implemented (M21); anomaly detection is not.** The
-engine learns a robust statistical profile of each device's normal traffic and
-persists it, and the Behavioral Baselines page shows what it learnt. It issues no
-verdict: no score, no anomaly classification, no alert. Comparing a live window
-against a profile is M22's work. An "Established" baseline means the device has
+**Behavioural baselines (M21) and ML anomaly detection (M22) are implemented.** The
+baseline engine learns a robust statistical profile of each device's normal traffic
+and persists it; the Anomalies engine trains one Isolation Forest per device on that
+retained history and scores each completed 60-second window against it.
+
+Read that second sentence as narrowly as it is written. An anomaly is a **deviation
+from learned behaviour**, not a finding of malice. The `decision_score` is the raw
+Isolation Forest output — lower is more unusual — and it is **not a probability**,
+not a calibrated confidence, and not comparable between two devices' models. No
+accuracy, precision or false-positive rate is claimed, because the project has no
+labelled dataset to measure one. Nothing is blocked, quarantined or modified: an
+anomaly raises a finding and an operator decides. During a device's first training
+the model has no trusted anomaly history, so its initial training set may itself
+contain unusual activity.
+
+A baseline is likewise descriptive: an "Established" baseline means the device has
 been watched long enough to describe, never that it is safe.
 
 The name "NetWatch AI" refers to the project's direction; the AI layer is the next

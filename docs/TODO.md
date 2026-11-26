@@ -2,10 +2,10 @@
 
 ## Project Status
 
-**Current Stage:** AI Intelligence Layer — behavioural learning
+**Current Stage:** AI Intelligence Layer — behavioural learning and ML anomaly detection
 **Base Application:** ✅ RELEASED at v0.0.20
-**Current Milestone:** M21 — Behavioral Baseline Engine ✅ COMPLETE
-**Next Stage:** M22 — ML Anomaly Detection (not started — see "Later — Advanced Features")
+**Current Milestone:** M22 — ML-Based Anomaly Detection ✅ COMPLETE
+**Next Stage:** Local LLM and AI analyst (not started — see "Later — Advanced Features")
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -1397,12 +1397,91 @@ reported separately.
 
 ---
 
+# M22 — ML-Based Anomaly Detection ✅ COMPLETE
+
+**Status: implemented and verified.** Version `v0.0.22`. Full record in
+`docs/26_M22_ML_Anomaly_Detection.md`.
+
+* [x] Local ML dependency — `scikit-learn>=1.5.0` in `requirements.txt`, installed
+      into the project virtualenv, imported lazily so a machine without it still
+      captures, detects, alerts and learns baselines (M22.3/M22.4)
+* [x] Per-device Isolation Forest training — `n_estimators=100`,
+      `contamination=0.02`, `random_state=42`, `n_jobs=1`; the only scikit-learn
+      import lives inside `model.py` (M22.4)
+* [x] Historical training-data selection — bounded `LIMIT`, strict
+      `window_start < cutoff` so a window never trains on itself, previously
+      flagged windows excluded where history allows (M22.5) — `dataset.py`
+* [x] Nine M21 features reused unchanged, with a stored
+      `feature_schema_version`; `NULL` is never turned into zero, truncated
+      cardinalities are treated as missing, and the imputation plan travels with
+      the model (M22.6) — `features.py`, `preprocessing.py`
+* [x] Completed-window inference only — attached to M21's flush as an additional
+      consumer; a raising listener is counted and logged, and capture, statistics,
+      M21 learning, detection and alerting all continue (M22.8) —
+      `baselines/engine.py`, `engine.py`
+* [x] Model lifecycle — `collecting_data` / `training` / `ready` / `stale` /
+      `failed` / `disabled`, with a 100-window minimum and a 30-window refresh
+      interval; a failed refresh keeps the previous working model (M22.7) —
+      `lifecycle.py`, `states.py`
+* [x] Bounded model cache — one logical model per device, deterministic LRU
+      eviction, configurable size (M22.7) — `cache.py`
+* [x] Anomaly persistence — `anomaly_models` + `anomaly_evaluations`, unique
+      `(device_key, window_start, algorithm, model_version)` so a repeated flush
+      or restart cannot duplicate a verdict; M21's tables untouched (M22.10) —
+      `app/models/anomaly.py`
+* [x] Retention — 30-day default as a fourth policy on the M19 sweeper; model
+      metadata survives the expiry of evaluation history (M22.10) — `retention.py`
+* [x] Findings and alerts — `ml_anomaly` detector source with a **fixed**
+      confidence, never the decision score; the evaluation record survives even
+      when alert creation is deduplicated or unavailable (M22.11) —
+      `app/alerts/mapping.py`
+* [x] REST API — `GET /api/v1/anomalies`, `GET /api/v1/anomalies/{id}`,
+      `GET /api/v1/anomalies/models`, `GET /api/v1/anomalies/models/{device_key}`,
+      `POST /api/v1/anomalies/models/{device_key}/retrain`; standard envelopes,
+      pagination, filters and a real `404` (M22.12) — `app/api/v1/anomalies.py`,
+      `app/schemas/anomaly.py`
+* [x] Frontend Anomalies page — four stat tiles, disclaimer, results table with
+      the raw decision score, filters for classification / status / device / time
+      range, a model table listing every lifecycle state, a device model detail
+      view, a per-verdict feature-context panel, and confirmed retraining from
+      either view (M22.13) — `frontend/src/pages/Anomalies.tsx`
+* [x] Tests — 133 M22 backend, 39 frontend, plus the M0–M21 regression suites
+      (M22.15)
+* [x] Documentation — `docs/26_M22_ML_Anomaly_Detection.md`, including the
+      cold-start limitation and the honest-reporting section (M22.16)
+* [x] Quality gates — full backend suite and full frontend verification (M22.17)
+
+**Verification:** full backend suite **2 940 passed**; pyright **0 errors**;
+frontend unit **537 passed** (19 files); `npm run typecheck` **0 errors**;
+`npm run build` clean.
+
+**Known limitations:** no labelled production dataset exists, so no accuracy,
+precision, recall or false-positive rate is claimed — the synthetic scenarios in
+the design doc are illustrative, not an evaluation. A genuinely bursty device
+produces a wider learned band and smaller deviations inside it are missed. With
+fewer than 100 usable windows no model is fitted at all, and those windows have no
+verdict — which is not the same as being judged normal. Decision scores are not
+comparable between two devices' models and are shown as raw numbers for that
+reason. During first training there is no trusted anomaly history, so the initial
+training set may itself contain unusual activity; Isolation Forest cannot
+guarantee an entirely benign cold start.
+
+**Design:** `docs/26_M22_ML_Anomaly_Detection.md`.
+
+> Deliberately out of scope for M22: local LLMs, AI-generated explanations, the AI
+> Security Analyst, Wazuh, automatic blocking/quarantine/IPS, cloud inference,
+> GPUs, deep learning, and a second ML algorithm. An anomaly is a deviation from
+> learned behaviour; it is not confirmation of malicious activity, and M22 takes
+> no automatic action against any device.
+
+---
+
 # Later — Advanced Features
 
 These are intentionally excluded from the Base Application milestone.
 
 * [x] Behavioral baselines — shipped as M21 (`v0.0.21`)
-* [ ] Advanced ML anomaly detection — M22, consuming the M21 profiles
+* [x] ML anomaly detection — shipped as M22 (`v0.0.22`), consuming the M21 profiles
 * [ ] Local LLM
 * [ ] AI analyst
 * [ ] MITRE ATT&CK

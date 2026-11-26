@@ -7,6 +7,11 @@ which is required for ``Base.metadata.create_all()`` to create all tables.
 from app.models.ai_insight import AiInsight
 from app.models.alert import Alert
 from app.models.alert_evidence import AlertEvidence
+from app.models.anomaly import (
+    ALGORITHM_ISOLATION_FOREST,
+    AnomalyEvaluation,
+    AnomalyModel,
+)
 from app.models.baseline import BehavioralBaseline
 from app.models.baseline_observation import BaselineProfile, BaselineWindow
 from app.models.connection import NetworkConnection
@@ -21,9 +26,12 @@ from app.models.system_status import SystemStatus
 from app.models.user import User
 
 __all__ = [
+    "ALGORITHM_ISOLATION_FOREST",
     "AiInsight",
     "Alert",
     "AlertEvidence",
+    "AnomalyEvaluation",
+    "AnomalyModel",
     "BaselineProfile",
     "BaselineWindow",
     "BehavioralBaseline",

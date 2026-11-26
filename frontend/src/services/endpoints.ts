@@ -172,3 +172,27 @@ export const BaselinePaths = {
   reset: (deviceKey: string): string =>
     `/baselines/${encodeURIComponent(deviceKey)}/reset`,
 } as const
+
+/**
+ * ML anomaly detection surfaces (M22.12).
+ *
+ * `models` is declared before `detail` in intent, not in path: `/models` is a
+ * literal segment while `detail` takes an integer id, so FastAPI's router matches
+ * the literal first and an evaluation id is never mistaken for a device model
+ * request. The builders encode a device key because `mac:aa:bb:...` carries colons,
+ * exactly as the baseline paths do.
+ *
+ * `retrain` is a POST rather than a PUT because it is not idempotent in the way a
+ * put would be: each call runs a training pass and produces a new model version.
+ * It answers `200` whether or not a model was produced, so the caller reads
+ * `trained` from the payload rather than inferring the outcome from the status.
+ */
+export const AnomalyPaths = {
+  list: '/anomalies',
+  models: '/anomalies/models',
+  model: (deviceKey: string): string =>
+    `/anomalies/models/${encodeURIComponent(deviceKey)}`,
+  retrain: (deviceKey: string): string =>
+    `/anomalies/models/${encodeURIComponent(deviceKey)}/retrain`,
+  detail: (evaluationId: number): string => `/anomalies/${evaluationId}`,
+} as const

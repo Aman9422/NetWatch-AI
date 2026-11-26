@@ -25,6 +25,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     alerts,
     analytics,
+    anomalies,
     baselines,
     capture,
     connections,
@@ -77,6 +78,9 @@ api_router.include_router(
     dashboard.router, prefix="/dashboard", tags=["dashboard"]
 )
 api_router.include_router(baselines.router, prefix="/baselines", tags=["baselines"])
+api_router.include_router(
+    anomalies.router, prefix="/anomalies", tags=["anomalies"]
+)
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(settings.router, prefix="/settings", tags=["settings"])
 api_router.include_router(

@@ -156,6 +156,20 @@ export type {
 } from './baseline'
 
 export type {
+  AnomalyModel,
+  AnomalyModelPage,
+  AnomalyModelQuery,
+  AnomalyModelState,
+  AnomalyPage,
+  AnomalyQuery,
+  AnomalyResult,
+  AnomalyRetrainResult,
+  AnomalyStatus,
+  AnomalySummary,
+  FeatureContext,
+} from './anomaly'
+
+export type {
   DatabaseState,
   GeneratedReport,
   HealthCheck,

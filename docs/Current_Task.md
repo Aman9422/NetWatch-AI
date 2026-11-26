@@ -1,413 +1,812 @@
-# M21 — Behavioral Baseline Engine
+# M22 — ML-Based Anomaly Detection
 
 **Project:** NetWatch AI  
-**Milestone:** M21  
-**Suggested version:** v0.0.21  
-**Base version:** v0.0.20  
+**Milestone:** M22  
+**Suggested version:** v0.0.22  
+**Base version:** v0.0.21  
 **Status:** Planned  
-**Primary objective:** Implement a persistent, per-device behavioral baseline learning engine.
+**Primary objective:** Implement local machine-learning-based network anomaly detection using the behavioural profiles and observation windows produced by M21.
 
 ---
 
 ## 1. Context and instructions
 
-M0–M20 are complete. The base application has been released as `v0.0.20`.
+M0–M20 established and released the base network-monitoring application.
 
-Before modifying anything:
+M21 implemented the Behavioral Baseline Engine and is marked implemented and verified.
 
-1. Inspect the current repository, source code, database models, packet-processing pipeline, device registry, connection tracker, statistics services, API conventions, frontend architecture, configuration, tests, and documentation.
-2. Confirm the current branch and working-tree status.
-3. Review the M20 release documentation and existing architecture.
-4. Understand how normalized packets and device identities move through the application.
-5. Reuse existing services and patterns wherever possible.
+M21 provides:
+- Per-device behavioural observation windows.
+- Nine behavioural features.
+- Persistent SQLite storage.
+- Statistical profiles.
+- Learning states.
+- A REST API.
+- A frontend page for inspecting learned behaviour.
 
-Do not assume that an earlier milestone's proposed architecture matches the exact current implementation. Inspect the actual code before deciding where to integrate the new functionality.
+M22 must consume this existing functionality rather than create another baseline system.
 
-**Preserve all completed M0–M20 functionality.** Do not rewrite working modules unnecessarily. Do not remove existing APIs, tests, frontend pages, or database records.
+Before changing anything:
 
-This project must remain free and locally hosted. Do not introduce paid APIs, cloud AI services, external hosted databases, or mandatory third-party services.
+1. Inspect the current repository and Git state.
+2. Read the M20 release and M21 milestone documentation.
+3. Inspect the actual M21 source code, database models, configuration, services, tests and API response models.
+4. Understand how completed 60-second windows are produced and persisted.
+5. Inspect the existing detection, finding, alert and incident pipelines.
+6. Inspect the current frontend navigation and page architecture.
+7. Confirm the installed Python and frontend versions.
+
+Do not assume that proposed architecture matches the implementation. Base every integration decision on the actual code.
+
+**Preserve every working M0–M21 feature.** Avoid unnecessary rewrites and do not modify M21's historical records to make M22 work.
 
 ## 2. Objective
 
-Build a Behavioral Baseline Engine that learns what normal network activity looks like for each discovered device.
-
-The engine should observe network activity over time, extract meaningful behavioral features, aggregate them into time windows, and maintain statistical profiles.
+Implement an ML-based engine that identifies network activity that differs significantly from a device's previously observed behaviour.
 
 For example:
 
-- How many packets does a device normally transmit?
-- How much data does it normally transfer?
-- Which protocols does it regularly use?
-- How many unique peers does it normally communicate with?
-- How many destination ports does it normally contact?
-- How frequently does it establish connections?
+A device normally:
+- Transmits a relatively stable number of packets per minute.
+- Communicates with a small number of peers.
+- Uses a familiar set of protocols.
+- Contacts a predictable number of destination ports.
 
-The engine should gradually develop an understanding of each device's observed behavior.
+A later observation window might show:
+- A sudden increase in packet volume.
+- An unusually large number of peers.
+- A substantial increase in destination ports.
+- Unusual protocol distribution.
+- A significantly different connection rate.
 
-The resulting profiles will become an input to M22, which will implement ML-based anomaly detection.
+M22 should use a machine-learning model trained on historical observations to identify such unusual windows.
 
-**Important:** M21 implements behavioral learning only. It does not yet identify anomalies or generate security alerts.
+The engine should be capable of answering:
+
+- Which device exhibited unusual behaviour?
+- Which observation window was unusual?
+- Which model evaluated the window?
+- What decision score did the model produce?
+- How many historical observations were used?
+- Which features were available for the evaluation?
+- Was an anomaly finding created?
+
+The system must preserve the evidence used to produce each result.
+
+**Important:** An anomaly is not automatically proof of malicious activity. It means the observed behaviour differs from the learned pattern and requires investigation.
 
 ## 3. Scope boundaries
 
-### Implement in M21
+### Implement in M22
 
-1. Behavioral feature extraction.
-2. Per-device behavioral aggregation.
-3. Time-window-based collection.
-4. Persistent baseline storage using SQLite.
-5. Statistical baseline calculations.
-6. Baseline learning and maturity states.
-7. Baseline history management and retention.
-8. REST APIs for baseline information.
-9. A frontend page for inspecting learned baselines.
-10. Baseline tests, documentation, and quality-gate integration.
+1. Local ML dependency and model integration.
+2. Per-device model training.
+3. Isolation Forest anomaly detection.
+4. Historical training-data selection.
+5. Inference on completed behavioural windows.
+6. Model lifecycle and training status.
+7. Anomaly result persistence.
+8. Duplicate-evaluation protection.
+9. Anomaly REST APIs.
+10. Integration with existing findings and alerts where supported.
+11. Anomalies frontend page.
+12. Model status and investigation information.
+13. Backend, frontend and integration tests.
+14. Performance verification and documentation.
 
-### Do not implement in M21
+### Explicitly exclude
 
-- ML anomaly detection.
-- Isolation Forest, One-Class SVM, Autoencoders, or other anomaly-detection models.
-- Anomaly scoring or automatic suspicious-activity classification.
-- Automatic security alerts based on baseline deviations.
-- A locally hosted LLM.
-- LLM-based log analysis.
+- Local LLM integration.
+- AI-generated explanations.
 - AI Security Analyst.
+- LLM-based log or event sequence investigation.
 - Wazuh integration.
-- Automatic traffic blocking or IPS functionality.
-- External cloud-based learning services.
+- Automatic blocking, quarantine or IPS.
+- Cloud-hosted inference or training.
+- Mandatory GPU requirements.
+- Deep-learning models and autoencoders.
+- Multiple competing ML algorithms in this milestone.
 
 These belong to later milestones.
 
-## 4. Behavioral feature extraction
+## 4. ML algorithm selection
 
-Integrate with the existing normalized packet-processing and device-discovery pipeline.
+Implement **Isolation Forest** as the primary anomaly-detection algorithm.
 
-Do not introduce another packet-capture implementation. Do not independently capture traffic.
+Use the locally installed and maintained `scikit-learn` package, selecting a version compatible with the project's Python environment.
 
-Extract features using information actually available in the current application.
+Requirements:
 
-Start with these per-device behavioral metrics:
+- Local CPU inference.
+- No external API.
+- No cloud dependency.
+- Reproducible model training.
+- Configurable model parameters.
+- Explicit model version and configuration.
+- Consistent feature ordering between training and inference.
 
-| Feature | Description |
+Start with a configurable implementation using parameters such as:
+
+| Parameter | Suggested default |
+|---|---:|
+| Algorithm | Isolation Forest |
+| Number of estimators | 100 |
+| Contamination | 0.02 |
+| Random state | 42 |
+| Maximum training windows | 1,440 |
+| Minimum training windows | 100 |
+| Model refresh interval | 30 new usable windows |
+
+These are starting defaults, not claims of optimal accuracy. Validate them with controlled data and document their limitations.
+
+Keep model construction behind a dedicated service or interface so the implementation can support additional algorithms in future milestones without rewriting the packet pipeline.
+
+Do not implement Isolation Forest, One-Class SVM and Autoencoders simultaneously. One correctly integrated and tested algorithm is preferable to several incomplete implementations.
+
+## 5. Training-data requirements
+
+Use the historical observations stored by M21 in `baseline_windows`.
+
+Do not train directly on raw packet payloads.
+
+Training must be device-specific wherever sufficient historical observations exist.
+
+### Eligibility
+
+A model must not become ready merely because a device has an `established` M21 profile.
+
+M21's established state begins at 30 windows. M22 should impose its own configurable minimum training-data requirement.
+
+Use a default minimum of 100 usable historical observation windows.
+
+Suggested model states:
+
+- `collecting_data`: insufficient historical observations.
+- `training`: model training is in progress.
+- `ready`: trained and available for inference.
+- `stale`: a refresh is due or the training dataset has changed materially.
+- `failed`: training or model initialization failed.
+- `disabled`: the model has been explicitly disabled.
+
+The API and frontend must distinguish these states.
+
+### Training-data selection
+
+1. Fetch a bounded number of recent historical observation windows for the selected device.
+2. Exclude the window currently being evaluated.
+3. Exclude previously identified anomalous windows from subsequent training where sufficient history is available.
+4. Never use future observations to score an earlier observation.
+5. Respect the M21 retention policy and available training history.
+6. Do not query an unlimited historical dataset into memory.
+7. Report the actual number of usable training windows.
+8. Handle insufficient data without fabricating a model.
+
+### Cold-start limitation
+
+During initial training, there is no trusted anomaly history.
+
+The initial dataset may therefore contain unusual activity that was not recognized earlier. Isolation Forest cannot guarantee that the initial training set is entirely benign.
+
+Document this cold-start limitation prominently.
+
+Do not claim that unsupervised learning can determine malicious intent or eliminate training-data poisoning.
+
+## 6. Feature engineering
+
+Use the nine M21 features as the starting point:
+
+| Feature | M21 source |
 |---|---|
-| Packet count | Number of observed packets |
-| Byte count | Total observed bytes |
-| TCP packets | TCP packet count |
-| UDP packets | UDP packet count |
-| ICMP packets | ICMP packet count |
-| DNS packets | DNS packet count |
-| Unique peers | Number of distinct observed communication peers |
-| Unique destination ports | Number of distinct destination ports |
-| New connections | Number of newly observed connections, when reliably available |
+| `packet_count` | Packets per observation window |
+| `byte_count` | Total bytes |
+| `tcp_packets` | TCP count |
+| `udp_packets` | UDP count |
+| `icmp_packets` | ICMP count |
+| `dns_packets` | DNS count |
+| `unique_peers` | Distinct observed peers |
+| `unique_destination_ports` | Distinct destination ports |
+| `new_connections` | Conversation-key cardinality |
 
-Add inbound/outbound metrics only if the current architecture can determine direction accurately. Do not guess packet direction.
+Use actual stored observations and preserve the existing meanings of the metrics.
 
-Do not invent metrics when the underlying information is unavailable. Document unavailable or unsupported features.
+### Missing-value handling
 
-### Device identity
+M21 explicitly represents unmeasurable `new_connections` as `NULL`.
 
-The existing M8 implementation uses MAC-based device identity with IP history.
+Never replace missing data with zero without a documented reason.
 
-Use the existing device identity model wherever possible.
+Implement a consistent per-device feature-selection and preprocessing strategy.
+
+For example:
+
+- Determine which features have sufficient usable historical observations.
+- Exclude features that are unavailable too frequently.
+- Use a documented imputation strategy for occasional missing values when a feature remains eligible.
+- Preserve the feature list and preprocessing configuration used by each model.
+- Use precisely the same preprocessing during inference.
+
+Do not change the order or meaning of features between training and inference.
+
+### Truncated cardinalities
+
+M21 may report `peers_truncated` or `ports_truncated`.
+
+These values represent lower bounds, not exact cardinalities.
+
+Do not silently treat them as exact measurements.
+
+Choose and document a consistent strategy for training and inference, such as excluding unreliable measurements or explicitly representing truncation.
+
+The model must receive equivalent feature semantics during both phases.
+
+## 7. Model training and lifecycle
+
+Implement a dedicated anomaly-detection module.
+
+Suggested organization:
+
+```text
+app/
+  anomaly_detection/
+    features.py
+    preprocessing.py
+    model.py
+    training.py
+    inference.py
+    lifecycle.py
+    store.py
+    engine.py
+```
+
+Adapt this layout to the existing repository conventions.
+
+Responsibilities:
+
+- `features.py`: creates model-ready inputs from M21 windows.
+- `preprocessing.py`: handles feature eligibility, missing values and input consistency.
+- `model.py`: constructs and configures Isolation Forest.
+- `training.py`: loads historical observations and trains models.
+- `inference.py`: evaluates new completed windows.
+- `lifecycle.py`: manages model states, freshness and refresh.
+- `store.py`: persists model metadata and anomaly outcomes.
+- `engine.py`: connects the components to the existing runtime pipeline.
+
+### Model caching
+
+Do not train an Isolation Forest for every packet or every API request.
+
+Use a bounded model cache.
+
+Requirements:
+
+- One logical model per device identity.
+- Configurable cache size.
+- Deterministic cache eviction.
+- Model reuse between inference requests.
+- Controlled retraining.
+- No model-cache growth without limits.
+
+### Retraining
+
+Use a configurable refresh interval, initially 30 new usable windows.
+
+Retraining must:
+
+- Use fresh eligible historical data.
+- Exclude the window being evaluated.
+- Exclude previously flagged anomalous windows where practical.
+- Preserve the previous working model if a refresh fails.
+- Report training failures.
+- Avoid blocking packet capture.
+
+Do not retrain the complete model after every packet.
+
+### Restart behaviour
+
+Do not require unsafe Python pickle files to be committed to the repository or loaded from untrusted paths.
+
+A practical initial design is:
+
+- Persist model metadata and configuration.
+- Reconstruct the model from retained observation windows when required after restart.
+- Retrain lazily or through a controlled startup/background mechanism.
+- Expose the model as unavailable until training successfully completes.
+
+If model persistence is introduced, document the security and compatibility implications and validate model artifacts before loading them.
+
+## 8. Completed-window inference
+
+The M21 engine aggregates observations over 60-second windows and flushes them in batches.
+
+M22 must evaluate **completed windows**, not individual packets.
+
+Inspect the actual M21 flush lifecycle and identify a reliable integration point.
 
 Requirements:
 
-- A device changing its IP address should retain its baseline when its stable MAC identity remains the same.
-- Do not accidentally combine unrelated devices.
-- Do not treat a router's MAC address as proof that every remote IP behind it is the same physical device.
-- Handle missing, invalid, multicast, and broadcast identities safely.
-- Use a clearly documented fallback policy when a stable identity cannot be established.
+1. Receive a completed observation window.
+2. Identify the device and window using the stable M21 identity.
+3. Check whether the window has already been evaluated.
+4. Obtain a suitable historical training dataset.
+5. Load or train the device's model when eligible.
+6. Generate the feature vector.
+7. Apply the model's inference operation.
+8. Store the evaluation result.
+9. Create an anomaly finding only when the model classifies the window as anomalous.
+10. Continue monitoring without interrupting capture.
 
-The baseline engine must not depend on the `devices` database table being populated. M20 documents that the live device registry is held in memory.
+### Important: no self-training leakage
 
-## 5. Time-window aggregation
+A window must never be part of the training dataset used to score itself.
 
-Use a configurable aggregation interval, with a default of **60 seconds**.
+This must remain true even if M21 has already persisted the window before M22 performs inference.
 
-For every device, collect behavioral feature values over each interval.
+Use a strict historical cutoff based on device identity and window timestamp.
 
-Requirements:
+### Idempotency
 
-1. Aggregate metrics in memory before writing them to SQLite.
-2. Do not perform an individual database write for every captured packet.
-3. Flush aggregated windows through a controlled background process.
-4. Flush pending data during graceful application shutdown.
-5. Keep memory usage bounded.
-6. Do not block packet capture while baseline data is written.
-7. Handle malformed packets and missing fields without interrupting packet processing.
-8. Isolate baseline-engine failures from the existing capture and detection pipeline.
-9. Record appropriate internal errors and counters when data cannot be processed or persisted.
+A completed window must not generate multiple anomaly records or multiple alerts because of:
 
-Only persist useful observation windows. Do not silently convert missing data into zero-valued behavior.
+- A repeated flush.
+- A service retry.
+- Backend restart.
+- API pagination.
+- A WebSocket reconnect.
 
-## 6. Statistical baseline calculation
+Use a stable uniqueness key such as device identity plus window start, with an appropriate model-version strategy.
 
-For each device, calculate a statistical profile from its collected behavioral samples.
+Repeated evaluation attempts must not create duplicate findings.
 
-Use robust statistical measurements:
+### Failure isolation
 
-- Sample count.
-- Mean.
-- Median.
-- Median Absolute Deviation (MAD).
-- Standard deviation, where useful.
-- 95th percentile.
-- Minimum and maximum.
-- First observed timestamp.
-- Latest observed timestamp.
+M22 must be an additional pipeline consumer.
 
-Calculate these statistics for the supported numeric behavioral features.
+An ML failure must not stop:
 
-Use an implementation that is computationally reasonable and memory-bounded.
+- Packet capture.
+- Packet processing.
+- Statistics collection.
+- M21 baseline learning.
+- Existing deterministic detection.
+- Alert processing.
 
-Document how the statistics are calculated and how missing observations are handled.
+Handle model errors explicitly and report them using existing logging and monitoring conventions.
 
-The baseline should not be influenced by an unbounded accumulation of raw packet data. Keep the design based on aggregated behavioral windows.
+## 9. Anomaly scoring and interpretation
 
-## 7. Learning lifecycle and maturity
+Use Isolation Forest's actual output.
 
-Implement clear baseline learning states.
+The implementation should retain the raw model decision score and classification.
 
-Suggested states:
+Remember:
 
-- `learning`: insufficient observations to produce a useful profile.
-- `provisional`: the minimum sample requirement has been reached, but the profile is still developing.
-- `established`: sufficient observations have been collected for a mature statistical profile.
+- `predict()` classifies samples as inliers or outliers.
+- `decision_function()` produces a decision score.
+- A lower decision score represents more unusual behaviour.
+- The decision score is not a probability.
+- The model's output is not proof of a cyberattack.
 
-Choose and document sensible default sample thresholds. Make them configurable where appropriate.
+Expose fields such as:
 
-The frontend must clearly show the current learning state and sample count.
+```text
+device_key
+window_start
+window_seconds
+algorithm
+model_version
+model_trained_at
+training_sample_count
+feature_names
+decision_score
+is_anomaly
+contamination
+created_at
+```
 
-Important requirements:
+Do not call the raw Isolation Forest score a probability or calibrated confidence.
 
-- A new device must not receive a fabricated baseline.
-- A baseline must not be marked established merely because the device exists.
-- Missing data must not be interpreted as zero traffic.
-- Baseline maturity must be based on actual collected observations.
-- A restarted backend must not unnecessarily discard previously persisted baselines.
-- A baseline must be resettable without deleting unrelated packet, device, alert, or incident data.
+Do not invent a probability such as 95% malicious.
 
-Do not present an established baseline as proof that the device is safe. It only describes its previously observed behavior.
+If a display score is derived or normalized, document the exact transformation and distinguish it from the raw model output.
 
-## 8. Persistent storage
+### Feature context
 
-Extend the existing SQLAlchemy and SQLite architecture.
+Provide useful evidence for investigation.
 
-Design suitable database models for:
+The system may compare an evaluated window against the corresponding M21 statistical profile.
 
-1. Per-device baseline metadata and learning state.
-2. Aggregated behavioral observation windows.
-3. Statistical profile information, if required by the design.
+For each available feature, provide useful context such as:
 
-Use appropriate indexes and uniqueness constraints.
+- Observed value.
+- Baseline median.
+- MAD or scaled MAD.
+- Difference from the baseline median.
+- Whether the feature is missing or truncated.
 
-Requirements:
+Clearly distinguish these statistical comparisons from actual Isolation Forest feature attribution.
+
+Do not claim that Isolation Forest identifies a particular feature as the cause of a prediction unless a validated explanation method is implemented.
+
+## 10. Anomaly persistence
+
+Add suitable SQLAlchemy models and SQLite tables for M22.
+
+At minimum, persist:
+
+1. Model metadata and lifecycle information.
+2. Anomaly evaluation outcomes.
+
+An evaluation record should contain enough information to reproduce or inspect the decision:
 
 - Stable device identity.
-- Timestamps stored consistently using the project's UTC conventions.
-- Transaction-safe writes.
-- Database migrations or the repository's established schema-initialization approach.
-- Bounded historical retention.
-- Configurable retention settings.
-- Safe handling of duplicate windows.
-- No raw packet payload storage in the baseline tables.
+- Observation-window timestamp.
+- Algorithm and model version.
+- Raw decision score.
+- Classification.
+- Model training sample count.
+- Model configuration.
+- Feature-schema version.
+- Evaluation timestamp.
+- Evaluation status or skip reason when applicable.
 
-Start with a documented default history-retention period, such as seven days, and make it configurable.
+Store feature context only when it is useful and bounded.
 
-Preserve baseline profile continuity across application restarts when a stable device identity is available.
+Avoid storing packet payloads, credentials, or unnecessary network-identifying details.
 
-## 9. Backend service architecture
+Use suitable uniqueness constraints and indexes.
 
-Create a dedicated behavioral baseline module or service following the repository's existing organization.
+Preserve M21's two baseline tables and their data model. Do not modify M21 observations simply to mark something as an anomaly.
 
-Separate responsibilities where appropriate:
+### Retention
 
-- Feature extraction.
-- Per-device aggregation.
-- Baseline sample persistence.
-- Statistical calculations.
-- Learning-state management.
-- Retention and lifecycle management.
+Introduce a configurable anomaly-record retention policy.
 
-Use existing application startup and shutdown mechanisms.
+Use an appropriate default, for example 30 days, subject to the existing retention architecture.
 
-Do not introduce unnecessary threads, processes, event brokers, or services.
+Use the established M19 retention-sweeper pattern, with:
 
-The baseline engine must operate as an additional component in the current monitoring pipeline. Existing packet capture, statistics, persistence, detection, alerting, and correlation must continue working as before.
+- Bounded deletion per run.
+- Failure isolation.
+- A clear outcome.
+- No blocking of packet capture.
+- Correct shutdown behaviour.
 
-## 10. REST API
+Document whether model metadata is retained after anomaly history expires.
 
-Add versioned endpoints following the existing `/api/v1` conventions.
+## 11. Findings and alert integration
+
+M22 should integrate genuine ML anomaly findings into the existing detection and alert architecture where the existing contracts support it.
+
+Inspect the real M10, M11 and M12 implementations first.
+
+Requirements:
+
+- Preserve all existing deterministic detection rules.
+- Do not alter their thresholds or behaviour.
+- Identify ML-generated findings using a distinct detector source, such as `ml_anomaly`.
+- Keep the underlying model evidence linked to the finding.
+- Use existing alert lifecycle operations.
+- Avoid generating repeated alerts for the same device and observation window.
+- Apply a transparent severity policy if the current alert contract requires severity.
+- Do not describe anomaly scores as alert confidence or probability.
+- Make model-unavailable and insufficient-data states distinguishable from normal behaviour.
+
+Do not silently rewrite M12's deterministic risk-scoring methodology.
+
+If an ML finding enters incident correlation and changes an incident risk score through existing rules, document exactly how that occurs.
+
+An anomaly record should remain available even when alert creation is deduplicated or unavailable.
+
+**No automatic blocking, quarantine, or traffic modification.** The operator retains control.
+
+## 12. REST API
+
+Add API endpoints under `/api/v1`, following the project's existing response envelopes, validation and pagination conventions.
 
 Suggested endpoints:
 
 ```http
-GET  /api/v1/baselines
-GET  /api/v1/baselines/{device_key}
-POST /api/v1/baselines/{device_key}/reset
+GET  /api/v1/anomalies
+GET  /api/v1/anomalies/{id}
+GET  /api/v1/anomalies/models
+GET  /api/v1/anomalies/models/{device_key}
+POST /api/v1/anomalies/models/{device_key}/retrain
 ```
 
-Implement:
+Adapt endpoint naming to existing conventions where necessary.
 
-- Paginated baseline listing.
-- Individual device baseline details.
-- Current learning state.
-- Sample count and observation timestamps.
-- Statistical values for supported features.
-- Clear behavior when a baseline does not exist.
-- Input validation.
-- Existing standardized response envelopes.
-- Correct HTTP status codes and error responses.
+### Anomaly listing
 
-The reset operation must delete only the selected device's baseline history and profile, then allow learning to restart.
+Support:
 
-Do not expose internal database paths, stack traces, or private implementation details.
+- Pagination.
+- Device filtering.
+- Anomaly classification filtering.
+- Time-range filtering.
+- Model and algorithm information.
+- Newest-first ordering.
 
-Verify every endpoint against the running backend. Do not assume response shapes from frontend expectations.
+### Individual anomaly detail
 
-## 11. Frontend — Behavioral Baselines
+Return:
 
-Add a dedicated **Behavioral Baselines** page to the existing React/TypeScript application.
+- Device identity.
+- Evaluated window.
+- Anomaly classification.
+- Raw model score.
+- Model metadata.
+- Training sample count.
+- Available feature context.
+- Linked finding or alert, when one exists.
 
-Follow the existing design system, navigation, reusable components, API client, loading states, error handling, and page-boundary architecture.
+### Model listing and details
+
+Expose:
+
+- Device identity.
+- Model lifecycle state.
+- Algorithm.
+- Model version.
+- Training sample count.
+- Last trained timestamp.
+- Last evaluated timestamp.
+- Available feature list.
+- Next refresh status, if applicable.
+- Failure or unavailable reason where safe.
+
+### Manual retraining
+
+Provide a controlled device-level retraining operation.
+
+Requirements:
+
+- Validate device identity.
+- Require sufficient historical samples.
+- Avoid concurrent duplicate training requests.
+- Preserve the previous working model if training fails.
+- Return a clear operation result.
+- Never reset M21 behavioural history.
+
+Use the established HTTP status codes and error envelopes.
+
+Do not expose private file paths, stack traces, database paths or secrets.
+
+Verify all new response shapes against the running backend before implementing frontend assumptions.
+
+## 13. Frontend — Anomalies
+
+Add a dedicated **Anomalies** page to the existing React/TypeScript application.
+
+Use the existing component design, API service layer, typed models, hooks, page boundaries, navigation and error-handling patterns.
 
 The page should display:
 
-- Discovered device identity.
-- Baseline learning status.
-- Number of collected samples.
-- First and latest observation times.
-- Packet and byte statistics.
-- Protocol behavior.
-- Peer and destination-port statistics when available.
-- Statistical baseline summaries.
+- Anomaly count.
+- Affected devices.
+- Recent anomalous observation windows.
+- Device identity.
+- Detection time.
+- Isolation Forest classification.
+- Raw decision score.
+- Model readiness.
+- Training sample count.
+- Linked alerts or incidents where available.
 
-Add a device-level detail view so the user can inspect its behavioral profile.
+Add filters for device, time range and classification.
 
-Provide a baseline reset action with a clear confirmation step.
+Provide a device-level model detail view showing training and lifecycle information.
 
-Handle these states properly:
+### Investigation context
 
-- No devices discovered.
-- Device discovered but no observations collected.
-- Learning in progress.
-- Provisional baseline.
-- Established baseline.
+For an individual anomaly, display available feature context alongside M21's historical statistical values.
+
+Keep raw model decisions and baseline comparisons visually distinct.
+
+The UI must not claim that an anomaly is necessarily malicious.
+
+Display an explicit explanation such as:
+
+"An anomaly indicates a deviation from previously observed network behaviour. It is not confirmation of malicious activity."
+
+### Model status
+
+Clearly represent:
+
+- Collecting data.
+- Insufficient training samples.
+- Training.
+- Ready.
+- Stale.
+- Failed.
+- Disabled.
+
+An insufficient-data model must never be displayed as healthy or normal.
+
+### Frontend states
+
+Handle:
+
+- No anomalies.
+- No models ready.
+- Devices still collecting baseline samples.
+- Model training.
+- Model unavailable.
+- Model failure.
 - API unavailable.
-- Baseline data unavailable.
-- Failed baseline retrieval.
+- Empty historical results.
+- Loading and pagination.
+- Stale model information.
+- Retraining in progress.
+- Retraining success and failure.
 
-Do not use mock data in the completed integration.
+Use real backend data only.
 
-The page must explain that a baseline describes previously observed behavior and is not itself an anomaly verdict.
+Do not create fabricated demo anomalies in the production interface.
 
-## 12. Performance and reliability
+## 14. Performance and reliability
 
-Baseline collection must not destabilize the existing application.
+The new ML functionality must not make the existing packet pipeline unreliable.
 
 Verify:
 
-- Packet capture continues during baseline collection.
-- Packet-processing errors do not increase because of baseline failures.
-- SQLite writes remain controlled and batched.
-- Aggregation structures are bounded.
-- Retention removes expired observation windows correctly.
-- Graceful shutdown flushes pending data.
-- Database failures do not silently corrupt profile information.
-- Multiple devices can be tracked independently.
-- Restarting the application preserves stored baseline history.
-- Existing detection and alerting continue to work.
+- Capture is not blocked by model training.
+- Model inference occurs on completed windows only.
+- Training does not run for every packet.
+- The model cache is bounded.
+- Training datasets are bounded.
+- Inference input sizes are bounded.
+- Model refresh is controlled.
+- Database writes are batched or appropriately managed.
+- Duplicate evaluation is prevented.
+- Database failures are isolated.
+- Model failures do not stop M21.
+- Restart recovery works.
+- Anomaly retention works.
+- Existing capture, statistics, detections, alerts, incidents and reporting remain functional.
 
-Measure relevant performance before and after enabling the baseline engine using the available project benchmarks.
+Measure actual CPU and memory impact during controlled local capture.
 
-Record actual measurements. Do not invent improvements or claim production-scale performance based on a local test.
+Do not claim high throughput, enterprise-scale capacity or production accuracy based solely on development-machine tests.
 
-## 13. Testing
-
-Add comprehensive backend and frontend tests.
+## 15. Testing
 
 ### Backend tests
 
-Test at least:
+Add tests for at least:
 
-1. Feature extraction from normalized packets.
-2. Feature extraction with missing or malformed fields.
-3. Correct per-device aggregation.
-4. Separation of two different devices.
-5. IP changes for an existing MAC identity.
-6. Aggregation-window boundaries.
-7. Duplicate-window protection.
-8. Statistical calculations.
-9. Learning-state transitions.
-10. Empty and insufficient observation histories.
-11. Persistent baseline recovery after application restart.
-12. Baseline reset.
-13. Historical retention.
-14. Graceful shutdown flushing.
-15. Database write failures.
-16. Bounded aggregation behavior.
-17. REST endpoint response envelopes.
-18. Pagination and validation.
-19. Missing baseline responses.
-20. Regression of existing capture, statistics, detection, alert, and incident functionality.
+1. Isolation Forest initialization.
+2. Deterministic model configuration.
+3. Feature-vector construction.
+4. Consistent feature ordering.
+5. Missing-value handling.
+6. Truncated cardinality handling.
+7. Minimum training sample requirements.
+8. Training-data selection by device.
+9. Historical time cutoff.
+10. Exclusion of the evaluated window from training.
+11. Exclusion of previously flagged anomalies where supported.
+12. Inference on known normal synthetic data.
+13. Inference on deliberately unusual synthetic data.
+14. Raw decision-score handling.
+15. Correct anomaly classification.
+16. No probability claims in output fields.
+17. Model lifecycle transitions.
+18. Retraining interval.
+19. Failed retraining preserves the previous model.
+20. Bounded model caching.
+21. Model recreation after backend restart.
+22. Duplicate evaluation prevention.
+23. Repeated flush idempotency.
+24. Anomaly persistence.
+25. API pagination and filters.
+26. API validation and error envelopes.
+27. Manual retraining.
+28. Anomaly retention.
+29. Database failure isolation.
+30. Model failure isolation.
+31. Existing M0–M21 regression behaviour.
+
+Use deterministic synthetic test datasets. Do not depend on internet access or external datasets.
 
 ### Frontend tests
 
 Test:
 
-- Baseline list rendering.
-- Loading and error states.
-- Learning, provisional, and established states.
-- Device detail rendering.
-- Empty baseline data.
-- Reset confirmation and successful reset.
-- Reset failures.
-- Correct API integration.
-- Navigation to the new page.
+- Anomaly listing.
+- Empty results.
+- Filters and pagination.
+- Device detail.
+- Model lifecycle statuses.
+- Insufficient training data.
+- Raw decision-score display.
+- Feature-context presentation.
+- Linked alerts and incidents.
+- Retraining confirmation.
+- Retraining success and failure.
+- API-unavailable state.
+- Anomaly disclaimer.
+- Correct navigation.
 
 ### Integration tests
 
-Demonstrate the complete workflow:
+Demonstrate:
 
 ```text
 Start backend
     ↓
 Start authorized packet capture
     ↓
-Observe normalized packets
+M21 receives normalized packets
     ↓
-Identify devices
+M21 aggregates behavioural windows
     ↓
-Extract behavioral features
+M21 persists historical samples
     ↓
-Aggregate observation windows
+M22 verifies training eligibility
     ↓
-Persist baseline samples
+M22 trains the device-specific Isolation Forest
     ↓
-Calculate statistical profiles
+A new completed window arrives
     ↓
-Retrieve profiles through REST API
+M22 excludes the current window from training
     ↓
-Display profiles in the frontend
+M22 evaluates the window
     ↓
-Reset one device's baseline
+Anomaly outcome is persisted
     ↓
-Verify that learning starts again
+Anomalous result creates a finding when appropriate
+    ↓
+Existing alert and incident pipeline processes it
+    ↓
+Frontend displays the actual result
 ```
 
-Use controlled local traffic and do not generate traffic against systems without authorization.
+Also verify:
 
-## 14. Quality gates
+- A device with insufficient training history does not receive a fabricated prediction.
+- A normal window is not automatically labelled anomalous.
+- An unusual controlled test window can be detected when the trained model supports that distinction.
+- Reprocessing the same window does not duplicate outcomes.
+- A model failure does not interrupt capture or M21 learning.
 
-Update the existing quality-gate system to include any new required checks.
+Use authorized local traffic and controlled synthetic data.
 
-Run the complete existing verification process, including:
+## 16. Model evaluation and honest reporting
+
+There is no established labelled production dataset in the current project.
+
+Therefore:
+
+- Do not claim a real-world accuracy percentage.
+- Do not claim a false-positive rate without labelled evaluation data.
+- Do not claim precision or recall based on synthetic tests alone.
+- Do not describe Isolation Forest decision scores as probabilities.
+- Do not claim that every anomaly represents an attack.
+
+Record:
+
+- Number of training samples.
+- Number of test samples.
+- Synthetic scenarios evaluated.
+- Detected injected anomalies.
+- Normal scenarios tested.
+- Cases the model missed.
+- Cases where model output was unstable.
+- CPU and memory measurements.
+
+Include the model configuration and random seed so tests can be reproduced.
+
+## 17. Quality gates
+
+Preserve all M0–M21 quality gates.
+
+Run the full backend quality gate:
 
 ```powershell
 python backend/scripts/run_quality_gates.py --full
 ```
 
-Also run the applicable frontend commands:
+Run the frontend verification:
 
 ```powershell
 cd frontend
@@ -417,110 +816,6 @@ npm run typecheck
 npm run build
 ```
 
-Run all existing backend tests and the new M21 tests.
+Verify that the Python dependencies work in the project's supported Python environment.
 
-Record the actual test counts and results.
-
-Do not skip, suppress, or exclude failing tests to obtain a passing result.
-
-Preserve all M0–M20 quality gates.
-
-## 15. Documentation
-
-Create:
-
-```text
-docs/25_M21_Behavioral_Baseline_Engine.md
-```
-
-Document:
-
-- M21 purpose and scope.
-- Architecture and data flow.
-- Behavioral features.
-- Device identity handling.
-- Aggregation interval.
-- Statistical calculations.
-- Learning lifecycle.
-- Database schema.
-- Retention configuration.
-- API endpoints and response examples.
-- Frontend implementation.
-- Testing and verification.
-- Performance measurements.
-- Known limitations.
-- Deferred functionality for M22 and later.
-
-Update the main README where appropriate.
-
-Update `docs/TODO.md` to record M21 completion and the remaining roadmap.
-
-Do not rewrite the M20 release report. It must remain an accurate historical record of the v0.0.20 base release.
-
-## 16. Git and version control
-
-Inspect Git status before making changes.
-
-- Preserve the M20 `v0.0.20` tag.
-- Do not rewrite existing history.
-- Do not force-push.
-- Do not commit databases, virtual environments, generated reports, temporary files, secrets, or credentials.
-- Follow the repository's existing commit conventions.
-- Verify tracked files before committing.
-
-Use `v0.0.21` only after confirming the existing tag convention and successful M21 acceptance checks.
-
-Do not create a release tag while required tests are failing.
-
-## 17. M21 acceptance criteria
-
-M21 is complete only when:
-
-- [ ] The behavioral baseline engine is implemented.
-- [ ] Existing normalized packet processing is reused.
-- [ ] Behavioral features are extracted correctly.
-- [ ] Per-device aggregation works.
-- [ ] Statistical profiles are calculated correctly.
-- [ ] Learning states work correctly.
-- [ ] Baseline data persists across restarts.
-- [ ] Stable device identity is handled correctly.
-- [ ] Historical retention works.
-- [ ] Reset functionality works.
-- [ ] Backend REST endpoints work.
-- [ ] The Behavioral Baselines frontend page works.
-- [ ] Frontend uses real backend data.
-- [ ] Performance and bounded-state behavior are verified.
-- [ ] New backend tests pass.
-- [ ] New frontend tests pass.
-- [ ] Existing M0–M20 regression suites pass.
-- [ ] Full quality gates pass.
-- [ ] README and architecture documentation are updated.
-- [ ] `docs/25_M21_Behavioral_Baseline_Engine.md` is complete.
-- [ ] `docs/TODO.md` is updated.
-- [ ] Git repository contains no accidental generated data or secrets.
-
-## 18. Final milestone report
-
-At completion, provide a detailed report containing:
-
-1. What was implemented.
-2. Architecture and file changes.
-3. Database changes.
-4. Behavioral features collected.
-5. Statistical methods used.
-6. Learning-state thresholds.
-7. API endpoints and verified response examples.
-8. Frontend changes.
-9. Test counts and quality-gate results.
-10. Performance measurements.
-11. Known limitations.
-12. Deferred M22 functionality.
-13. Git status and version/tag information.
-
-Clearly distinguish implemented functionality from planned functionality.
-
-**Do not claim that NetWatch AI now detects anomalies using ML.** M21 builds the behavioral knowledge that M22 will use to implement anomaly detection.
-
----
-
-**Milestone completion definition:** NetWatch AI can continuously learn and persist statistical behavioral profiles for observed devices, display those profiles through its backend and frontend, and preserve the reliability of the existing M20 application.
+Add required security

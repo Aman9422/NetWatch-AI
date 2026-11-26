@@ -69,6 +69,8 @@ const NAV_GROUPS: readonly NavGroup[] = [
         hint: 'Conversations the tracker follows, with the tracker\'s own expiry state.' },
       { id: 'baselines', label: 'Behavioral Baselines', icon: Brain,
         hint: 'Statistical profiles the M21 engine has learnt per device. A baseline describes previously observed behaviour — it is never an anomaly verdict.' },
+      { id: 'anomalies', label: 'Anomalies', icon: Brain,
+        hint: 'Observation windows the M22 Isolation Forest found unusual, with the raw decision score and the model lifecycle behind it. An anomaly is a deviation from learned behaviour — not proof of an attack.' },
     ],
   },
   {

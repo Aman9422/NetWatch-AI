@@ -18,7 +18,17 @@ rule_id              alert title       severity     confidence source
 ``icmp_flood``       ICMP Flood        medium       M10 finding (0..1)
 ``internal_scan``    Internal Scan     high         M10 finding (0..1)
 ``high_bandwidth``   High Bandwidth    high         M10 finding (0..1)
+``ml_anomaly``       Behaviour Anomaly medium       fixed, not the score
 ===================  ================  ===========  ==================
+
+``ml_anomaly`` is the M22 machine-learning detector. It is listed here for the
+same reason as the others — this table is the only place a rule becomes an alert
+— and it deliberately carries a **fixed** confidence source rather than the
+finding's own value: an Isolation Forest decision score is not a probability and
+must never be presented as alert confidence (M22.9/M22.11). Severity is ``medium``
+because an anomalous window is a deviation from learned behaviour that needs
+investigation, not evidence of an attack; raising it would assert something the
+model cannot support.
 
 Severity is independent of confidence (M11.5): the severity column is fixed per
 rule, while the confidence column is whatever M10 measured for *this* finding.
@@ -38,6 +48,14 @@ from app.alerts.severity import AlertSeverity
 
 #: Where a value comes from, so the provenance of every alert field is explicit.
 CONFIDENCE_SOURCE_FINDING = "detection finding (M10.15)"
+
+#: Provenance for a rule whose confidence is fixed rather than measured.
+#:
+#: The M22 detector produces a decision score whose scale depends on the fitted
+#: forest and is not calibrated against any labelled data. Reusing it as an alert
+#: confidence would present a model output as a probability, so this rule records
+#: the fixed value the finding carries instead and says why.
+CONFIDENCE_SOURCE_FIXED = "fixed for this rule; the model score is not a probability"
 
 
 @dataclass(frozen=True)
@@ -75,6 +93,15 @@ RULE_MAPPINGS: dict[str, RuleAlertMapping] = {
         _mapping("icmp_flood", "ICMP Flood", AlertSeverity.MEDIUM),
         _mapping("internal_scan", "Internal Scan", AlertSeverity.HIGH),
         _mapping("high_bandwidth", "High Bandwidth", AlertSeverity.HIGH),
+        # M22. Medium rather than high: an anomaly is a deviation that warrants a
+        # look, not a conclusion. The confidence is fixed, never the decision
+        # score (M22.11).
+        RuleAlertMapping(
+            rule_id="ml_anomaly",
+            title="Behaviour Anomaly",
+            severity=AlertSeverity.MEDIUM,
+            confidence_source=CONFIDENCE_SOURCE_FIXED,
+        ),
     )
 }
 

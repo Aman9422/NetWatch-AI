@@ -61,6 +61,7 @@ export {
   API_ROOT,
   AlertPaths,
   AnalyticsPaths,
+  AnomalyPaths,
   BaselinePaths,
   CapturePaths,
   ConnectionPaths,
@@ -119,6 +120,14 @@ export {
 export { fetchActiveDevices, fetchDevice, fetchDevices } from './devices'
 
 export { fetchBaseline, fetchBaselines, resetBaseline } from './baselines'
+
+export {
+  fetchAnomalies,
+  fetchAnomaly,
+  fetchAnomalyModel,
+  fetchAnomalyModels,
+  retrainAnomalyModel,
+} from './anomalies'
 
 export {
   expireConnections,

@@ -33,6 +33,14 @@ scapy>=2.6.0
 # hand-writing a PDF writer for.
 reportlab>=4.0.0
 
+# Local machine learning for anomaly detection (M22). Isolation Forest is
+# scikit-learn's, and it is trained and run on this machine only: no cloud
+# inference, no external API and no GPU. The import is lazy (it happens inside
+# ``anomaly_detection.model`` at the point a model is built), so a machine
+# without this package still captures, detects, alerts and learns baselines --
+# only the M22 page reports itself unavailable.
+scikit-learn>=1.5.0
+
 # Testing
 pytest>=8.0.0
 httpx>=0.27.0

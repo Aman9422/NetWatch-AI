@@ -60,6 +60,10 @@ import {
   fetchAnalyticsProtocols,
   fetchAnalyticsThreats,
   fetchAnalyticsTraffic,
+  fetchAnomalies,
+  fetchAnomaly,
+  fetchAnomalyModel,
+  fetchAnomalyModels,
   fetchCaptureStatus,
   fetchConnection,
   fetchConnections,
@@ -653,6 +657,130 @@ describe('analytics endpoints', () => {
     expect(bundle.devices).not.toBeNull()
     expect(bundle.connections).not.toBeNull()
     expect(bundle.threats).not.toBeNull()
+  })
+})
+
+// ── ML anomalies (M22.12 / M22.13) ───────────────────────────────────────────
+
+/** The model lifecycle vocabulary the frontend declares (M22.5). */
+const DECLARED_MODEL_STATES: readonly string[] = [
+  'collecting_data',
+  'training',
+  'ready',
+  'stale',
+  'failed',
+  'disabled',
+]
+
+describe('anomaly endpoints', () => {
+  it('pages evaluated windows with counted totals that agree with the rows', async () => {
+    const page = await fetchAnomalies({}, { limit: 5 })
+    expect(page.count).toBe(page.anomalies.length)
+    expect(page.total == null || page.total >= page.count).toBe(true)
+    expect(page.offset).toBe(0)
+    // The tiles read these, so the summary must describe the whole store rather
+    // than the page that happens to be loaded.
+    expect(page.summary.evaluations).toBeGreaterThanOrEqual(page.count)
+    // `total` is optional on the envelope, so it is only compared when present.
+    if (page.total !== undefined && page.total !== null) {
+      expect(page.summary.evaluations).toBe(page.total)
+    }
+    expect(page.summary.skipped).toBeLessThanOrEqual(page.summary.evaluations)
+    expect(page.summary.scored).toBeLessThanOrEqual(page.summary.evaluations)
+    expect(page.summary.anomalies).toBeLessThanOrEqual(page.summary.scored)
+    // The sentence M22.13 requires the page to show, sent by the backend so the
+    // page cannot paraphrase it into something stronger.
+    expect(page.disclaimer).toContain('not confirmation of malicious activity')
+  })
+
+  it('never presents a decision score as a probability (M22.9)', async () => {
+    const page = await fetchAnomalies({}, { limit: 20 })
+    expect(page.anomalies.length).toBeGreaterThan(0)
+    for (const result of page.anomalies) {
+      // The fields that would turn a model output into a claim it cannot support.
+      expect('confidence' in result).toBe(false)
+      expect('probability' in result).toBe(false)
+      expect('risk_score' in result).toBe(false)
+      expect(result.decision_score_note.toLowerCase()).toContain('not a probability')
+      expect(['scored', 'skipped', 'failed']).toContain(result.status)
+      // A skip is not a verdict; a scored row must carry one.
+      if (result.status === 'scored') {
+        expect(typeof result.decision_score).toBe('number')
+        expect(result.model_version).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  it('reads one verdict with its feature context, and a skip without one', async () => {
+    const page = await fetchAnomalies({}, { limit: 20 })
+    const scored = page.anomalies.find((row) => row.status === 'scored')
+    const skipped = page.anomalies.find((row) => row.status !== 'scored')
+
+    if (scored !== undefined) {
+      const detail = await fetchAnomaly(scored.evaluation_id)
+      expect(detail.evaluation_id).toBe(scored.evaluation_id)
+      expect(detail.device_key).toBe(scored.device_key)
+      expect(Array.isArray(detail.feature_context)).toBe(true)
+      for (const entry of detail.feature_context) {
+        expect(entry.feature.length).toBeGreaterThan(0)
+        expect(entry.label.length).toBeGreaterThan(0)
+        // The three misreadings the context panel must be able to distinguish.
+        expect(typeof entry.far_from_centre).toBe('boolean')
+        expect(typeof entry.missing).toBe('boolean')
+        expect(typeof entry.truncated).toBe('boolean')
+      }
+    }
+
+    if (skipped !== undefined) {
+      const detail = await fetchAnomaly(skipped.evaluation_id)
+      expect(detail.status).toBe(skipped.status)
+      expect(detail.decision_score).toBeNull()
+      // No verdict means no context to present as one.
+      expect(detail.feature_context).toEqual([])
+    }
+  })
+
+  it('lists every device model with a declared state and a truthful readiness flag', async () => {
+    const page = await fetchAnomalyModels({}, { limit: 20 })
+    expect(page.count).toBe(page.models.length)
+    expect(page.count).toBeGreaterThan(0)
+    for (const model of page.models) {
+      expect(model.device_key.length).toBeGreaterThan(0)
+      expect(DECLARED_MODEL_STATES).toContain(model.state)
+      expect(model.state_label.length).toBeGreaterThan(0)
+      expect(model.state_description.length).toBeGreaterThan(0)
+      // `ready` is the only claim that a window can be scored, and it must agree
+      // with the state rather than being asserted independently of it.
+      expect(model.ready).toBe(model.state === 'ready' || model.state === 'stale')
+    }
+  })
+
+  it('reads one device model back, and refuses a device it has never modelled', async () => {
+    const page = await fetchAnomalyModels({}, { limit: 1 })
+    const listed = page.models[0]
+    if (listed !== undefined) {
+      const detail = await fetchAnomalyModel(listed.device_key)
+      expect(detail.device_key).toBe(listed.device_key)
+      expect(detail.state).toBe(listed.state)
+      expect(Array.isArray(detail.feature_names)).toBe(true)
+    }
+
+    const error = await refusalFrom(fetchAnomalyModel('mac:00:00:00:00:00:00'))
+    expect(error.status).toBe(404)
+    expect(leaksInternals(error.userMessage)).toBe(false)
+  })
+
+  it('refuses an unknown evaluation and an unparseable time bound', async () => {
+    const missing = await refusalFrom(fetchAnomaly(999_999_999))
+    expect(missing.status).toBe(404)
+    expect(leaksInternals(missing.userMessage)).toBe(false)
+
+    const badTime = await refusalFrom(
+      fetchAnomalies({ since: 'not-a-timestamp' }, { limit: 1 }),
+    )
+    expect(badTime.kind).toBe('validation')
+    expect(badTime.status).toBe(400)
+    expect(leaksInternals(badTime.userMessage)).toBe(false)
   })
 })
 

@@ -370,6 +370,50 @@ class Settings(BaseSettings):
     baseline_default_page_size: int = 100
     baseline_max_page_size: int = 500
 
+    # ML anomaly detection (M22)
+    # Master switch for the M22 consumer of the pipeline. When disabled no
+    # completed window is ever evaluated, while the read-only anomaly API keeps
+    # serving whatever was already persisted — exactly how the M21 switch behaves.
+    anomaly_detection_enabled: bool = True
+    # Isolation Forest parameters (M22.4). Starting defaults, not a claim of
+    # accuracy: they are configurable precisely because they were never tuned
+    # against labelled production traffic, which this project does not have.
+    anomaly_model_n_estimators: int = 100
+    anomaly_model_contamination: float = 0.02
+    anomaly_model_random_state: int = 42
+    # Bounded historical training set (M22.5). The minimum is deliberately
+    # *above* M21's own `established` threshold of 30 windows: a device whose
+    # baseline is established has enough history for a statistical profile, not
+    # necessarily enough for a model, and M22 requires its own minimum.
+    anomaly_model_min_training_windows: int = 100
+    anomaly_model_max_training_windows: int = 1440
+    # New usable windows that must accumulate before a ready model is retrained
+    # (M22.7). Zero would retrain on every window, which the milestone forbids.
+    anomaly_model_refresh_interval: int = 30
+    # A feature is used only when at least this share of the training windows
+    # carried a usable value (M22.6). `new_connections` is genuinely NULL for
+    # windows where the tracker could not measure it, so a feature missing more
+    # often than this is excluded rather than imputed into fiction.
+    anomaly_feature_min_availability: float = 0.8
+    # Hard cap on the models held in memory (M22.7), so a flood of spoofed device
+    # identities cannot grow the cache without bound.
+    anomaly_model_cache_size: int = 64
+    # Anomaly evaluation records older than this are deleted by the M19 sweep
+    # (M22.10). Model metadata is *not* deleted: it describes a device's model,
+    # and removing it would lose the fact that a model was ever trained.
+    anomaly_retention_days: int = 30
+    anomaly_retention_max_per_run: int = 5000
+    # Most completed windows the evaluation queue holds before the oldest is
+    # dropped (M22.8/M22.14). Bounded so a slow model cannot grow memory, and
+    # dropping the oldest evaluation is the least harmful loss.
+    anomaly_evaluation_queue_size: int = 1024
+    # Most completed windows one evaluation pass processes, so a backlog drains
+    # over several passes rather than inside one long transaction.
+    anomaly_max_windows_per_pass: int = 25
+    # Default and maximum page size for anomaly listings (M22.12).
+    anomaly_default_page_size: int = 100
+    anomaly_max_page_size: int = 500
+
 
 @lru_cache
 def get_settings() -> Settings:

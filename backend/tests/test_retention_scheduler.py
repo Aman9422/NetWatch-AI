@@ -295,6 +295,7 @@ def test_the_application_policies_are_named_and_ordered() -> None:
     assert [policy.name for policy in policies] == [
         "packets",
         "baselines",
+        "anomalies",
         "reports",
     ]
 
@@ -310,6 +311,7 @@ def test_get_retention_sweeper_returns_one_instance() -> None:
         assert [policy.name for policy in first.policies] == [
             "packets",
             "baselines",
+            "anomalies",
             "reports",
         ]
     finally:
@@ -462,15 +464,19 @@ def test_a_pass_cleans_every_store_through_the_real_policies(
     )
     outcomes = sweeper.run_once()
 
+    # M22 inserted the anomaly-evaluation policy between the baseline windows and
+    # the reports. Three stores carry data here; the anomaly store is empty, which
+    # is itself the assertion that an empty store is a clean pass, not a failure.
     assert [outcome.name for outcome in outcomes] == [
         "packets",
         "baselines",
+        "anomalies",
         "reports",
     ]
-    assert [outcome.succeeded for outcome in outcomes] == [True, True, True]
+    assert [outcome.succeeded for outcome in outcomes] == [True, True, True, True]
     assert outcomes[0].summary == "1 packet row(s) deleted"
     assert outcomes[1].summary.startswith("deleted 1 window(s)")
-    assert outcomes[2].summary.startswith("1 report(s) and 1 file(s) removed")
+    assert outcomes[3].summary.startswith("1 report(s) and 1 file(s) removed")
     assert storage.exists("old.csv") is False
 
     session = session_factory()

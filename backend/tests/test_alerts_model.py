@@ -268,14 +268,38 @@ def test_terminal_status_is_recognised() -> None:
 
 
 def test_mapping_covers_exactly_the_implemented_detectors() -> None:
-    """The table lists the five M10 detectors and nothing that does not exist."""
+    """The table lists every implemented detector and nothing that does not exist.
+
+    The five M10 rules were joined by ``ml_anomaly`` in M22. It belongs here for
+    the same reason as the others -- this table is the only place a rule id
+    becomes an alert -- and its presence is asserted rather than tolerated, so a
+    later change cannot quietly drop ML findings from the alert path.
+    """
     assert set(SUPPORTED_RULE_IDS) == {
         "port_scan",
         "syn_flood",
         "icmp_flood",
         "internal_scan",
         "high_bandwidth",
+        "ml_anomaly",
     }
+
+
+def test_the_ml_anomaly_rule_never_borrows_the_decision_score() -> None:
+    """An Isolation Forest score is not a probability and must not be confidence.
+
+    M22.11 requires the alert to carry a *fixed* confidence for this rule rather
+    than the model's decision score, because presenting a raw model output as
+    alert confidence would claim a calibration that does not exist.
+    """
+    from app.alerts.mapping import CONFIDENCE_SOURCE_FINDING
+
+    mapping = mapping_for_rule("ml_anomaly")
+    assert mapping is not None
+    assert mapping.confidence_source != CONFIDENCE_SOURCE_FINDING
+    assert "not a probability" in mapping.confidence_source
+    # Medium: a deviation warrants investigation, it is not a conclusion.
+    assert mapping.severity is AlertSeverity.MEDIUM
 
 
 @pytest.mark.parametrize(

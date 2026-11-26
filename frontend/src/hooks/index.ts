@@ -70,6 +70,24 @@ export type { BaselineDetailResource } from './useBaseline'
 export { useResetBaseline } from './useResetBaseline'
 export type { ResetBaselineResource } from './useResetBaseline'
 
+export { useAnomalies } from './useAnomalies'
+export type { AnomalyListOptions, AnomalyListResource } from './useAnomalies'
+
+export { useAnomalyDetail } from './useAnomalyDetail'
+export type { AnomalyDetailResource } from './useAnomalyDetail'
+
+export { useAnomalyModel } from './useAnomalyModel'
+export type { AnomalyModelDetailResource } from './useAnomalyModel'
+
+export { useAnomalyModels } from './useAnomalyModels'
+export type {
+  AnomalyModelListOptions,
+  AnomalyModelListResource,
+} from './useAnomalyModels'
+
+export { useRetrainAnomalyModel } from './useRetrainAnomalyModel'
+export type { RetrainAnomalyModelResource } from './useRetrainAnomalyModel'
+
 export { useConnections } from './useConnections'
 export type { ConnectionListOptions, ConnectionListResource } from './useConnections'
 

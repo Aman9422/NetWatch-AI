@@ -108,6 +108,68 @@ def _stop_baseline_engine() -> None:
         logger.info("Flushed %d baseline window(s) during shutdown", written)
 
 
+def _enqueue_windows(windows: list) -> None:
+    """Hand committed M21 windows to the anomaly engine (M22.8).
+
+    A module-level function rather than a lambda so the listener contract is
+    explicit: it returns ``None`` and never raises. ``enqueue`` cannot block and a
+    window it drops is counted by the engine, so there is nothing here to retry —
+    a stale evaluation is worth less than the newest one, and the queue is bounded
+    so a slow model can never grow this process's memory.
+    """
+    from app.anomaly_detection import get_anomaly_engine, windows_from_counters
+
+    get_anomaly_engine().enqueue(windows_from_counters(windows))
+
+
+def _start_anomaly_engine() -> None:
+    """Start the M22 anomaly worker and attach it to the learner (M22.8).
+
+    The learner does not import this layer: the lifespan hands it a callable, so
+    a build without scikit-learn still learns baselines and simply has no ML
+    consumer. Attached *before* the flush thread starts, so no window written on
+    the first interval is missed.
+
+    Guarded: an ML layer that cannot start is a detection feature that will not
+    run, which is worth a loud log line but is not a reason to refuse to start the
+    application. Capture, statistics, M21 learning, deterministic detection,
+    alerting and the API all work without it.
+    """
+    from app.anomaly_detection import get_anomaly_engine
+    from app.baselines import get_baseline_engine
+
+    if not settings.anomaly_detection_enabled:
+        logger.info("ML anomaly detection disabled by configuration")
+        return
+    try:
+        get_anomaly_engine().start()
+        get_baseline_engine().attach_window_listener(_enqueue_windows)
+    except Exception:  # noqa: BLE001 - startup must not fail on the ML layer
+        logger.exception("Failed to start ML anomaly detection")
+
+
+def _stop_anomaly_engine() -> None:
+    """Detach, drain and stop the anomaly worker (M22.8).
+
+    Called *after* the learner has flushed its final windows, so the last window of
+    the session is evaluated rather than dropped, and before the other database
+    writers, so two writers are never on one SQLite file at once. A failure to
+    drain is logged and does not prevent stopping the thread. Guarded because
+    shutdown must never raise.
+    """
+    from app.anomaly_detection import get_anomaly_engine
+    from app.baselines import get_baseline_engine
+
+    try:
+        get_baseline_engine().attach_window_listener(None)
+    except Exception:  # noqa: BLE001 - shutdown must never raise
+        logger.exception("Failed to detach the baseline window listener")
+    try:
+        get_anomaly_engine().shutdown()
+    except Exception:  # noqa: BLE001 - shutdown must never raise
+        logger.exception("Failed to stop ML anomaly detection")
+
+
 def _start_retention_sweep() -> None:
     """Start the periodic retention sweep (M19.5).
 
@@ -171,6 +233,9 @@ async def lifespan(app: FastAPI):
     # The behavioural learner (M21.9). Its thread is what writes an observation
     # window, so it starts once the schema exists and before traffic can arrive.
     _start_baseline_engine()
+    # ML anomaly detection (M22.8). Wired to the learner above as an additional
+    # consumer of *completed* windows, so it never sits in the packet path.
+    _start_anomaly_engine()
     # The real-time layer (M14.20). Started after the schema exists and before
     # the application accepts traffic, so the loop is bound and the heartbeat and
     # dashboard tasks exist before the first client can dial in.
@@ -183,6 +248,9 @@ async def lifespan(app: FastAPI):
     # are already aggregated, and before the other flushes, so two writers are
     # never on the same SQLite file at once (M21.5).
     _stop_baseline_engine()
+    # Evaluated once the learner has written the session's final windows, and
+    # before the other writers, for the same single-writer reason (M22.8).
+    _stop_anomaly_engine()
     _shutdown_persistence()
     _shutdown_connections()
     # The WebSocket layer is torn down *last* (M14.20): stopping capture publishes
