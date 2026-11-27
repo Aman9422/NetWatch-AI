@@ -24,6 +24,19 @@
  * the hook polls, never from dividing counters here (M15.9). "Pause" pauses the
  * **view**, not capture: M14 has no replay buffer, so a paused view discards the
  * events it receives and resumes at the next one.
+ *
+ * ## The table's sizing, because it was wrong twice
+ *
+ * A normalized IPv6 address is 39 characters. The original layout reserved a flat
+ * `130px` for each address column, which cannot hold one: the text painted over
+ * the next column instead of being clipped. Replacing that with `minmax(0, …fr)`
+ * traded one defect for another — with no floor at all, the fixed columns stole
+ * the space and the addresses collapsed to "2." at a 900px viewport.
+ *
+ * The layout now has a **floor** (`minmax(150px, …fr)`) and the table declares the
+ * width below which it would rather scroll than compress. Header and rows sit in
+ * the same scroll box, so a horizontal scrollbar moves them together; the header
+ * is sticky so it stays visible while the rows scroll under it.
  */
 
 import { useMemo, useState } from 'react'
@@ -54,6 +67,18 @@ import type { PacketEventData, PacketType } from '../types'
 const PROTOCOL_TABS: readonly (PacketType | 'ALL')[] = [
   'ALL', 'TCP', 'UDP', 'ICMP', 'DNS', 'ARP', 'IPV4', 'IPV6',
 ]
+
+/**
+ * The column tracks.
+ *
+ * `92px` for the time, a floor of `150px` for each address (enough for a readable
+ * prefix of a 39-character IPv6 address), then the narrow numeric columns.
+ */
+const TABLE_COLUMNS =
+  '92px minmax(150px,1.5fr) minmax(150px,1.5fr) 62px 74px 74px 62px 74px'
+
+/** Width the table needs before it scrolls rather than compressing. */
+const TABLE_MIN_WIDTH = '890px'
 
 /** A stable React key for a live packet, built from the fields it carries. */
 function packetKey(packet: PacketEventData): string {
@@ -190,6 +215,11 @@ function PacketDrawer({
   )
 }
 
+/** The column headers, shared by the header row so the labels cannot drift. */
+const COLUMN_LABELS: readonly string[] = [
+  'Time', 'Source', 'Destination', 'Proto', 'Src Port', 'Dst Port', 'Bytes', 'Type',
+]
+
 interface Props { showToast: (msg: string, type?: ToastMsg['type']) => void }
 
 export default function LiveTraffic({ showToast }: Props) {
@@ -272,8 +302,6 @@ export default function LiveTraffic({ showToast }: Props) {
     URL.revokeObjectURL(url)
     showToast(`Exported ${filtered.length} displayed packet rows`, 'success')
   }
-
-  const tableColumns = '120px 130px 130px 70px 80px 80px 60px 80px'
 
   return (
     <div className="flex flex-col gap-4" style={{ height: 'calc(100vh - 72px - 48px)' }}>
@@ -418,72 +446,94 @@ export default function LiveTraffic({ showToast }: Props) {
           className="flex flex-col flex-1 min-w-0 rounded-2xl border overflow-hidden"
           style={{ backgroundColor: C.card, borderColor: C.border }}
         >
-          <div
-            className="grid text-xs font-medium px-4 py-2.5 border-b shrink-0"
-            style={{ borderColor: C.border, color: C.dim, gridTemplateColumns: tableColumns }}
-          >
-            <span>Time</span><span>Source</span><span>Destination</span>
-            <span>Proto</span><span>Src Port</span><span>Dst Port</span>
-            <span>Bytes</span><span>Type</span>
-          </div>
+          {/* Header and rows share one scroll box, so a horizontal scrollbar moves
+              them together rather than leaving the labels behind. The inner box
+              carries the minimum width that makes the scrollbar appear at all. */}
+          <div className="flex-1 overflow-auto">
+            <div style={{ minWidth: TABLE_MIN_WIDTH }}>
+              <div
+                className="grid gap-x-3 text-xs font-medium px-4 py-2.5 border-b sticky top-0 z-10"
+                style={{
+                  borderColor: C.border,
+                  color: C.dim,
+                  gridTemplateColumns: TABLE_COLUMNS,
+                  backgroundColor: C.card,
+                }}
+              >
+                {COLUMN_LABELS.map((label) => (
+                  <span key={label} className="truncate">{label}</span>
+                ))}
+              </div>
 
-          <div className="flex-1 overflow-y-auto">
-            {traffic.isInitialLoading && traffic.packets.length === 0 && (
-              <LoadingState label="Waiting for the first packet…" minHeight={200} />
-            )}
-            {!traffic.isInitialLoading && traffic.blockingError !== null && (
-              <ErrorState
-                error={traffic.blockingError}
-                title="Unable to load traffic rates"
-                onRetry={traffic.reload}
-                minHeight={200}
-              />
-            )}
-            {!traffic.isInitialLoading && !ratesUnavailable && filtered.length === 0 && (
-              <EmptyState
-                title={traffic.packets.length === 0 ? 'No packets yet' : 'No packets match your filter'}
-                hint={traffic.packets.length === 0
-                  ? 'Rows appear as the backend observes traffic on the selected interface.'
-                  : 'Adjust the search or filter criteria.'}
-                icon={<Shield size={30} />}
-                minHeight={200}
-              />
-            )}
-            {filtered.map((packet) => {
-              const key = packetKey(packet)
-              const isSelected = selectedKey === key
-              return (
-                <div
-                  key={key}
-                  onClick={() => setSelectedKey(key)}
-                  className="grid items-center px-4 py-2 cursor-pointer border-b"
-                  style={{
-                    gridTemplateColumns: tableColumns,
-                    borderColor: '#1a2744',
-                    backgroundColor: isSelected ? tint(C.accent, 0.07) : 'transparent',
-                  }}
-                >
-                  <span className="mono text-xs" style={{ color: C.faint }}>{formatTimeOfDay(packet.timestamp)}</span>
-                  <span className="mono text-xs font-medium" style={{ color: C.accent }}>{packet.source_ip ?? UNKNOWN_TEXT}</span>
-                  <span className="mono text-xs" style={{ color: C.muted }}>{packet.destination_ip ?? UNKNOWN_TEXT}</span>
-                  <span>
-                    <span className="text-xs px-1.5 py-0.5 rounded font-medium"
-                      style={{ backgroundColor: tint(C.purple, 0.09), color: C.purple }}>
-                      {packet.protocol}
+              {traffic.isInitialLoading && traffic.packets.length === 0 && (
+                <LoadingState label="Waiting for the first packet…" minHeight={200} />
+              )}
+              {!traffic.isInitialLoading && traffic.blockingError !== null && (
+                <ErrorState
+                  error={traffic.blockingError}
+                  title="Unable to load traffic rates"
+                  onRetry={traffic.reload}
+                  minHeight={200}
+                />
+              )}
+              {!traffic.isInitialLoading && !ratesUnavailable && filtered.length === 0 && (
+                <EmptyState
+                  title={traffic.packets.length === 0 ? 'No packets yet' : 'No packets match your filter'}
+                  hint={traffic.packets.length === 0
+                    ? 'Rows appear as the backend observes traffic on the selected interface.'
+                    : 'Adjust the search or filter criteria.'}
+                  icon={<Shield size={30} />}
+                  minHeight={200}
+                />
+              )}
+              {filtered.map((packet) => {
+                const key = packetKey(packet)
+                const isSelected = selectedKey === key
+                return (
+                  <div
+                    key={key}
+                    onClick={() => setSelectedKey(key)}
+                    className="grid gap-x-3 items-center px-4 py-2 cursor-pointer border-b"
+                    style={{
+                      gridTemplateColumns: TABLE_COLUMNS,
+                      borderColor: '#1a2744',
+                      backgroundColor: isSelected ? tint(C.accent, 0.07) : 'transparent',
+                    }}
+                  >
+                    <span className="mono text-xs" style={{ color: C.faint }}>{formatTimeOfDay(packet.timestamp)}</span>
+                    <span
+                      className="mono text-xs font-medium truncate"
+                      style={{ color: C.accent }}
+                      title={packet.source_ip ?? UNKNOWN_TEXT}
+                    >
+                      {packet.source_ip ?? UNKNOWN_TEXT}
                     </span>
-                  </span>
-                  <span className="mono text-xs" style={{ color: C.muted }}>{packet.source_port ?? UNKNOWN_TEXT}</span>
-                  <span className="mono text-xs" style={{ color: C.muted }}>{packet.destination_port ?? UNKNOWN_TEXT}</span>
-                  <span className="mono text-xs" style={{ color: C.muted }}>{packet.length}</span>
-                  <span>
-                    <span className="text-xs px-1.5 py-0.5 rounded-full font-medium"
-                      style={{ backgroundColor: C.panel, color: C.dim }}>
-                      {packet.packet_type}
+                    <span
+                      className="mono text-xs truncate"
+                      style={{ color: C.muted }}
+                      title={packet.destination_ip ?? UNKNOWN_TEXT}
+                    >
+                      {packet.destination_ip ?? UNKNOWN_TEXT}
                     </span>
-                  </span>
-                </div>
-              )
-            })}
+                    <span className="truncate">
+                      <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+                        style={{ backgroundColor: tint(C.purple, 0.09), color: C.purple }}>
+                        {packet.protocol}
+                      </span>
+                    </span>
+                    <span className="mono text-xs truncate" style={{ color: C.muted }}>{packet.source_port ?? UNKNOWN_TEXT}</span>
+                    <span className="mono text-xs truncate" style={{ color: C.muted }}>{packet.destination_port ?? UNKNOWN_TEXT}</span>
+                    <span className="mono text-xs truncate" style={{ color: C.muted }}>{packet.length}</span>
+                    <span className="truncate">
+                      <span className="text-xs px-1.5 py-0.5 rounded-full font-medium"
+                        style={{ backgroundColor: C.panel, color: C.dim }}>
+                        {packet.packet_type}
+                      </span>
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
           </div>
 
           <div

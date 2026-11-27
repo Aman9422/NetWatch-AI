@@ -1268,3 +1268,116 @@ Local AI Explanation
 ```
 
 As the project matures, more advanced ML models, local language models, analyst assistance, and security integrations can be introduced without changing the fundamental architecture.
+
+---
+
+# 49. As built — M23 Local LLM Infrastructure
+
+Sections 1–48 describe the intended design. This section records what the M23
+milestone **actually implemented**, because three of the earlier sections were
+written before the code and do not match it. Where they differ, this section is
+authoritative and the earlier section is the plan that was superseded.
+
+**Scope reminder.** M23 delivered the *infrastructure only*. The AI Analyst layer
+described in §19–§30 (explanations, summaries, investigation guidance, confidence
+scoring, `ai_insights` storage) is **not implemented** and remains a later
+milestone. Nothing in M23 reads an alert, a packet or a database row.
+
+## 49.1 What exists
+
+| Capability | Status |
+| --- | --- |
+| Local runtime reachability + model availability reporting | Implemented |
+| Listing installed models from the runtime's own inventory | Implemented |
+| Bounded, operator-triggered test generation | Implemented |
+| AI Configuration page | Implemented |
+| Alert explanation, incident summary, investigation guidance | **Not implemented** |
+| `ai_insights` storage, `POST /ai/analyze` | **Not implemented** |
+
+## 49.2 §35 corrected — the module structure as built
+
+§35 proposed a structure with `ai_service.py`, `prompt_builder.py`,
+`response_parser.py`, `model_manager.py` and `insight_service.py`. That split
+belongs to the analyst layer. What M23 needed was one layer with one job —
+enforce limits and report state — so the module is smaller:
+
+```text
+backend/app/ai/
+├── __init__.py        process-wide singleton, factory, reset
+├── exceptions.py      the controlled failure vocabulary (reason codes)
+├── health.py          the four-state model and one sentence per state
+├── schemas.py         the API payloads and the shared disclaimer
+├── service.py         limits, concurrency, state — the only place they live
+└── providers/
+    ├── __init__.py    the provider registry (one factory)
+    ├── base.py        the runtime-independent interface
+    └── ollama.py      the only adapter M23 ships
+```
+
+`prompt_builder.py`, `response_parser.py` and `insight_service.py` are **absent on
+purpose**: M23 accepts a prompt from an operator and returns text. There is no
+prompt to construct from evidence and no response to parse into insight fields
+until the analyst layer exists. Creating those files now would be three empty
+modules and a structure to maintain for no behaviour.
+
+## 49.3 §38 corrected — the API as built
+
+§38 lists `GET /ai/insights`, `GET /ai/alerts/{id}`, `GET /ai/devices/{id}` and
+`POST /ai/analyze`. **None of those exist.** M23 exposes three endpoints:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/ai/status` | One of four states, always `200` |
+| `GET` | `/api/v1/ai/models` | The runtime's real inventory |
+| `POST` | `/api/v1/ai/test` | A bounded prompt and the reply |
+
+There is deliberately **no** `POST /ai/analyze`: an endpoint that accepted evidence
+and returned an assessment would be the analyst layer, and building it before the
+evidence contract exists is how a model ends up being trusted with a judgement
+nobody validated.
+
+## 49.4 §21 corrected — the local AI decision is now concrete
+
+§21 said Ollama was a *possible* framework and that the model "should be chosen
+after evaluating the development machine's hardware capacity". That evaluation
+happened:
+
+* **Runtime:** Ollama, through its local HTTP API, behind a `LlmProvider`
+  interface so a second local runtime is additive rather than a rewrite.
+* **Reference model:** `llama3.2:3b`, ~2 GB, measured ~2.35 GB resident at
+  `num_ctx=4096`.
+* **Why `num_ctx` is pinned:** the model advertises a 131,072-token context; left
+  at its default the KV cache does not fit in 4 GB of VRAM and the model fails to
+  load.
+
+Full measurements, configuration and installation steps are in
+[`27_M23_Local_LLM_Integration.md`](27_M23_Local_LLM_Integration.md).
+
+## 49.5 How M23 already satisfies the principles in this document
+
+Several principles above were written as intentions; M23 is where some of them
+became structural rather than aspirational.
+
+| Principle (section) | How M23 enforces it |
+| --- | --- |
+| AI analysis is optional (§3.7) | `llm_enabled` defaults to `false` |
+| Core monitoring continues if AI fails (§3.8) | No `app/ai/` code runs on the capture thread — there is no timer to fire |
+| Local models preferred, no API cost (§3.9, §22) | The provider registry contains only local runtimes; an unknown name raises rather than falling back |
+| Keep model providers replaceable (§3.10, §46.13) | `OllamaProvider` is named in exactly one factory |
+| Limit prompt size (§32) | `LLM_MAX_PROMPT_CHARS`, refused at the service before any network call |
+| Do not send sensitive data (§34) | The request schema has one field — a prompt — and the AI routes are not connected to packets, alerts or storage |
+| AI failure must not break the app (§31) | `GET /ai/status` answers `200` with a state; startup never probes the runtime |
+
+## 49.6 What the analyst layer will need that M23 deliberately did not build
+
+* A **prompt builder** that turns a validated evidence object into text — and the
+  evidence contract that makes "do not invent evidence" (§26) checkable.
+* A **response parser** that validates structure before anything is displayed (§25).
+* **Persistence** for generated insights (§39), which is also what makes caching
+  (§33) meaningful.
+* An evaluation method for hallucination and usefulness (§42), which cannot be
+  written before there is an explanation to evaluate.
+
+Each of those is a decision about *what the model is allowed to see and say*.
+M23's contribution is that when they are built, the boundary they must respect
+already exists and is tested.

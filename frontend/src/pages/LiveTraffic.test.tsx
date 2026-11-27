@@ -22,6 +22,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { LIVE_PACKET_CAPACITY } from '@/hooks'
+import { packetBuffer } from '@/hooks/packetBuffer'
 import { EventType } from '@/types'
 import type { PacketEventData, TrafficSnapshot } from '@/types'
 import LiveTraffic from '@/pages/LiveTraffic'
@@ -172,6 +173,11 @@ function footer(): string {
 beforeEach(() => {
   sockets.length = 0
   showToast.mockClear()
+  // The retained rows live in a session-scoped buffer so they outlive the page
+  // (see `packetBuffer`), which means one test's packets would otherwise be the
+  // next test's starting state.
+  packetBuffer.clear()
+  packetBuffer.setCapacity(LIVE_PACKET_CAPACITY)
   installFakeWebSocket()
 })
 // ── Helpers that touch React's batching ──────────────────────────────────────
@@ -567,6 +573,112 @@ describe('Live Traffic — the packet drawer', () => {
   })
 })
 // ── Failures and reconnection ────────────────────────────────────────────────
+
+describe('Live Traffic — retained rows surviving the page', () => {
+  it('keeps the rows when the page is unmounted and reopened', async () => {
+    installFetch(trafficRoutes())
+    const first = render(<LiveTraffic showToast={showToast} />)
+    await screen.findByText('20 KB/s')
+    const socket = openSocket('/ws/packets')
+    stream(socket, 3)
+    expect(footer()).toBe('3 shown · 3 retained')
+
+    // Stopping capture requires navigating to the Dashboard, which unmounts this
+    // page (M15.35). The rows are the reason an operator was looking, so they must
+    // outlive that unmount rather than blanking the table they just read.
+    first.unmount()
+
+    renderPage()
+    await screen.findByText('20 KB/s')
+    expect(footer()).toBe('3 shown · 3 retained')
+    expect(screen.getByText('40002')).toBeInTheDocument()
+    // The socket is still closed on unmount: nothing collects traffic for a page
+    // that is not rendered.
+    expect(channelHub.subscriberCount('packets')).toBe(1)
+  })
+
+  it('survives the capture-stopped announcement it was reopened to see', async () => {
+    installFetch(trafficRoutes())
+    const first = render(<LiveTraffic showToast={showToast} />)
+    await screen.findByText('20 KB/s')
+    stream(openSocket('/ws/packets'), 2)
+    first.unmount()
+
+    renderPage()
+    await screen.findByText('20 KB/s')
+    const system = openSocket('/ws/system')
+    deliver(system, eventFrame({
+      type: EventType.CAPTURE_STOPPED,
+      channel: 'system',
+      data: { status: 'stopped', interface: 'eth0', packet_count: 2 },
+    }))
+
+    // The capture state changed; the observed packets did not become untrue.
+    expect(stat('Capture')).toBe('stopped')
+    expect(footer()).toBe('2 shown · 2 retained')
+    expect(screen.getByText('40002')).toBeInTheDocument()
+  })
+})
+
+// ── Long addresses ───────────────────────────────────────────────────────────
+
+describe('Live Traffic — long addresses', () => {
+  /** The IPv6 address from the field report, which is 39 characters long. */
+  const LONG_IPV6 = '2402:8100:2ce3:951c:7d8d:bb87:f55c:e511'
+
+  it('renders a full IPv6 address without letting it cross into the next column', async () => {
+    installFetch(trafficRoutes())
+    renderPage()
+    await screen.findByText('20 KB/s')
+    const socket = openSocket('/ws/packets')
+
+    deliver(socket, packetFrame(packet({
+      packet_id: 1,
+      source_ip: LONG_IPV6,
+      destination_ip: LONG_IPV6,
+      packet_type: 'IPV6',
+      protocol: 'TCP',
+    })))
+
+    const cells = await screen.findAllByText(LONG_IPV6)
+    expect(cells).toHaveLength(2)
+
+    // The cell must clip. A fixed-width track with no `truncate` let the text paint
+    // over the neighbouring column, which is what "the addresses overlap" was.
+    for (const cell of cells) {
+      expect(cell.className).toContain('truncate')
+      // The whole address stays reachable on hover rather than being destroyed.
+      expect(cell.getAttribute('title')).toBe(LONG_IPV6)
+    }
+  })
+
+  it('sizes the address tracks so they can shrink instead of overflowing', async () => {
+    installFetch(trafficRoutes())
+    renderPage()
+    await screen.findByText('20 KB/s')
+    const socket = openSocket('/ws/packets')
+
+    deliver(socket, packetFrame(packet({ packet_id: 1, source_ip: LONG_IPV6 })))
+    const row = (await screen.findByText(LONG_IPV6)).closest('.grid') as HTMLElement | null
+    expect(row).not.toBeNull()
+
+    const rowElement = row as HTMLElement
+    const tracks = rowElement.style.gridTemplateColumns
+
+    // Three ways this has been wrong, each caught only by looking at it:
+    //   `130px` fixed    → the address painted over the next column;
+    //   `minmax(0, …fr)` → the fixed columns squeezed it down to "2.".
+    // The invariant is a real floor on the address tracks.
+    expect(tracks).not.toContain('130px')
+    expect(tracks).toMatch(/minmax\((?!0px)\d+px,/)
+
+    // And the squeeze is prevented by the table refusing to shrink below the width
+    // it needs, so the shortfall becomes a scrollbar rather than a crushed column.
+    const sized = rowElement.closest('div[style*="min-width"]') as HTMLElement | null
+    expect(sized).not.toBeNull()
+    expect((sized as HTMLElement).style.minWidth).toBe('890px')
+  })
+})
 
 describe('Live Traffic — failures and reconnection', () => {
   it('shows an error state when the rates could not be read, and recovers on retry', async () => {

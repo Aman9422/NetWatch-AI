@@ -30,7 +30,7 @@
  * "pause capture".
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { fetchTrafficSnapshot } from '@/services'
 import { isPacketEvent } from '@/types'
 import type { ApiError } from '@/services'
@@ -40,11 +40,16 @@ import type {
   TrafficSnapshot,
 } from '@/types'
 import { useAsyncResource } from './useAsyncResource'
-import { useBoundedList } from './useBoundedList'
 import { useChannelEvents } from './useChannelEvents'
+import { DEFAULT_PACKET_BUFFER_CAPACITY, packetBuffer } from './packetBuffer'
 
-/** How many live packets are retained. Roughly a screenful and a half of scroll. */
-export const LIVE_PACKET_CAPACITY = 500
+/**
+ * How many live packets are retained. Roughly a screenful and a half of scroll.
+ *
+ * The default for the session-scoped buffer, re-exported under the name the
+ * components and tests already use.
+ */
+export const LIVE_PACKET_CAPACITY = DEFAULT_PACKET_BUFFER_CAPACITY
 
 /**
  * How often the M6 snapshot is re-read, in milliseconds.
@@ -105,9 +110,16 @@ export function useLiveTraffic(
   const enabled = options.enabled ?? true
   const [isPaused, setPaused] = useState(false)
 
-  const packets = useBoundedList<PacketEventData>(capacity)
-  const { prepend } = packets
-  const { clear } = packets
+  // The rows come from a session-scoped buffer rather than from component state,
+  // so they survive the route change that stopping capture requires — Start and
+  // Stop live on the Dashboard, and navigating there unmounts this page.
+  useEffect(() => {
+    packetBuffer.setCapacity(capacity)
+  }, [capacity])
+
+  const items = useSyncExternalStore(packetBuffer.subscribe, packetBuffer.getSnapshot)
+  const prepend = packetBuffer.prepend
+  const clear = packetBuffer.clear
 
   const snapshot = useAsyncResource(
     (signal) => fetchTrafficSnapshot({ signal }),
@@ -162,7 +174,7 @@ export function useLiveTraffic(
   }, [])
 
   return {
-    packets: packets.items,
+    packets: items,
     capacity,
     snapshot: snapshot.data,
     isConnected: channel.isConnected,

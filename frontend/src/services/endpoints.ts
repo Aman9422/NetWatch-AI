@@ -196,3 +196,25 @@ export const AnomalyPaths = {
     `/anomalies/models/${encodeURIComponent(deviceKey)}/retrain`,
   detail: (evaluationId: number): string => `/anomalies/${evaluationId}`,
 } as const
+
+/**
+ * Local LLM infrastructure (M23.9).
+ *
+ * Three routes, each answering a different question: whether the integration is
+ * usable, which models are installed, and what the configured one says to a bounded
+ * prompt.
+ *
+ * `status` is a read that always succeeds with a state (`disabled`,
+ * `unreachable`, `model_missing`, `ready`), so the page never has to read a `503`
+ * as "the operator switched it off".
+ *
+ * `test` is a POST whose reply is generated text. The caller gives it a longer
+ * timeout than the client's 15-second default: a cold model load was measured at
+ * ~9 seconds on the reference machine, which leaves 15 seconds too close to the
+ * edge to rely on.
+ */
+export const AiPaths = {
+  status: '/ai/status',
+  models: '/ai/models',
+  test: '/ai/test',
+} as const

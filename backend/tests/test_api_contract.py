@@ -30,11 +30,13 @@ from app.api.common import (
     register_exception_handlers,
 )
 from app.api.common.envelope import GENERIC_CODE_STATUS
+from app.api.v1.ai import get_service as get_ai_service
 from app.api.v1.deps import get_alert_queries
 from app.api.v1.system import API_PREFIX
 from app.baselines import get_baseline_engine
 from app.database.session import get_db
 from app.main import app
+from tests.ai_fakes import make_service as build_ai_service
 from tests.m13_fakes import (
     api_client,
     baseline_engine_override,
@@ -75,6 +77,7 @@ COLLECTION_URLS = (
     "/api/v1/system/status",
     "/api/v1/system/health",
     "/api/v1/notifications",
+    "/api/v1/ai/status",
 )
 
 #: The path prefix every M13 group is mounted under (M13.3).
@@ -94,6 +97,7 @@ EXPECTED_PREFIXES = (
     "/api/v1/reports",
     "/api/v1/settings",
     "/api/v1/system",
+    "/api/v1/ai",
     "/api/v1/notifications",
 )
 
@@ -115,6 +119,7 @@ def client(
             # M21.10: the baseline sweep in COLLECTION_URLS reads the engine, so
             # it is pointed at the isolated database as well.
             get_baseline_engine: baseline_engine_override(session_factory),
+            get_ai_service: lambda: build_ai_service(enabled=False, model=""),
         }
     ) as test_client:
         yield test_client

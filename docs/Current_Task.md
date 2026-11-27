@@ -1,821 +1,599 @@
-# M22 — ML-Based Anomaly Detection
-
-**Project:** NetWatch AI  
-**Milestone:** M22  
-**Suggested version:** v0.0.22  
-**Base version:** v0.0.21  
-**Status:** Planned  
-**Primary objective:** Implement local machine-learning-based network anomaly detection using the behavioural profiles and observation windows produced by M21.
-
----
-
-## 1. Context and instructions
-
-M0–M20 established and released the base network-monitoring application.
-
-M21 implemented the Behavioral Baseline Engine and is marked implemented and verified.
-
-M21 provides:
-- Per-device behavioural observation windows.
-- Nine behavioural features.
-- Persistent SQLite storage.
-- Statistical profiles.
-- Learning states.
-- A REST API.
-- A frontend page for inspecting learned behaviour.
-
-M22 must consume this existing functionality rather than create another baseline system.
-
-Before changing anything:
-
-1. Inspect the current repository and Git state.
-2. Read the M20 release and M21 milestone documentation.
-3. Inspect the actual M21 source code, database models, configuration, services, tests and API response models.
-4. Understand how completed 60-second windows are produced and persisted.
-5. Inspect the existing detection, finding, alert and incident pipelines.
-6. Inspect the current frontend navigation and page architecture.
-7. Confirm the installed Python and frontend versions.
-
-Do not assume that proposed architecture matches the implementation. Base every integration decision on the actual code.
-
-**Preserve every working M0–M21 feature.** Avoid unnecessary rewrites and do not modify M21's historical records to make M22 work.
-
-## 2. Objective
-
-Implement an ML-based engine that identifies network activity that differs significantly from a device's previously observed behaviour.
-
-For example:
-
-A device normally:
-- Transmits a relatively stable number of packets per minute.
-- Communicates with a small number of peers.
-- Uses a familiar set of protocols.
-- Contacts a predictable number of destination ports.
-
-A later observation window might show:
-- A sudden increase in packet volume.
-- An unusually large number of peers.
-- A substantial increase in destination ports.
-- Unusual protocol distribution.
-- A significantly different connection rate.
-
-M22 should use a machine-learning model trained on historical observations to identify such unusual windows.
-
-The engine should be capable of answering:
-
-- Which device exhibited unusual behaviour?
-- Which observation window was unusual?
-- Which model evaluated the window?
-- What decision score did the model produce?
-- How many historical observations were used?
-- Which features were available for the evaluation?
-- Was an anomaly finding created?
-
-The system must preserve the evidence used to produce each result.
-
-**Important:** An anomaly is not automatically proof of malicious activity. It means the observed behaviour differs from the learned pattern and requires investigation.
-
-## 3. Scope boundaries
-
-### Implement in M22
-
-1. Local ML dependency and model integration.
-2. Per-device model training.
-3. Isolation Forest anomaly detection.
-4. Historical training-data selection.
-5. Inference on completed behavioural windows.
-6. Model lifecycle and training status.
-7. Anomaly result persistence.
-8. Duplicate-evaluation protection.
-9. Anomaly REST APIs.
-10. Integration with existing findings and alerts where supported.
-11. Anomalies frontend page.
-12. Model status and investigation information.
-13. Backend, frontend and integration tests.
-14. Performance verification and documentation.
-
-### Explicitly exclude
-
-- Local LLM integration.
-- AI-generated explanations.
-- AI Security Analyst.
-- LLM-based log or event sequence investigation.
-- Wazuh integration.
-- Automatic blocking, quarantine or IPS.
-- Cloud-hosted inference or training.
-- Mandatory GPU requirements.
-- Deep-learning models and autoencoders.
-- Multiple competing ML algorithms in this milestone.
-
-These belong to later milestones.
-
-## 4. ML algorithm selection
-
-Implement **Isolation Forest** as the primary anomaly-detection algorithm.
-
-Use the locally installed and maintained `scikit-learn` package, selecting a version compatible with the project's Python environment.
-
-Requirements:
-
-- Local CPU inference.
-- No external API.
-- No cloud dependency.
-- Reproducible model training.
-- Configurable model parameters.
-- Explicit model version and configuration.
-- Consistent feature ordering between training and inference.
-
-Start with a configurable implementation using parameters such as:
-
-| Parameter | Suggested default |
-|---|---:|
-| Algorithm | Isolation Forest |
-| Number of estimators | 100 |
-| Contamination | 0.02 |
-| Random state | 42 |
-| Maximum training windows | 1,440 |
-| Minimum training windows | 100 |
-| Model refresh interval | 30 new usable windows |
-
-These are starting defaults, not claims of optimal accuracy. Validate them with controlled data and document their limitations.
-
-Keep model construction behind a dedicated service or interface so the implementation can support additional algorithms in future milestones without rewriting the packet pipeline.
-
-Do not implement Isolation Forest, One-Class SVM and Autoencoders simultaneously. One correctly integrated and tested algorithm is preferable to several incomplete implementations.
-
-## 5. Training-data requirements
-
-Use the historical observations stored by M21 in `baseline_windows`.
-
-Do not train directly on raw packet payloads.
-
-Training must be device-specific wherever sufficient historical observations exist.
-
-### Eligibility
-
-A model must not become ready merely because a device has an `established` M21 profile.
-
-M21's established state begins at 30 windows. M22 should impose its own configurable minimum training-data requirement.
-
-Use a default minimum of 100 usable historical observation windows.
-
-Suggested model states:
-
-- `collecting_data`: insufficient historical observations.
-- `training`: model training is in progress.
-- `ready`: trained and available for inference.
-- `stale`: a refresh is due or the training dataset has changed materially.
-- `failed`: training or model initialization failed.
-- `disabled`: the model has been explicitly disabled.
-
-The API and frontend must distinguish these states.
-
-### Training-data selection
-
-1. Fetch a bounded number of recent historical observation windows for the selected device.
-2. Exclude the window currently being evaluated.
-3. Exclude previously identified anomalous windows from subsequent training where sufficient history is available.
-4. Never use future observations to score an earlier observation.
-5. Respect the M21 retention policy and available training history.
-6. Do not query an unlimited historical dataset into memory.
-7. Report the actual number of usable training windows.
-8. Handle insufficient data without fabricating a model.
-
-### Cold-start limitation
-
-During initial training, there is no trusted anomaly history.
-
-The initial dataset may therefore contain unusual activity that was not recognized earlier. Isolation Forest cannot guarantee that the initial training set is entirely benign.
-
-Document this cold-start limitation prominently.
-
-Do not claim that unsupervised learning can determine malicious intent or eliminate training-data poisoning.
-
-## 6. Feature engineering
-
-Use the nine M21 features as the starting point:
-
-| Feature | M21 source |
-|---|---|
-| `packet_count` | Packets per observation window |
-| `byte_count` | Total bytes |
-| `tcp_packets` | TCP count |
-| `udp_packets` | UDP count |
-| `icmp_packets` | ICMP count |
-| `dns_packets` | DNS count |
-| `unique_peers` | Distinct observed peers |
-| `unique_destination_ports` | Distinct destination ports |
-| `new_connections` | Conversation-key cardinality |
-
-Use actual stored observations and preserve the existing meanings of the metrics.
-
-### Missing-value handling
-
-M21 explicitly represents unmeasurable `new_connections` as `NULL`.
-
-Never replace missing data with zero without a documented reason.
-
-Implement a consistent per-device feature-selection and preprocessing strategy.
-
-For example:
-
-- Determine which features have sufficient usable historical observations.
-- Exclude features that are unavailable too frequently.
-- Use a documented imputation strategy for occasional missing values when a feature remains eligible.
-- Preserve the feature list and preprocessing configuration used by each model.
-- Use precisely the same preprocessing during inference.
-
-Do not change the order or meaning of features between training and inference.
-
-### Truncated cardinalities
-
-M21 may report `peers_truncated` or `ports_truncated`.
-
-These values represent lower bounds, not exact cardinalities.
-
-Do not silently treat them as exact measurements.
-
-Choose and document a consistent strategy for training and inference, such as excluding unreliable measurements or explicitly representing truncation.
-
-The model must receive equivalent feature semantics during both phases.
-
-## 7. Model training and lifecycle
-
-Implement a dedicated anomaly-detection module.
-
-Suggested organization:
-
-```text
-app/
-  anomaly_detection/
-    features.py
-    preprocessing.py
-    model.py
-    training.py
-    inference.py
-    lifecycle.py
-    store.py
-    engine.py
+# M23 — Local LLM Integration (Revised)
+
+**Version:** v0.0.23\
+**Base Version:** v0.0.22\
+**Status:** Planned\
+**Milestone Type:** Local AI Infrastructure\
+**Runtime:** Ollama\
+**Deployment:** Local-only, CPU/GPU inference\
+**Database Changes:** None
+
+## 1. Objective
+
+Implement the local LLM infrastructure required for future AI-powered security analysis in NetWatch AI.
+
+This milestone establishes a reliable connection between the backend and a locally hosted language model. It provides model availability checks, model listing, bounded test generation, configuration management, and frontend visibility.
+
+M23 is strictly an infrastructure milestone.
+
+Do not implement the AI Security Analyst, alert explanations, incident investigation, or sequence-based analysis yet. Those belong to later milestones.
+
+## 2. Mandatory Pre-Implementation Checks
+
+Before modifying code:
+
+1. Inspect the existing repository structure and M20–M22 implementation.
+2. Read:
+   - `docs/06_AI_Module.md`
+   - `docs/TODO.md`
+   - `docs/22_*`
+   - `docs/23_*`
+   - `docs/26_M22_ML_Anomaly_Detection.md`
+   - Existing Settings, API, frontend service, test, and quality-gate implementations.
+3. Confirm the actual Python environment and dependency versions.
+4. Confirm the current Git tag is `v0.0.22`.
+5. Confirm the existing frontend request timeout and API client behavior.
+6. Check the existing `ai_enabled` database setting and document how it differs from the new LLM configuration.
+7. Verify Ollama is installed and accessible before beginning implementation.
+
+### Required local runtime
+
+Use Ollama as the initial provider.
+
+Recommended starting model for the available hardware:
+
+- Model: `llama3.2:3b` or `qwen2.5:3b-instruct`
+- Quantization: Q4 where supported by the selected model
+- Context window: 4096 tokens
+- Local inference only
+
+The machine has approximately 4 GB of dedicated GPU VRAM and 16 GB system RAM. Do not assume that 7B–8B models will run efficiently alongside NetWatch AI.
+
+Configure Ollama's model directory using `OLLAMA_MODELS` to a local storage path outside the OneDrive-synchronised project directory.
+
+Before coding, verify:
+
+- Ollama is available on PATH.
+- Ollama service is running.
+- `GET http://127.0.0.1:11434/api/tags` returns successfully.
+- At least one compatible model is downloaded and listed.
+- A small test generation completes successfully.
+
+If these prerequisites cannot be met, stop and report the blocker. Do not silently replace live-runtime verification with mocked tests while claiming full integration.
+
+## 3. Architecture
+
+Implement a provider-independent AI infrastructure layer.
+
+```
+React Frontend
+      |
+      v
+FastAPI AI API
+      |
+      v
+AI Service
+      |
+      v
+Provider Adapter Interface
+      |
+      v
+Ollama Provider
+      |
+      v
+Local Ollama Runtime
+      |
+      v
+Local Language Model
 ```
 
-Adapt this layout to the existing repository conventions.
+The provider interface must allow another local inference runtime to be introduced later without rewriting the AI service or API.
 
-Responsibilities:
+Ollama is the only provider implemented in M23.
 
-- `features.py`: creates model-ready inputs from M21 windows.
-- `preprocessing.py`: handles feature eligibility, missing values and input consistency.
-- `model.py`: constructs and configures Isolation Forest.
-- `training.py`: loads historical observations and trains models.
-- `inference.py`: evaluates new completed windows.
-- `lifecycle.py`: manages model states, freshness and refresh.
-- `store.py`: persists model metadata and anomaly outcomes.
-- `engine.py`: connects the components to the existing runtime pipeline.
+No external cloud LLM provider.
 
-### Model caching
+## 4. Configuration
 
-Do not train an Isolation Forest for every packet or every API request.
+Add the following configuration to the existing Pydantic Settings implementation.
 
-Use a bounded model cache.
+Suggested settings:
 
-Requirements:
-
-- One logical model per device identity.
-- Configurable cache size.
-- Deterministic cache eviction.
-- Model reuse between inference requests.
-- Controlled retraining.
-- No model-cache growth without limits.
-
-### Retraining
-
-Use a configurable refresh interval, initially 30 new usable windows.
-
-Retraining must:
-
-- Use fresh eligible historical data.
-- Exclude the window being evaluated.
-- Exclude previously flagged anomalous windows where practical.
-- Preserve the previous working model if a refresh fails.
-- Report training failures.
-- Avoid blocking packet capture.
-
-Do not retrain the complete model after every packet.
-
-### Restart behaviour
-
-Do not require unsafe Python pickle files to be committed to the repository or loaded from untrusted paths.
-
-A practical initial design is:
-
-- Persist model metadata and configuration.
-- Reconstruct the model from retained observation windows when required after restart.
-- Retrain lazily or through a controlled startup/background mechanism.
-- Expose the model as unavailable until training successfully completes.
-
-If model persistence is introduced, document the security and compatibility implications and validate model artifacts before loading them.
-
-## 8. Completed-window inference
-
-The M21 engine aggregates observations over 60-second windows and flushes them in batches.
-
-M22 must evaluate **completed windows**, not individual packets.
-
-Inspect the actual M21 flush lifecycle and identify a reliable integration point.
+- `llm_enabled`: false by default
+- `llm_provider`: `ollama`
+- `llm_base_url`: `http://127.0.0.1:11434`
+- `llm_model`: operator-configured model name
+- `llm_timeout_seconds`: 60
+- `llm_health_timeout_seconds`: 3
+- `llm_max_concurrent_requests`: 1
+- `llm_max_prompt_chars`: bounded prompt size
+- `llm_max_output_tokens`: bounded output size
 
 Requirements:
 
-1. Receive a completed observation window.
-2. Identify the device and window using the stable M21 identity.
-3. Check whether the window has already been evaluated.
-4. Obtain a suitable historical training dataset.
-5. Load or train the device's model when eligible.
-6. Generate the feature vector.
-7. Apply the model's inference operation.
-8. Store the evaluation result.
-9. Create an anomaly finding only when the model classifies the window as anomalous.
-10. Continue monitoring without interrupting capture.
+1. Validate configuration shape at application startup.
+2. Validate that the provider is supported.
+3. Validate that URL configuration is syntactically valid.
+4. Validate positive timeout and resource-limit values.
+5. Validate that the configured model name is non-blank when LLM functionality is enabled.
+6. Do not check Ollama reachability during application startup.
+7. Runtime availability must be checked lazily through the AI status or generation endpoints.
 
-### Important: no self-training leakage
+**Critical:** An unavailable Ollama service must never prevent NetWatch AI from starting or monitoring network traffic.
 
-A window must never be part of the training dataset used to score itself.
+### Existing `ai_enabled` setting
 
-This must remain true even if M21 has already persisted the window before M22 performs inference.
+The existing API already exposes a mutable database-stored setting named `ai_enabled`.
 
-Use a strict historical cutoff based on device identity and window timestamp.
+Do not create two ambiguous switches.
 
-### Idempotency
+Document the distinction clearly:
 
-A completed window must not generate multiple anomaly records or multiple alerts because of:
+- `llm_enabled` is the authoritative configuration switch for M23 local LLM infrastructure.
+- The existing database-stored `ai_enabled` must not silently control the new LLM runtime.
+- Do not remove or change existing settings behavior without an explicit compatibility requirement.
 
-- A repeated flush.
-- A service retry.
-- Backend restart.
-- API pagination.
-- A WebSocket reconnect.
+Explain this distinction in the documentation and frontend.
 
-Use a stable uniqueness key such as device identity plus window start, with an appropriate model-version strategy.
+## 5. Backend Module Structure
 
-Repeated evaluation attempts must not create duplicate findings.
+Follow the existing single-responsibility module conventions.
 
-### Failure isolation
+Suggested structure:
 
-M22 must be an additional pipeline consumer.
+```
+backend/app/ai/
+    __init__.py
+    exceptions.py
+    schemas.py
+    client.py
+    service.py
+    health.py
 
-An ML failure must not stop:
-
-- Packet capture.
-- Packet processing.
-- Statistics collection.
-- M21 baseline learning.
-- Existing deterministic detection.
-- Alert processing.
-
-Handle model errors explicitly and report them using existing logging and monitoring conventions.
-
-## 9. Anomaly scoring and interpretation
-
-Use Isolation Forest's actual output.
-
-The implementation should retain the raw model decision score and classification.
-
-Remember:
-
-- `predict()` classifies samples as inliers or outliers.
-- `decision_function()` produces a decision score.
-- A lower decision score represents more unusual behaviour.
-- The decision score is not a probability.
-- The model's output is not proof of a cyberattack.
-
-Expose fields such as:
-
-```text
-device_key
-window_start
-window_seconds
-algorithm
-model_version
-model_trained_at
-training_sample_count
-feature_names
-decision_score
-is_anomaly
-contamination
-created_at
+    providers/
+        __init__.py
+        base.py
+        ollama.py
 ```
 
-Do not call the raw Isolation Forest score a probability or calibrated confidence.
+Implement:
 
-Do not invent a probability such as 95% malicious.
+- Provider interface and common response schemas.
+- Ollama HTTP adapter.
+- AI service abstraction.
+- Runtime health checking.
+- Model listing.
+- Test generation.
+- Error handling and sanitisation.
+- Service factory and reset function.
 
-If a display score is derived or normalized, document the exact transformation and distinguish it from the raw model output.
+Follow the M22 factory convention where appropriate:
 
-### Feature context
+- `get_ai_service()`
+- `reset_ai_service()`
 
-Provide useful evidence for investigation.
+Reuse existing project conventions for errors, response envelopes, logging, and dependency injection.
 
-The system may compare an evaluated window against the corresponding M21 statistical profile.
+### Dependency management
 
-For each available feature, provide useful context such as:
+`httpx` version 0.28.1 is already installed but currently declared under the testing dependency group.
 
-- Observed value.
-- Baseline median.
-- MAD or scaled MAD.
-- Difference from the baseline median.
-- Whether the feature is missing or truncated.
+Promote it to the appropriate production dependency section because the Ollama adapter requires it at runtime.
 
-Clearly distinguish these statistical comparisons from actual Isolation Forest feature attribution.
+Do not introduce unnecessary dependencies.
 
-Do not claim that Isolation Forest identifies a particular feature as the cause of a prediction unless a validated explanation method is implemented.
+## 6. Runtime and Threading Requirements
 
-## 10. Anomaly persistence
+M23 must be request-driven.
 
-Add suitable SQLAlchemy models and SQLite tables for M22.
+Do not create:
 
-At minimum, persist:
+- A background LLM worker.
+- A polling thread.
+- A model-refresh scheduler.
+- A packet-capture integration.
+- An application lifespan startup task for LLM inference.
 
-1. Model metadata and lifecycle information.
-2. Anomaly evaluation outcomes.
+Inference must happen only when an authorised API request explicitly invokes it.
 
-An evaluation record should contain enough information to reproduce or inspect the decision:
+This means no LLM operation can run on the packet-capture or packet-processing thread.
 
-- Stable device identity.
-- Observation-window timestamp.
-- Algorithm and model version.
-- Raw decision score.
-- Classification.
-- Model training sample count.
-- Model configuration.
-- Feature-schema version.
-- Evaluation timestamp.
-- Evaluation status or skip reason when applicable.
+An Ollama failure, timeout, or model-loading delay must not affect packet capture, rule detection, anomaly detection, alert generation, or existing APIs.
 
-Store feature context only when it is useful and bounded.
+## 7. Resource and Concurrency Controls
 
-Avoid storing packet payloads, credentials, or unnecessary network-identifying details.
-
-Use suitable uniqueness constraints and indexes.
-
-Preserve M21's two baseline tables and their data model. Do not modify M21 observations simply to mark something as an anomaly.
-
-### Retention
-
-Introduce a configurable anomaly-record retention policy.
-
-Use an appropriate default, for example 30 days, subject to the existing retention architecture.
-
-Use the established M19 retention-sweeper pattern, with:
-
-- Bounded deletion per run.
-- Failure isolation.
-- A clear outcome.
-- No blocking of packet capture.
-- Correct shutdown behaviour.
-
-Document whether model metadata is retained after anomaly history expires.
-
-## 11. Findings and alert integration
-
-M22 should integrate genuine ML anomaly findings into the existing detection and alert architecture where the existing contracts support it.
-
-Inspect the real M10, M11 and M12 implementations first.
+Implement bounded resource usage.
 
 Requirements:
 
-- Preserve all existing deterministic detection rules.
-- Do not alter their thresholds or behaviour.
-- Identify ML-generated findings using a distinct detector source, such as `ml_anomaly`.
-- Keep the underlying model evidence linked to the finding.
-- Use existing alert lifecycle operations.
-- Avoid generating repeated alerts for the same device and observation window.
-- Apply a transparent severity policy if the current alert contract requires severity.
-- Do not describe anomaly scores as alert confidence or probability.
-- Make model-unavailable and insufficient-data states distinguishable from normal behaviour.
+1. Maximum concurrent LLM requests defaults to one.
+2. Use a `threading.BoundedSemaphore` or an equivalent safe mechanism.
+3. Do not queue unlimited generation requests.
+4. If the service is busy, reject the request with HTTP `409 CONFLICT`.
+5. Use a short semaphore-acquisition timeout.
+6. Enforce backend generation timeout.
+7. Enforce prompt length and output token limits.
+8. Ensure HTTP connections close correctly.
+9. Avoid unbounded response buffering.
+10. Do not allow model configuration to be overridden by individual API requests.
 
-Do not silently rewrite M12's deterministic risk-scoring methodology.
+Health checks and generation requests must have separate timeouts:
 
-If an ML finding enters incident correlation and changes an incident risk score through existing rules, document exactly how that occurs.
+- Health check: approximately 2–3 seconds.
+- Generation: approximately 60 seconds.
 
-An anomaly record should remain available even when alert creation is deduplicated or unavailable.
+## 8. Ollama Provider
 
-**No automatic blocking, quarantine, or traffic modification.** The operator retains control.
+Implement the Ollama adapter using its local HTTP API.
 
-## 12. REST API
+Required operations:
 
-Add API endpoints under `/api/v1`, following the project's existing response envelopes, validation and pagination conventions.
+- Check runtime availability.
+- Retrieve installed models through `GET /api/tags`.
+- Generate text through the Ollama generation endpoint.
+- Handle connection failures.
+- Handle timeout errors.
+- Handle missing models.
+- Handle malformed responses.
+- Sanitize provider errors before returning them to the frontend.
 
-Suggested endpoints:
+`/api/models` must return actual installed models from Ollama. Do not fabricate model entries or return a hardcoded model list.
 
-```http
-GET  /api/v1/anomalies
-GET  /api/v1/anomalies/{id}
-GET  /api/v1/anomalies/models
-GET  /api/v1/anomalies/models/{device_key}
-POST /api/v1/anomalies/models/{device_key}/retrain
-```
+Do not automatically download or pull models.
 
-Adapt endpoint naming to existing conventions where necessary.
+The operator must explicitly install and select a model.
 
-### Anomaly listing
+Do not expose internal filesystem paths, sensitive URLs, stack traces, or raw provider errors to the frontend.
 
-Support:
+## 9. REST API
 
-- Pagination.
-- Device filtering.
-- Anomaly classification filtering.
-- Time-range filtering.
-- Model and algorithm information.
-- Newest-first ordering.
+Create:
 
-### Individual anomaly detail
+`backend/app/api/v1/ai.py`
+
+Implement the following endpoints.
+
+### GET `/api/v1/ai/status`
 
 Return:
 
-- Device identity.
-- Evaluated window.
-- Anomaly classification.
-- Raw model score.
-- Model metadata.
-- Training sample count.
-- Available feature context.
-- Linked finding or alert, when one exists.
+- Whether LLM functionality is enabled.
+- Configured provider.
+- Configured model.
+- Runtime availability.
+- Model availability.
+- Current state.
+- A safe diagnostic message.
 
-### Model listing and details
+Use a consistent state vocabulary:
 
-Expose:
+- `disabled`
+- `unreachable`
+- `model_missing`
+- `ready`
 
-- Device identity.
-- Model lifecycle state.
-- Algorithm.
-- Model version.
-- Training sample count.
-- Last trained timestamp.
-- Last evaluated timestamp.
-- Available feature list.
-- Next refresh status, if applicable.
-- Failure or unavailable reason where safe.
+Return HTTP `200` when the feature is disabled, with `enabled: false` and state `disabled`.
 
-### Manual retraining
+Do not return `503` merely because the feature is disabled.
 
-Provide a controlled device-level retraining operation.
+Health checks must use the short health timeout, not the generation timeout.
+
+### GET `/api/v1/ai/models`
+
+Return the actual installed Ollama models.
+
+Include relevant model metadata when available.
+
+Handle unavailable runtime responses safely.
+
+### POST `/api/v1/ai/test`
+
+Provide a bounded test-generation endpoint.
 
 Requirements:
 
-- Validate device identity.
-- Require sufficient historical samples.
-- Avoid concurrent duplicate training requests.
-- Preserve the previous working model if training fails.
-- Return a clear operation result.
-- Never reset M21 behavioural history.
+- Accept a JSON request body validated through Pydantic.
+- Enforce prompt `max_length`.
+- Use the configured model, not a client-supplied model.
+- Enforce output limits.
+- Enforce generation timeout.
+- Return generated text and safe metadata.
+- Return `503` if the LLM feature is disabled or runtime/model is unavailable.
+- Return `409` when concurrency capacity is exhausted.
+- Return safe error responses for timeouts and provider failures.
 
-Use the established HTTP status codes and error envelopes.
+Include a clear disclaimer that this is a local model test, not a security verdict.
 
-Do not expose private file paths, stack traces, database paths or secrets.
+## 10. Security Requirements
 
-Verify all new response shapes against the running backend before implementing frontend assumptions.
+The local LLM integration must follow strict boundaries.
 
-## 13. Frontend — Anomalies
+- No cloud fallback.
+- No automatic model downloads.
+- No arbitrary provider URL supplied by the user.
+- No model override through API requests.
+- No shell command execution.
+- No filesystem access through generated prompts.
+- No direct database access.
+- No automatic remediation.
+- No automatic network blocking.
+- No raw packet payloads.
+- No unnecessary sensitive network information.
+- No unrestricted prompt or output size.
 
-Add a dedicated **Anomalies** page to the existing React/TypeScript application.
+Treat all model output as untrusted text.
 
-Use the existing component design, API service layer, typed models, hooks, page boundaries, navigation and error-handling patterns.
+Add security regression tests for:
 
-The page should display:
+1. `llm_base_url` cannot be overridden per request.
+2. `llm_model` cannot be attacker-selected through the test endpoint.
+3. Provider errors do not leak internal URLs or filesystem paths.
+4. Oversized prompts are rejected.
+5. Disabled LLM functionality cannot invoke generation.
+6. No cloud provider or fallback path is used.
 
-- Anomaly count.
-- Affected devices.
-- Recent anomalous observation windows.
-- Device identity.
-- Detection time.
-- Isolation Forest classification.
-- Raw decision score.
-- Model readiness.
-- Training sample count.
-- Linked alerts or incidents where available.
+Extend the dedicated `test_security_regression.py` suite, not only the general backend tests.
 
-Add filters for device, time range and classification.
+## 11. Frontend Integration
 
-Provide a device-level model detail view showing training and lifecycle information.
+Create an AI Configuration page.
 
-### Investigation context
+Follow the existing frontend architecture and conventions.
 
-For an individual anomaly, display available feature context alongside M21's historical statistical values.
+Expected files or equivalents:
 
-Keep raw model decisions and baseline comparisons visually distinct.
-
-The UI must not claim that an anomaly is necessarily malicious.
-
-Display an explicit explanation such as:
-
-"An anomaly indicates a deviation from previously observed network behaviour. It is not confirmation of malicious activity."
-
-### Model status
-
-Clearly represent:
-
-- Collecting data.
-- Insufficient training samples.
-- Training.
-- Ready.
-- Stale.
-- Failed.
-- Disabled.
-
-An insufficient-data model must never be displayed as healthy or normal.
-
-### Frontend states
-
-Handle:
-
-- No anomalies.
-- No models ready.
-- Devices still collecting baseline samples.
-- Model training.
-- Model unavailable.
-- Model failure.
-- API unavailable.
-- Empty historical results.
-- Loading and pagination.
-- Stale model information.
-- Retraining in progress.
-- Retraining success and failure.
-
-Use real backend data only.
-
-Do not create fabricated demo anomalies in the production interface.
-
-## 14. Performance and reliability
-
-The new ML functionality must not make the existing packet pipeline unreliable.
-
-Verify:
-
-- Capture is not blocked by model training.
-- Model inference occurs on completed windows only.
-- Training does not run for every packet.
-- The model cache is bounded.
-- Training datasets are bounded.
-- Inference input sizes are bounded.
-- Model refresh is controlled.
-- Database writes are batched or appropriately managed.
-- Duplicate evaluation is prevented.
-- Database failures are isolated.
-- Model failures do not stop M21.
-- Restart recovery works.
-- Anomaly retention works.
-- Existing capture, statistics, detections, alerts, incidents and reporting remain functional.
-
-Measure actual CPU and memory impact during controlled local capture.
-
-Do not claim high throughput, enterprise-scale capacity or production accuracy based solely on development-machine tests.
-
-## 15. Testing
-
-### Backend tests
-
-Add tests for at least:
-
-1. Isolation Forest initialization.
-2. Deterministic model configuration.
-3. Feature-vector construction.
-4. Consistent feature ordering.
-5. Missing-value handling.
-6. Truncated cardinality handling.
-7. Minimum training sample requirements.
-8. Training-data selection by device.
-9. Historical time cutoff.
-10. Exclusion of the evaluated window from training.
-11. Exclusion of previously flagged anomalies where supported.
-12. Inference on known normal synthetic data.
-13. Inference on deliberately unusual synthetic data.
-14. Raw decision-score handling.
-15. Correct anomaly classification.
-16. No probability claims in output fields.
-17. Model lifecycle transitions.
-18. Retraining interval.
-19. Failed retraining preserves the previous model.
-20. Bounded model caching.
-21. Model recreation after backend restart.
-22. Duplicate evaluation prevention.
-23. Repeated flush idempotency.
-24. Anomaly persistence.
-25. API pagination and filters.
-26. API validation and error envelopes.
-27. Manual retraining.
-28. Anomaly retention.
-29. Database failure isolation.
-30. Model failure isolation.
-31. Existing M0–M21 regression behaviour.
-
-Use deterministic synthetic test datasets. Do not depend on internet access or external datasets.
-
-### Frontend tests
-
-Test:
-
-- Anomaly listing.
-- Empty results.
-- Filters and pagination.
-- Device detail.
-- Model lifecycle statuses.
-- Insufficient training data.
-- Raw decision-score display.
-- Feature-context presentation.
-- Linked alerts and incidents.
-- Retraining confirmation.
-- Retraining success and failure.
-- API-unavailable state.
-- Anomaly disclaimer.
-- Correct navigation.
-
-### Integration tests
-
-Demonstrate:
-
-```text
-Start backend
-    ↓
-Start authorized packet capture
-    ↓
-M21 receives normalized packets
-    ↓
-M21 aggregates behavioural windows
-    ↓
-M21 persists historical samples
-    ↓
-M22 verifies training eligibility
-    ↓
-M22 trains the device-specific Isolation Forest
-    ↓
-A new completed window arrives
-    ↓
-M22 excludes the current window from training
-    ↓
-M22 evaluates the window
-    ↓
-Anomaly outcome is persisted
-    ↓
-Anomalous result creates a finding when appropriate
-    ↓
-Existing alert and incident pipeline processes it
-    ↓
-Frontend displays the actual result
+```
+frontend/src/
+    types/ai.ts
+    services/ai.ts
+    hooks/useAiStatus.ts
+    hooks/useAiTest.ts
+    pages/AIConfiguration.tsx
 ```
 
-Also verify:
+Also update:
 
-- A device with insufficient training history does not receive a fabricated prediction.
-- A normal window is not automatically labelled anomalous.
-- An unusual controlled test window can be detected when the trained model supports that distinction.
-- Reprocessing the same window does not duplicate outcomes.
-- A model failure does not interrupt capture or M21 learning.
+- API path definitions.
+- Service exports.
+- `App.tsx` page union and route/switch.
+- Sidebar navigation.
+- Relevant frontend tests.
 
-Use authorized local traffic and controlled synthetic data.
+The page must display:
 
-## 16. Model evaluation and honest reporting
+- LLM enabled/disabled state.
+- Provider.
+- Configured model.
+- Ollama availability.
+- Model availability.
+- Installed models.
+- Safe diagnostic messages.
+- Test prompt input.
+- Generated test output.
+- Loading and error states.
 
-There is no established labelled production dataset in the current project.
+### Frontend timeout correction
 
-Therefore:
+The existing frontend API client has a default timeout of 15 seconds.
 
-- Do not claim a real-world accuracy percentage.
-- Do not claim a false-positive rate without labelled evaluation data.
-- Do not claim precision or recall based on synthetic tests alone.
-- Do not describe Isolation Forest decision scores as probabilities.
-- Do not claim that every anomaly represents an attack.
+A 60-second backend generation timeout conflicts with that default.
 
-Record:
+The test-generation service must explicitly pass a request timeout greater than the backend timeout, with a reasonable margin.
 
-- Number of training samples.
-- Number of test samples.
-- Synthetic scenarios evaluated.
-- Detected injected anomalies.
-- Normal scenarios tested.
-- Cases the model missed.
-- Cases where model output was unstable.
-- CPU and memory measurements.
+Use the existing `WriteRequestOptions.timeoutMs` mechanism rather than changing every API request globally.
 
-Include the model configuration and random seed so tests can be reproduced.
+The UI must distinguish:
 
-## 17. Quality gates
+- Checking runtime.
+- Loading model.
+- Generating response.
+- Request timeout.
+- Runtime unavailable.
+- Model missing.
 
-Preserve all M0–M21 quality gates.
+Do not let the frontend abort a legitimate cold model load at 15 seconds.
 
-Run the full backend quality gate:
+A runtime-unreachable page must not be considered complete merely because it renders. Test its actual status and failure behavior.
 
-```powershell
-python backend/scripts/run_quality_gates.py --full
-```
+## 12. Contract and Regression Tests
 
-Run the frontend verification:
+Extend the existing API contract tests.
 
-```powershell
-cd frontend
-npm test
-npm run test:live
-npm run typecheck
-npm run build
-```
+In `test_api_contract.py`:
 
-Verify that the Python dependencies work in the project's supported Python environment.
+- Add `/api/v1/ai` to `EXPECTED_PREFIXES`.
+- Add `/api/v1/ai/status` to `COLLECTION_URLS`.
+- Ensure new endpoints are included in the response-envelope checks.
+- Ensure documented operations include summaries.
+- Ensure every operation declares a response.
 
-Add required security
+Add backend tests for:
+
+- Disabled configuration.
+- Runtime unavailable.
+- Model missing.
+- Runtime ready.
+- Health timeout.
+- Generation timeout.
+- Successful generation.
+- Provider failure.
+- Prompt-size enforcement.
+- Output limits.
+- Concurrency rejection.
+- Error sanitisation.
+- No model override.
+- No URL override.
+- Service factory behavior.
+
+Use mocks for deterministic unit tests.
+
+However, mocks must not be presented as proof of live Ollama integration.
+
+## 13. Live Runtime Verification
+
+Live integration verification is mandatory for a complete M23 release.
+
+After implementation, verify the following six states and record the actual result of each:
+
+1. LLM disabled.
+2. LLM enabled, but Ollama unreachable.
+3. Ollama reachable, but configured model missing.
+4. Ollama reachable with the configured model installed.
+5. Successful real generation through the backend API.
+6. Successful generation through the frontend UI.
+
+Also verify that:
+
+- The application starts when Ollama is unavailable.
+- Existing packet capture still operates.
+- Existing rule and ML detection still operate.
+- A generation timeout does not affect monitoring.
+- A second concurrent generation request is rejected safely.
+
+Do not mark a live test as passed if it was only mocked.
+
+Do not silently skip required runtime tests.
+
+If any state cannot be verified, report it as incomplete and do not claim full M23 acceptance.
+
+## 14. Documentation
+
+Create:
+
+`docs/27_M23_Local_LLM_Integration.md`
+
+Do not use `docs/26` because it is already occupied by M22.
+
+Update:
+
+- README.
+- `docs/06_AI_Module.md`, especially the existing §35 implementation structure.
+- Relevant architecture documentation.
+- `docs/TODO.md` milestone status.
+
+Documentation must explain:
+
+- Ollama installation.
+- Local model installation.
+- `OLLAMA_MODELS` configuration.
+- Recommended 3B model configuration.
+- Hardware limitations.
+- Configuration variables.
+- API endpoints.
+- Runtime states.
+- Security boundaries.
+- Resource controls.
+- Troubleshooting.
+- Verified and unverified tests.
+
+Explain that 7B–8B models may exceed the available VRAM and can cause substantial CPU offloading and poor generation performance.
+
+Update documentation in the same commit as the implementation so it never describes a structure that does not exist.
+
+## 15. Quality Gates
+
+Run the repository's established quality gates.
+
+Required:
+
+- Full backend test suite.
+- Security regression suite.
+- Pyright.
+- Frontend unit tests.
+- Frontend type checking.
+- Frontend production build.
+- API contract tests.
+- Live Ollama integration tests.
+- Manual end-to-end frontend verification.
+
+Record actual test counts and results.
+
+Do not copy historical M22 results and present them as fresh M23 results.
+
+Do not weaken existing quality gates, delete tests, or silently skip failures.
+
+## 16. Explicitly Out of Scope
+
+Do not implement:
+
+- AI Security Analyst.
+- AI-generated alert explanations.
+- Incident investigation.
+- Sequence-by-sequence event analysis.
+- Intelligent log analysis.
+- MITRE ATT&CK mapping.
+- Wazuh integration.
+- Automatic network blocking.
+- Automatic remediation.
+- Cloud LLM APIs.
+- Model fine-tuning.
+- Deep learning anomaly detection.
+- Additional ML algorithms.
+
+These belong to later milestones.
+
+## 17. Completion Criteria
+
+M23 is complete only when:
+
+1. Ollama is installed and verified locally.
+2. At least one compatible model is installed.
+3. Provider adapter architecture is implemented.
+4. Local runtime health checking works.
+5. Installed model listing works.
+6. Real test generation works.
+7. Backend resource and concurrency limits work.
+8. Frontend AI Configuration page works.
+9. Frontend timeout is compatible with backend generation.
+10. Application startup is independent of Ollama availability.
+11. Security regression tests pass.
+12. API contract tests cover the new endpoints.
+13. Existing functionality remains unaffected.
+14. Documentation is updated.
+15. All quality gates pass.
+16. Live runtime verification is honestly recorded.
+
+Create the Git tag:
+
+`v0.0.23`
+
+Do not tag the milestone as complete while mandatory live-runtime acceptance criteria remain unverified.
+
+## 18. Final Implementation Report
+
+After implementation, provide:
+
+1. Summary of completed work.
+2. Final backend file structure.
+3. Frontend files created or modified.
+4. Configuration variables.
+5. Ollama model and runtime details.
+6. API endpoint results.
+7. Six live-runtime verification results.
+8. Security regression results.
+9. Backend and frontend test counts.
+10. Pyright, typecheck, and build results.
+11. Confirmation that existing network monitoring remains functional.
+12. Documentation changes.
+13. Git commit and tag details.
+14. Known limitations and remaining issues.
+
+Clearly distinguish mocked tests from real Ollama integration tests.
+
+Do not claim successful live inference unless an actual generation was performed.
+
+---
+
+**Final instruction:** Implement M23 only. Preserve all existing M20–M22 behavior. Do not begin M24 until M23 has been implemented, tested, documented, and honestly verified.
+
+**Key changes from the original prompt:**
+
+- Ollama installation and a real model are now prerequisites.
+- The 15-second frontend timeout is addressed.
+- The documentation filename is corrected to `docs/27`.
+- The existing `ai_enabled` setting conflict is explicitly handled.
+- Startup validates configuration but does not require Ollama to be reachable.
+- Health and generation timeouts are separated.
+- Concurrent requests are rejected rather than queued.
+- API contract and security regression suites are explicitly extended.
+- Live Ollama tests cannot be replaced by mocked tests.

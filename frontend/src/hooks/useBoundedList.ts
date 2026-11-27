@@ -27,8 +27,13 @@ import { useCallback, useState } from 'react'
 /** Lowest capacity accepted, so a mistyped `0` cannot hide every row. */
 export const MIN_BOUNDED_CAPACITY = 1
 
-/** Normalise a capacity to a usable integer. */
-function normaliseCapacity(capacity: number): number {
+/**
+ * Normalise a capacity to a usable integer.
+ *
+ * Exported so a buffer that lives outside React applies the same rule as these
+ * hooks, rather than re-deriving it and drifting.
+ */
+export function normaliseCapacity(capacity: number): number {
   if (!Number.isFinite(capacity)) return MIN_BOUNDED_CAPACITY
   return Math.max(MIN_BOUNDED_CAPACITY, Math.floor(capacity))
 }

@@ -45,6 +45,7 @@ const TITLES: Readonly<Record<Page, string>> = {
   'reports': 'Reports',
   'notifications': 'Notifications',
   'system': 'System',
+  'ai-configuration': 'AI Configuration',
   'settings': 'Settings',
 }
 

@@ -41,6 +41,18 @@ reportlab>=4.0.0
 # only the M22 page reports itself unavailable.
 scikit-learn>=1.5.0
 
+# HTTP client for the local LLM adapter (M23). ``app.ai.providers.ollama`` speaks
+# Ollama's local HTTP API through ``httpx``: one pooled client for the adapter's
+# lifetime, and a **per-call** timeout, so the short health budget (3 s) and the
+# long generation budget (60 s) are genuinely different numbers rather than one
+# shared setting. That split is what stops a status check from hanging for a
+# minute against a stopped runtime.
+#
+# This was previously a testing-only dependency, because FastAPI's TestClient is
+# built on it. M23 promotes it to production because production code now imports
+# it; the testing section below keeps listing it as the suites' own requirement.
+httpx>=0.27.0
+
 # Testing
 pytest>=8.0.0
 httpx>=0.27.0

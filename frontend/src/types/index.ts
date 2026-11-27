@@ -169,6 +169,23 @@ export type {
   FeatureContext,
 } from './anomaly'
 
+/**
+ * Local LLM models (M23.11).
+ *
+ * `AiState` and its three helpers are values, not types, so they are exported
+ * separately — `isAiState` is what narrows a string from a payload, and a page
+ * uses it rather than casting.
+ */
+export type {
+  AiModel,
+  AiModelList,
+  AiState,
+  AiStatus,
+  AiTestRequest,
+  AiTestResult,
+} from './ai'
+export { AI_STATES, isAiReady, isAiState } from './ai'
+
 export type {
   DatabaseState,
   GeneratedReport,

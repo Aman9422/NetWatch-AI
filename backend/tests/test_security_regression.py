@@ -65,6 +65,7 @@ import csv
 import io
 import re
 from collections.abc import Callable, Generator, Iterable
+from contextlib import contextmanager
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -74,7 +75,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
+from app.ai.exceptions import REASON_PROVIDER_ERROR, LlmGenerationError
+from app.ai.providers import GenerationOptions, build_provider
+from app.ai.schemas import AiTestRequest
 from app.analytics.service import AnalyticsService
+from app.api.v1.ai import get_service as get_ai_service
 from app.api.v1.deps import get_analytics_service, get_report_service
 from app.database.session import get_db
 from app.reports.content import Metric, ReportContent, ReportSection, ReportTable
@@ -87,6 +92,7 @@ from app.reports.csv_renderer import (
 from app.reports.pdf_renderer import _paragraph, _styles, render_pdf
 from app.reports.service import ReportService
 from app.reports.storage import ReportStorage
+from tests.ai_fakes import FakeProvider, make_service
 from tests.m13_fakes import api_client, make_db_override
 
 REPORTS_URL = "/api/v1/reports"
@@ -721,3 +727,223 @@ def test_every_refusal_reports_a_sentence_rather_than_an_exception(
     wrong_verb = client.delete("/api/v1/alerts")
     assert wrong_verb.status_code == 405
     assert not leaks_internals(wrong_verb.text)
+
+
+# ---------------------------------------------------------------------------
+# Local LLM surface (M23.10) -- an untrusted process behind a closed schema
+# ---------------------------------------------------------------------------
+#
+# The M23 runtime is a separate process on the same machine, so it is treated as
+# untrusted: the request schema has no field that could choose a model or a host,
+# a prompt is bounded, and a provider's own error text stops at the log. These
+# cases pin each of those, and each was listed by the milestone's security scope
+# while living only in the AI suite.
+
+#: The AI surface, named once so every case below sends the same request.
+AI_TEST_URL = "/api/v1/ai/test"
+AI_STATUS_URL = "/api/v1/ai/status"
+
+
+@contextmanager
+def ai_client(service: object) -> Generator[TestClient, None, None]:
+    """Yield a client whose AI routes resolve ``service`` (M23.10).
+
+    Only the service dependency is overridden: the AI routes touch no database.
+    :func:`api_client` still sets ``app_env`` to ``"test"``, so the lifespan never
+    reaches the developer's real database.
+    """
+    with api_client({get_ai_service: lambda: service}) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def ai_ready() -> Generator[tuple[TestClient, FakeProvider], None, None]:
+    """A client over a fake runtime that is reachable and holds the model."""
+    provider = FakeProvider()
+    with ai_client(make_service(provider)) as test_client:
+        yield test_client, provider
+
+
+def test_the_test_request_schema_has_exactly_one_field() -> None:
+    """No host, model, timeout or context may be supplied by a caller (M23.10).
+
+    Asserted on the *type* rather than on a request, because this is the primary
+    control: a field added to :class:`AiTestRequest` later would let a client pick
+    a model or a host, and this fails the moment it does. Enforcing it in the
+    schema leaves no rule for a route to forget.
+    """
+    assert set(AiTestRequest.model_fields) == {"prompt"}
+
+
+def test_the_generation_options_carry_no_model_or_host() -> None:
+    """The request built for a provider cannot name a model or an address.
+
+    :class:`GenerationOptions` is assembled by the service from configuration. A
+    ``model`` or ``base_url`` field here would let a value from a request ride
+    into a generation, so the field set is the proof that it cannot.
+    """
+    assert set(GenerationOptions.__dataclass_fields__) == {
+        "prompt",
+        "max_output_tokens",
+        "temperature",
+        "stop",
+    }
+
+
+def test_a_body_cannot_redirect_the_runtime(
+    ai_ready: tuple[TestClient, FakeProvider],
+) -> None:
+    """A caller-supplied ``base_url`` is ignored, not obeyed (M23.10).
+
+    The body carries fields a naive implementation might honour. The reply must
+    come from the configured service, the provider must have been called exactly
+    once, and the prompt it received must be the prompt alone.
+    """
+    client, provider = ai_ready
+
+    response = client.post(
+        AI_TEST_URL,
+        json={
+            "prompt": "hello",
+            "base_url": "http://attacker.example:11434",
+            "host": "attacker.example",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["response"] == provider.reply
+    assert provider.generate_calls == 1
+    assert provider.last_options is not None
+    assert provider.last_options.prompt == "hello"
+    assert "attacker.example" not in response.text
+
+
+def test_a_body_cannot_select_another_model(
+    ai_ready: tuple[TestClient, FakeProvider],
+) -> None:
+    """A caller-supplied ``model`` does not change which model ran (M23.10).
+
+    The payload echoes the *configured* model, the requested one appears nowhere
+    in the response, and the options handed to the provider carry no model at all
+    -- the provider already holds it, from configuration.
+    """
+    client, provider = ai_ready
+
+    response = client.post(
+        AI_TEST_URL, json={"prompt": "hello", "model": "attacker:70b"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["model"] == "llama3.2:3b"
+    assert "attacker:70b" not in response.text
+    assert provider.last_options is not None
+    assert not hasattr(provider.last_options, "model")
+
+
+def test_no_ai_response_carries_a_path_or_a_secret() -> None:
+    """A provider's own error text is logged, never returned (M23.10/M13.30).
+
+    The detail a real runtime produces names the host and the model, and a
+    misconfigured one can name a file path. It is planted in ``detail`` here --
+    the field M23 defines as log-only -- and every response surface is checked for
+    it, including the status payload, which needs no generation at all.
+    """
+    leaky = "C:\\Users\\aman9\\secret.env api_key=sk-live-1234567890"
+    provider = FakeProvider()
+    provider.generate_error = LlmGenerationError(
+        "the runtime refused", reason=REASON_PROVIDER_ERROR, detail=leaky
+    )
+
+    with ai_client(make_service(provider)) as client:
+        generation = client.post(AI_TEST_URL, json={"prompt": "hello"})
+        status = client.get(AI_STATUS_URL)
+
+    assert generation.status_code == 503
+    for response in (generation, status):
+        assert "sk-live" not in response.text
+        assert "aman9" not in response.text
+        assert "secret.env" not in response.text
+        assert not leaks_internals(response.text)
+
+
+def test_an_oversized_prompt_is_refused_and_never_sent(
+    ai_ready: tuple[TestClient, FakeProvider],
+) -> None:
+    """A prompt over the configured limit is a 400, and no generation runs.
+
+    Refused rather than truncated: a silently shortened prompt would send
+    something the operator did not write and report a reply to a question nobody
+    asked. The provider must not be called at all, which is what makes the bound
+    real rather than nominal (M23.7).
+    """
+    client, provider = ai_ready
+
+    response = client.post(AI_TEST_URL, json={"prompt": "A" * 4_001})
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["success"] is False
+    assert body["errors"][0]["field"] == "prompt"
+    assert provider.generate_calls == 0
+
+
+def test_a_disabled_feature_generates_nothing() -> None:
+    """With ``llm_enabled`` false, the switch is enforced before any network call.
+
+    Not a fault and not a silent success either: the request is refused naming the
+    field that would fix it, the provider is never reached, and the status endpoint
+    still answers ``200`` saying the feature is off.
+    """
+    provider = FakeProvider()
+
+    with ai_client(make_service(provider, enabled=False)) as client:
+        generation = client.post(AI_TEST_URL, json={"prompt": "hello"})
+        status = client.get(AI_STATUS_URL)
+
+    assert generation.status_code == 503
+    assert generation.json()["errors"][0]["field"] == "llm_enabled"
+    assert provider.generate_calls == 0
+
+    assert status.status_code == 200
+    assert status.json()["data"]["state"] == "disabled"
+
+
+def test_a_failure_never_becomes_a_different_provider() -> None:
+    """Every failure path reports a failure; none falls back to another runtime.
+
+    A fallback -- to a cloud service above all -- is the one behaviour that would
+    make this milestone unsafe, so it is checked from both ends: the provider
+    registry refuses every name that is not a known local runtime, and a runtime
+    that is down produces a state rather than a reply from somewhere else.
+    """
+    for name in ("openai", "gemini", "anthropic", "claude", "bedrock", ""):
+        with pytest.raises(ValueError):
+            build_provider(
+                name=name, base_url="http://127.0.0.1:11434", model="x"
+            )
+
+    local = build_provider(
+        name="ollama", base_url="http://127.0.0.1:11434", model="x"
+    )
+    assert local.name == "ollama"
+    closer = getattr(local, "close", None)
+    if callable(closer):
+        closer()
+
+    unreachable = FakeProvider(reachable=False)
+    with ai_client(make_service(unreachable)) as client:
+        status = client.get(AI_STATUS_URL)
+        generation = client.post(AI_TEST_URL, json={"prompt": "hello"})
+
+    assert status.status_code == 200
+    assert status.json()["data"]["state"] == "unreachable"
+    assert status.json()["data"]["runtime_reachable"] is False
+
+    # The generation is refused, and the refusal carries no text at all. The
+    # provider *is* called -- the service is request-driven and asks lazily
+    # rather than caching a stale "down" -- but an unreachable runtime raises
+    # instead of answering, so there is no reply for a fallback to have produced.
+    assert generation.status_code == 503
+    assert generation.json()["success"] is False
+    assert "data" not in generation.json()
+    assert unreachable.reply not in generation.text

@@ -1,8 +1,33 @@
 """Application configuration for NetWatch AI."""
 
 from functools import lru_cache
+from urllib.parse import urlparse
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: The inference runtimes this application knows how to talk to (M23.3).
+#:
+#: One entry today. The vocabulary exists so an unsupported provider is refused at
+#: startup with a named field rather than failing on the first request, and so a
+#: second local runtime can be added here without the service or the API changing.
+SUPPORTED_LLM_PROVIDERS: tuple[str, ...] = ("ollama",)
+
+#: The largest prompt M23 will ever accept, in characters.
+#:
+#: A hard ceiling rather than a default: the value is validated against it at
+#: startup, so an operator cannot configure a prompt size that would let one
+#: request occupy the model for minutes. At roughly 4 characters per token this is
+#: ~2,000 tokens of prompt, which with a 4,096-token context leaves room for the
+#: reply (M23.7).
+MAX_LLM_PROMPT_CHARS = 8000
+
+#: The largest reply M23 will ever ask for, in tokens.
+#:
+#: Measured on the reference machine at ~56 tokens/second, so 512 tokens is
+#: ~9 seconds of generation — which combined with a ~9 second cold model load is
+#: what makes the documented 60-second budget sufficient rather than arbitrary.
+MAX_LLM_OUTPUT_TOKENS = 2048
 
 
 class Settings(BaseSettings):
@@ -413,6 +438,136 @@ class Settings(BaseSettings):
     # Default and maximum page size for anomaly listings (M22.12).
     anomaly_default_page_size: int = 100
     anomaly_max_page_size: int = 500
+
+    # Local LLM integration (M23)
+    # Master switch for the M23 infrastructure. **Disabled by default**, because a
+    # local model costs several gigabytes of RAM and minutes of an operator's
+    # attention: enabling it is a deliberate act, never a side effect of upgrading.
+    #
+    # ``llm_enabled`` is the authoritative switch for this runtime. The database
+    # row named ``ai_enabled`` that ``/api/v1/settings`` exposes is a *different*,
+    # older switch which this milestone does not read — see
+    # ``docs/27_M23_Local_LLM_Integration.md`` §5. Two similarly-named switches
+    # exist on purpose and neither silently controls the other.
+    llm_enabled: bool = False
+    # Which inference runtime to use. A closed vocabulary: an unsupported value is
+    # refused at startup rather than at the first request (M23.4).
+    llm_provider: str = "ollama"
+    # Where that runtime's HTTP API listens. Loopback by default and deliberately
+    # not overridable per request: a client cannot point this application at an
+    # arbitrary host (M23.10).
+    llm_base_url: str = "http://127.0.0.1:11434"
+    # The model an operator has installed and chosen. Blank means "not selected",
+    # which is a valid configuration while ``llm_enabled`` is false and a startup
+    # error once it is true — the service cannot guess which model to run, and
+    # picking one for the operator is exactly the automatic selection M23 forbids.
+    llm_model: str = ""
+    # Seconds a single generation may take. 60 is sized against measured
+    # behaviour rather than guessed: ~9 s to load a 3B model into 4 GB of VRAM and
+    # ~9 s to emit 512 tokens at ~56 tokens/second, leaving generous headroom on
+    # the reference machine (M23.7).
+    llm_timeout_seconds: float = 60.0
+    # Seconds a *health* probe may take. Distinct from the above and much shorter,
+    # because an unreachable host does not refuse a connection — it hangs until the
+    # timeout expires. Measured: a closed port produced ``URLError: timed out``
+    # rather than a refusal, so a status check using the generation budget would
+    # block for a minute to answer a question worth three seconds (M23.7).
+    llm_health_timeout_seconds: float = 3.0
+    # Most generations that may run at once. One is right for a 4 GB card: a second
+    # concurrent request would either evict the first model or queue behind it, and
+    # M23 refuses rather than queues (M23.7).
+    llm_max_concurrent_requests: int = 1
+    # Hardest ceiling on a prompt, in characters. Bounded by
+    # :data:`MAX_LLM_PROMPT_CHARS` at startup, so an operator can lower it but
+    # cannot raise it past the documented maximum (M23.7).
+    llm_max_prompt_chars: int = 4000
+    # Hardest ceiling on the reply, in tokens. Bounded by
+    # :data:`MAX_LLM_OUTPUT_TOKENS` for the same reason: this is what stops one
+    # request occupying the model for minutes.
+    llm_max_output_tokens: int = 512
+    # The context window requested from the runtime. Pinned rather than inherited:
+    # the reference model advertises a 131,072-token context, and a runtime left to
+    # its own default would size the KV cache from that — which is how a 2 GB model
+    # comes to exceed 4 GB of VRAM. 4096 keeps the resident footprint at the
+    # measured ~2.35 GB (M23.8).
+    llm_num_ctx: int = 4096
+    # How long the runtime is asked to keep the model resident after a request.
+    # Pinned for the same reason: with the model using ~2.35 GB of 4 GB, residency
+    # is a decision this application makes, not a runtime default that changes
+    # between versions. A short window keeps the second test fast without holding
+    # the card indefinitely (M23.8).
+    llm_keep_alive: str = "5m"
+
+    @model_validator(mode="after")
+    def _validate_llm_configuration(self) -> "Settings":
+        """Refuse an unusable LLM configuration at startup (M23.4).
+
+        **Shape only — never reachability.** An unreachable Ollama must not stop
+        NetWatch AI from starting, because capture, detection, alerting and every
+        existing API work without it (M23.4/M23.6). Whether the runtime is actually
+        listening is asked lazily, by ``/api/v1/ai/status`` and by a generation
+        request, and answered as a state rather than as a crash.
+
+        Raises:
+            ValueError: If the provider is unsupported, the base URL is not an
+                http(s) URL with a host, a timeout is not positive, a limit is not
+                positive or exceeds its documented ceiling, or LLM functionality is
+                enabled with no model selected.
+        """
+        provider = self.llm_provider.strip().lower()
+        if provider not in SUPPORTED_LLM_PROVIDERS:
+            raise ValueError(
+                f"llm_provider {self.llm_provider!r} is not supported; "
+                f"choose one of: {', '.join(SUPPORTED_LLM_PROVIDERS)}"
+            )
+        parsed = urlparse(self.llm_base_url.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError(
+                f"llm_base_url {self.llm_base_url!r} must be an absolute http(s) "
+                "URL with a host, e.g. http://127.0.0.1:11434"
+            )
+        if self.llm_timeout_seconds <= 0:
+            raise ValueError("llm_timeout_seconds must be greater than zero")
+        if self.llm_health_timeout_seconds <= 0:
+            raise ValueError("llm_health_timeout_seconds must be greater than zero")
+        if self.llm_health_timeout_seconds >= self.llm_timeout_seconds:
+            # A probe that may outlast a generation is not a probe. This is a
+            # configuration mistake worth naming rather than a preference.
+            raise ValueError(
+                "llm_health_timeout_seconds must be shorter than "
+                "llm_timeout_seconds"
+            )
+        if self.llm_max_concurrent_requests < 1:
+            raise ValueError("llm_max_concurrent_requests must be at least 1")
+        if not 1 <= self.llm_max_prompt_chars <= MAX_LLM_PROMPT_CHARS:
+            raise ValueError(
+                f"llm_max_prompt_chars must be between 1 and "
+                f"{MAX_LLM_PROMPT_CHARS}"
+            )
+        if not 1 <= self.llm_max_output_tokens <= MAX_LLM_OUTPUT_TOKENS:
+            raise ValueError(
+                f"llm_max_output_tokens must be between 1 and "
+                f"{MAX_LLM_OUTPUT_TOKENS}"
+            )
+        if self.llm_max_output_tokens >= self.llm_num_ctx:
+            # The reply has to fit in the context alongside the prompt; a budget
+            # that consumes the whole window leaves nothing to read it in.
+            raise ValueError(
+                "llm_max_output_tokens must be smaller than llm_num_ctx"
+            )
+        if self.llm_num_ctx < 512:
+            raise ValueError("llm_num_ctx must be at least 512")
+        if self.llm_enabled and not self.llm_model.strip():
+            raise ValueError(
+                "llm_model must be set when llm_enabled is true — install a model "
+                "with `ollama pull` and name it here; M23 never selects or "
+                "downloads one automatically"
+            )
+        # Normalised in place so every consumer reads the same spelling.
+        self.llm_provider = provider
+        self.llm_base_url = self.llm_base_url.strip().rstrip("/")
+        self.llm_model = self.llm_model.strip()
+        return self
 
 
 @lru_cache

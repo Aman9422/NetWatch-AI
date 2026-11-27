@@ -59,6 +59,7 @@ export type { ApiErrorKind, ApiErrorOptions } from './errors'
 
 export {
   API_ROOT,
+  AiPaths,
   AlertPaths,
   AnalyticsPaths,
   AnomalyPaths,
@@ -128,6 +129,21 @@ export {
   fetchAnomalyModels,
   retrainAnomalyModel,
 } from './anomalies'
+
+/**
+ * Local LLM integration (M23.11).
+ *
+ * `testAiGeneration` takes an explicit timeout, which is the one place in the
+ * application where a request may legitimately outlive the client's 15-second
+ * default: a cold local model load was measured at ~9 seconds on the reference
+ * machine.
+ */
+export {
+  AI_TEST_TIMEOUT_MS,
+  fetchAiModels,
+  fetchAiStatus,
+  testAiGeneration,
+} from './ai'
 
 export {
   expireConnections,

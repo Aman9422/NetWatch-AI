@@ -28,7 +28,8 @@
 import type { ElementType } from 'react'
 import {
   Activity, BarChart2, Bell, Brain, FileText, Gauge, GitCompareArrows, Layers,
-  Monitor, Radar, Server, Settings as Cog, Shield, ShieldAlert, TriangleAlert,
+  Monitor, Radar, Server, Settings as Cog, Shield, ShieldAlert, Sparkles,
+  TriangleAlert,
 } from 'lucide-react'
 import { environment } from '../config/env'
 import { C, tint } from '../lib/tokens'
@@ -100,6 +101,8 @@ const NAV_GROUPS: readonly NavGroup[] = [
         hint: 'Stored notification records. Nothing is delivered anywhere, and there is no mark-as-read.' },
       { id: 'system', label: 'System', icon: Layers,
         hint: 'Process identity, health probes, database reachability and pipeline stages.' },
+      { id: 'ai-configuration', label: 'AI Configuration', icon: Sparkles,
+        hint: 'The local model runtime (Ollama) this application talks to: its state, installed models and a bounded test generation. Infrastructure only — it changes nothing about detections, alerts, incidents or risk.' },
       { id: 'settings', label: 'Settings', icon: Cog,
         hint: 'The keys the backend exposes, with only the writable ones editable.' },
     ],
@@ -144,10 +147,19 @@ export default function Sidebar({ currentPage, onNavigate, isOpen }: Props) {
       {/* `min-h-0` is what lets this column scroll: a flex child sized by
           `flex-1` still refuses to shrink below its content, so without it the
           lower groups were laid out past the bottom edge instead of scrolling
-          into reach on a short viewport (900x600 included). */}
+          into reach on a short viewport (900x600 included).
+
+          The rail tightens on a short viewport rather than only scrolling. M23
+          added a thirteenth route and the default row height no longer fitted the
+          Operate group inside 600px, which left Settings reachable only by
+          scrolling a column that reports no scrollbar — a route that exists and
+          cannot be found is the M15.35 defect again. Padding and the group-title
+          margins therefore shrink below 760px of height and return to normal
+          above it, so every route is on screen at 900x600 without hiding any. */}
       <nav className="flex-1 min-h-0 px-3 py-2 overflow-y-auto">
         {NAV_GROUPS.map(group => (
-          <div key={group.title} className="mb-1.5 first:mt-0">
+          <div key={group.title}
+            className="mb-1 first:mt-0 [@media(min-height:760px)]:mb-1.5">
             <p className="text-[10px] font-semibold uppercase tracking-widest px-3 py-1"
               style={{ color: C.dim }}>
               {group.title}
@@ -160,7 +172,7 @@ export default function Sidebar({ currentPage, onNavigate, isOpen }: Props) {
                     key={id}
                     onClick={() => onNavigate(id)}
                     title={hint}
-                    className="w-full flex items-center gap-3 px-3 py-1.5 rounded-xl text-sm font-medium transition-all duration-150"
+                    className="w-full flex items-center gap-3 px-3 py-1 rounded-xl text-sm font-medium transition-all duration-150 [@media(min-height:760px)]:py-1.5"
                     style={{
                       backgroundColor: active ? tint(C.accent, 0.12) : 'transparent',
                       color: active ? C.accent : C.muted,

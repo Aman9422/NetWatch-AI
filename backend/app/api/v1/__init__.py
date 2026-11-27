@@ -23,6 +23,7 @@ Two notes on things that are *not* here:
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    ai,
     alerts,
     analytics,
     anomalies,
@@ -84,7 +85,11 @@ api_router.include_router(
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(settings.router, prefix="/settings", tags=["settings"])
 api_router.include_router(
-    notifications.router, prefix="/notifications", tags=["notifications"]
-)
+    notifications.router, prefix="/notifications", tags=["notifications"])
+
+# Local LLM infrastructure (M23.9). Last in the document because it is the only
+# group whose availability depends on a process outside this application: an
+# operator reading `/docs` should meet the surfaces that always work first.
+api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
 
 __all__ = ["api_router"]

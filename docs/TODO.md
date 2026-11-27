@@ -2,10 +2,10 @@
 
 ## Project Status
 
-**Current Stage:** AI Intelligence Layer — behavioural learning and ML anomaly detection
+**Current Stage:** AI Intelligence Layer — behavioural learning, ML anomaly detection and local LLM infrastructure
 **Base Application:** ✅ RELEASED at v0.0.20
-**Current Milestone:** M22 — ML-Based Anomaly Detection ✅ COMPLETE
-**Next Stage:** Local LLM and AI analyst (not started — see "Later — Advanced Features")
+**Current Milestone:** M23 — Local LLM Integration ✅ COMPLETE
+**Next Stage:** AI Security Analyst (not started — see "Later — Advanced Features")
 
 > Note: `docs/11_Base_App_Roadmap.md` numbers these M6 Persistence /
 > M7 Statistics / M8 Device Discovery. In practice the Statistics Engine shipped
@@ -1476,13 +1476,66 @@ guarantee an entirely benign cold start.
 
 ---
 
+# M23 — Local LLM Integration ✅ COMPLETE
+
+**Status: implemented and verified.** Version `v0.0.23`. Full record in
+`docs/27_M23_Local_LLM_Integration.md`.
+
+* [x] Ollama as the initial local runtime, behind a provider interface (M23.3) —
+      `app/ai/providers/{base,ollama}.py`
+* [x] Eleven configuration settings, disabled by default, validated at startup for
+      shape only — never for reachability (M23.4) — `app/config/settings.py`
+* [x] Dedicated `app/ai/` module: provider interface, Ollama adapter, service,
+      schemas, health vocabulary, controlled exceptions (M23.5)
+* [x] Safe inference behaviour — input and output bounds, request timeout, one
+      generation at a time via `BoundedSemaphore`, no provider text in a response
+      (M23.6/M23.7)
+* [x] Three versioned endpoints — `GET /ai/status` (always `200`, one of four
+      states), `GET /ai/models`, `POST /ai/test` (M23.9) — `app/api/v1/ai.py`
+* [x] AI Configuration page — state badge, configuration facts, real inventory,
+      gated test form with a measured wait label, non-dismissible disclaimer
+      (M23.11) — `frontend/src/pages/AIConfiguration.tsx`
+* [x] Privacy boundary — no cloud provider in the vocabulary, no fallback, no
+      automatic download, no packet or credential access, model output never
+      executed or written to a record (M23.16)
+* [x] Tests — 24 mocked backend, 8 live against real Ollama, 20 frontend page
+      tests, plus the M0–M22 regression suites (M23.20)
+* [x] Documentation — `docs/27_M23_Local_LLM_Integration.md`; README and
+      `backend/.env.example` updated (M23.21)
+
+**Verification:** full backend suite **3,020 passed**; pyright **0 errors,
+0 warnings**; full frontend suite **557 passed** (20 files); `tsc --noEmit`
+**0 errors**; production build clean with `AIConfiguration` in its own 13.33 kB
+chunk. Six runtime conditions checked against a real Ollama 0.40.18: `disabled`,
+`unreachable`, `model_missing` and `ready` each reported correctly, and
+`/system/status` plus `/dashboard/summary` answered `200` in every case. A real
+generation measured 9,565 ms for 128 output tokens; an unreachable host was reported
+within one 3-second health budget rather than hanging for the 60-second generation
+budget.
+
+**Known limitations:** no streaming, so the page's loading label is an inference
+from elapsed time; one generation at a time, refused with `409` rather than queued;
+context pinned to 4,096 tokens; no conversation memory; no answer validation of any
+kind, because M23 is infrastructure and the analyst is a later milestone; Ollama is
+the only implemented runtime.
+
+**Design:** `docs/27_M23_Local_LLM_Integration.md`.
+
+> Deliberately out of scope for M23: the AI Security Analyst, automatic alert
+> explanations, incident investigation, sequence-by-sequence log analysis,
+> AI-generated risk scores, MITRE ATT&CK mapping, Wazuh integration, automatic
+> blocking, autonomous remediation, cloud LLM providers and fine-tuning. M23 makes
+> the connection safe; it does not ask the model anything about the network.
+
+---
+
 # Later — Advanced Features
 
 These are intentionally excluded from the Base Application milestone.
 
 * [x] Behavioral baselines — shipped as M21 (`v0.0.21`)
 * [x] ML anomaly detection — shipped as M22 (`v0.0.22`), consuming the M21 profiles
-* [ ] Local LLM
+* [x] Local LLM — shipped as M23 (`v0.0.23`), infrastructure only
 * [ ] AI analyst
 * [ ] MITRE ATT&CK
 * [ ] PCAP analysis

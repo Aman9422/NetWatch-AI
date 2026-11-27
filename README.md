@@ -26,6 +26,7 @@ external endpoint.
 | Devices | Devices are discovered and tracked by MAC, with IP history |
 | Baselines | Per-device behavioural profiles are learnt over 60 s windows and kept across restarts |
 | Anomalies | A per-device Isolation Forest scores each completed window against what that device previously looked like |
+| Local AI | A local LLM runtime (Ollama) can be configured and tested from the UI. Disabled by default; infrastructure only |
 | Connections | Packets are grouped into bidirectional conversations with state and counters |
 | Detection | Five rules: port scan, SYN flood, ICMP flood, internal scan, high bandwidth |
 | Alerts | Findings become alerts with severity, confidence, evidence and a lifecycle |
@@ -117,6 +118,29 @@ The settings that matter for a first run:
 | `REPORT_STORAGE_DIR` | `reports` | Where generated reports are written |
 | `REPORT_RETENTION_DAYS` | `0` | **`0` keeps every report.** Report cleanup is opt-in. |
 | `LOG_LEVEL` | `INFO` | Python log level |
+
+Local AI (M23) is off by default. To use it you must install Ollama yourself, pull a
+model yourself, and then set these — see
+[`docs/27_M23_Local_LLM_Integration.md`](docs/27_M23_Local_LLM_Integration.md):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LLM_ENABLED` | `false` | The switch for this runtime. Nothing is contacted while false. |
+| `LLM_PROVIDER` | `ollama` | The only implemented runtime; any other value is refused at startup |
+| `LLM_BASE_URL` | `http://127.0.0.1:11434` | Where the runtime listens. Loopback by default. |
+| `LLM_MODEL` | *(blank)* | The model to use. **Required when `LLM_ENABLED=true`.** |
+| `LLM_TIMEOUT_SECONDS` | `60` | A generation |
+| `LLM_HEALTH_TIMEOUT_SECONDS` | `3` | A status probe; must be shorter than the above |
+| `LLM_MAX_PROMPT_CHARS` | `4000` | Prompt ceiling (hard maximum 8000) |
+| `LLM_MAX_OUTPUT_TOKENS` | `512` | Reply ceiling in tokens (hard maximum 2048) |
+| `LLM_NUM_CTX` | `4096` | Context window, pinned so a small GPU can hold the model |
+| `LLM_MAX_CONCURRENT_REQUESTS` | `1` | One generation at a time |
+| `LLM_KEEP_ALIVE` | `5m` | How long the model stays resident |
+
+Nothing is reachable over a network, no model is ever downloaded by the application,
+and no model output is executed or written into a detection, alert, incident or risk
+score. `AI_ENABLED` in the database settings table is a different, older switch and
+does not control this runtime.
 
 Frontend variables (all inlined into the browser bundle, so **never** put a secret
 in one):
@@ -297,6 +321,7 @@ backend/
     risk/         bounded risk scoring
     analytics/    historical aggregate views
     reports/      CSV/PDF generation, storage, retention
+    ai/           the local LLM layer: provider interface, Ollama adapter, service
     database/     schema, seeding, additive upgrades
   tests/          the backend suite
   scripts/        verification scripts, benchmarks and the gate runner
@@ -387,6 +412,7 @@ Authentication, RBAC and TLS are future work and are not implemented.
 | `docs/24_M20_Base_Application_Release.md` | The base-application release record |
 | `docs/25_M21_Behavioral_Baseline_Engine.md` | The behavioural baseline engine |
 | `docs/26_M22_ML_Anomaly_Detection.md` | The ML anomaly-detection engine |
+| `docs/27_M23_Local_LLM_Integration.md` | The local LLM integration layer |
 | `docs/TODO.md` | Milestone-by-milestone status |
 
 ---
@@ -400,7 +426,6 @@ should be read as a current capability.
 
 | Planned capability | Description |
 | --- | --- |
-| Locally hosted LLM | A model served on the same machine, so no traffic metadata leaves it |
 | AI Security Analyst | Natural-language explanation of an incident and its evidence trail |
 | Intelligent sequence-based log investigation | Reason over ordered event sequences rather than isolated rules |
 | Wazuh integration | Ingest host and log telemetry alongside network flows |
@@ -429,8 +454,16 @@ contain unusual activity.
 A baseline is likewise descriptive: an "Established" baseline means the device has
 been watched long enough to describe, never that it is safe.
 
-The name "NetWatch AI" refers to the project's direction; the AI layer is the next
-development phase, not a description of this release.
+**A local LLM layer (M23) is implemented — and it is infrastructure, not an
+analyst.** The application can talk to a model served on the same machine by Ollama,
+report whether that runtime is switched on, running and holding the configured
+model, list what it has installed, and send a bounded prompt from the
+**AI Configuration** page. That is the whole of it. It does not explain an alert,
+read an incident, summarise traffic, produce a risk score or take any action, and no
+model output is ever executed or stored against a detection. It is off by default,
+has no cloud fallback, never downloads a model, and requires an operator to install
+Ollama and pull a model by hand. The name "NetWatch AI" refers to the project's
+direction; the analyst capabilities are the next development phase.
 
 ---
 

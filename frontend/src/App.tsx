@@ -54,6 +54,7 @@ const Analytics = lazy(() => import('./pages/Analytics'))
 const Reports = lazy(() => import('./pages/Reports'))
 const Notifications = lazy(() => import('./pages/Notifications'))
 const System = lazy(() => import('./pages/System'))
+const AIConfiguration = lazy(() => import('./pages/AIConfiguration'))
 const Settings = lazy(() => import('./pages/Settings'))
 
 /** Every view the shell can show. The sidebar renders this set. */
@@ -71,6 +72,7 @@ export type Page =
   | 'reports'
   | 'notifications'
   | 'system'
+  | 'ai-configuration'
   | 'settings'
 
 /** A message the shell shows briefly and then clears. */
@@ -127,6 +129,8 @@ export default function App() {
         return <Notifications />
       case 'system':
         return <System />
+      case 'ai-configuration':
+        return <AIConfiguration showToast={showToast} />
       case 'settings':
         return <Settings showToast={showToast} />
     }

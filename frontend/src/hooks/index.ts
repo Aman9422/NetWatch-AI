@@ -94,6 +94,14 @@ export type { ConnectionListOptions, ConnectionListResource } from './useConnect
 export { useConnection } from './useConnection'
 export type { ConnectionDetailResource } from './useConnection'
 
+// ── Local LLM (M23) ─────────────────────────────────────────────────────────
+
+export { useAiStatus } from './useAiStatus'
+export type { AiStatusResource } from './useAiStatus'
+
+export { useAiTest } from './useAiTest'
+export type { AiTestResource } from './useAiTest'
+
 // ── Detection, alerts, incidents, evidence ───────────────────────────────────
 
 export { useDetections } from './useDetections'
